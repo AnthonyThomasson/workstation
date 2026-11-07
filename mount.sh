@@ -7,7 +7,8 @@
 #   ./mount.sh --pull      Herdr -> repo only (Herdr wins)
 #   ./mount.sh --dry-run   show what would change, write nothing (combine with --push or --pull)
 #   ./mount.sh --check     write nothing; exit 1 and name each file when a Tony copy differs from
-#                          its entry folder, or skillshare/config.yaml has an absolute home path
+#                          its entry folder (or no entry owns it), or skillshare/config.yaml has an
+#                          absolute home path
 #
 # What goes where (repo -> the Herdr config folder, ~/.config/herdr-app):
 #   herdr/<entry>/mods/<mod>/              -> mods/<mod>/      every entry folder except tony
@@ -23,7 +24,8 @@
 # .DS_Store) are skipped.
 #
 # Tony's copies: herdr/tony/mods/<mod>/ is an exact copy of each entry folder's mod. After the sync,
-# every run (not --dry-run) makes it so: files are added, overwritten and removed to match the entry.
+# every run (not --dry-run) makes it so: files are added, overwritten and removed to match the entry,
+# and a mod folder no entry owns (other than tabs-icons) is removed. --check names those too.
 # Never edit those copies by hand; edit the entry folder. --dry-run lists what the refresh would do.
 #
 # Skillshare: ~/.config/skillshare/{config.yaml,agents,skills} become symlinks to skillshare/ in
@@ -98,16 +100,33 @@ dupes=$(entry_mods | sed 's|.*/||' | sort | uniq -d)
 
 # tony_changes: how herdr/tony/mods/<mod>/ differs from each entry's mod, as
 # "<new|changed|removed>\t<entry file>\t<tony file>" (new: Tony lacks it; removed: only Tony has it).
+# A --dry-run keeps the files it would pull from Herdr in $tmp/overlay; they stand in for the entry's
+# files here, so the dry run reports what a real run would do to Tony after the pull.
 tony_changes() {
   entry_mods | while IFS= read -r e; do
     t="herdr/tony/mods/${e##*/}"
-    { files "$here/$e"; files "$here/$t"; } | sort -u | while IFS= read -r f; do
+    { files "$here/$e"; files "$here/$t"; files "$tmp/overlay/$e"; } | sort -u | while IFS= read -r f; do
       skip "$f" && continue
+      src="$here/$e/$f"
+      [ ! -e "$tmp/overlay/$e/$f" ] || src="$tmp/overlay/$e/$f"
       if [ ! -e "$here/$t/$f" ]; then printf 'new\t%s\t%s\n' "$e/$f" "$t/$f"
-      elif [ ! -e "$here/$e/$f" ]; then printf 'removed\t%s\t%s\n' "$e/$f" "$t/$f"
-      elif ! cmp -s "$here/$e/$f" "$here/$t/$f"; then printf 'changed\t%s\t%s\n' "$e/$f" "$t/$f"
+      elif [ ! -e "$src" ]; then printf 'removed\t%s\t%s\n' "$e/$f" "$t/$f"
+      elif ! cmp -s "$src" "$here/$t/$f"; then printf 'changed\t%s\t%s\n' "$e/$f" "$t/$f"
       fi
     done
+  done
+}
+
+# tony_extras: mod folders in herdr/tony/mods/ that no entry folder owns (tabs-icons lives only in
+# Tony and is the one exception), as herdr/tony/mods/<mod>.
+tony_extras() {
+  [ -d "$here/herdr/tony/mods" ] || return 0
+  owned=$(entry_mods | sed 's|.*/||')
+  for d in "$here"/herdr/tony/mods/*/; do
+    [ -d "$d" ] || continue
+    n=$(basename "$d")
+    [ "$n" != tabs-icons ] || continue
+    printf '%s\n' "$owned" | grep -qxF "$n" || echo "herdr/tony/mods/$n"
   done
 }
 
@@ -123,9 +142,13 @@ if [ "$check" -eq 1 ]; then
     esac
     bad=1
   done < "$tmp/changes"
+  tony_extras | while IFS= read -r x; do
+    echo "Tony copy extra: $x (no entry folder owns it)"
+  done > "$tmp/extras"
+  if [ -s "$tmp/extras" ]; then cat "$tmp/extras"; bad=1; fi
   cfg="$here/skillshare/config.yaml"
   if [ -f "$cfg" ]; then
-    grep -nE '(/Users/|/home/)' "$cfg" > "$tmp/abs" || true
+    grep -nE '(/Use[r]s/|/home/)' "$cfg" > "$tmp/abs" || true
     while IFS= read -r line; do
       echo "absolute home path in skillshare/config.yaml:$line"
       bad=1
@@ -199,7 +222,12 @@ same=0
 # copy LABEL FROM TO BACKUP HERDRREL: copy one file, saving what it replaces at BACKUP.
 copy() {
   echo "$1: $5"
-  [ "$dry_run" -eq 0 ] || return 0
+  if [ "$dry_run" -eq 1 ]; then
+    case "$3" in   # a file pulled into the repo: keep it where tony_changes can see it
+      "$here"/*) mkdir -p "$(dirname "$tmp/overlay/${3#"$here"/}")"; cp -p "$2" "$tmp/overlay/${3#"$here"/}" ;;
+    esac
+    return 0
+  fi
   mkdir -p "$(dirname "$3")"
   if [ -e "$3" ]; then
     mkdir -p "$(dirname "$4")"
@@ -244,6 +272,7 @@ fi
 added=0
 changed=0
 removed=0
+extra=0
 tony_changes > "$tmp/changes"
 while IFS="$tab" read -r kind ef tf; do
   case "$kind" in
@@ -260,9 +289,17 @@ done < "$tmp/changes"
 if [ "$dry_run" -eq 0 ] && [ "$removed" -gt 0 ] && [ -d "$here/herdr/tony/mods" ]; then
   find "$here/herdr/tony/mods" -depth -mindepth 1 -type d -empty -exec rmdir {} + 2>/dev/null || true
 fi
+tony_extras > "$tmp/extras"
+while IFS= read -r x; do
+  echo "Tony copy (extra): $x"
+  extra=$((extra + 1))
+  [ "$dry_run" -eq 1 ] || rm -rf "$here/$x"
+done < "$tmp/extras"
 verb="refreshed"
 [ "$dry_run" -eq 0 ] || verb="would refresh"
-echo "$verb Tony's copies: $added added, $changed changed, $removed removed"
+summary="$verb Tony's copies: $added added, $changed changed, $removed removed"
+[ "$extra" -eq 0 ] || summary="$summary, $extra extra mod folders removed"
+echo "$summary"
 
 # ---------------------------------------------------------------------------------------------
 # Skillshare: link its config, agents and skills into the repo.

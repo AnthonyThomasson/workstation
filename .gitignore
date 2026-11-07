@@ -5,9 +5,10 @@ personal/herdr-app/view.json
 personal/herdr-app/window.json
 personal/herdr-app/seen.json
 personal/herdr-app/installed.json
-# Workflows kept only on this computer (global ones are committed)
-skillshare/skills/synced/
+# Generated files
 *.d.ts
 jsconfig.json
+# Skills Skillshare installs on this computer; they stay out of the repo
+skillshare/skills/synced/
 skillshare/skills/skillshare/
 .sync-backup/

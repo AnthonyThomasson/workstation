@@ -187,33 +187,6 @@ export function groupItems(items) {
   return { update: by(["update"]), ok: by(["ok", "off"]) };
 }
 
-// The repository a row came from: a tracked repo by name, a URL source by host/owner/repo
-// (github.com left out), anything else by its source text.
-function sourceLabel(item) {
-  if (item.repo) return { label: item.repo, repo: true };
-  const m = /^([^/\s]+\.[^/\s]+)\/([^/]+)\/([^/]+)/.exec(item.src);
-  if (!m) return { label: item.src, repo: false };
-  return { label: m[1] === "github.com" ? `${m[2]}/${m[3]}` : `${m[1]}/${m[2]}/${m[3]}`, repo: true };
-}
-
-// Sources with two or more rows become groups; the rest stay plain rows. Both sorted by label.
-// `repo` is false for a group of local rows.
-export function sourceGroups(items) {
-  const by = new Map();
-  for (const i of items) {
-    const { label, repo } = sourceLabel(i);
-    if (!by.has(label)) by.set(label, { repo, list: [] });
-    by.get(label).list.push(i);
-  }
-  const byLabel = (a, b) => a.label.localeCompare(b.label);
-  const groups = [], rows = [];
-  for (const [label, { repo, list }] of by) {
-    if (list.length > 1) groups.push({ key: `source:${label}`, label, repo, items: list.sort(byLabel) });
-    else rows.push(list[0]);
-  }
-  return { groups: groups.sort(byLabel), rows: rows.sort(byLabel) };
-}
-
 export function counts(items) {
   const c = { all: 0, project: 0, global: 0, skills: 0, agents: 0, mcp: 0, plugins: 0, hooks: 0 };
   for (const i of items) { if (!i.notice) { c.all++; c[i.scope]++; c[i.kind]++; } }

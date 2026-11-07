@@ -70,7 +70,7 @@ function sourceLine(git) {
 const busyAt = (on) => syncing.has(on ?? "");
 
 const icon = (path, size, color) => svg(path).size(size).flex_none().text_color(color);
-const label = (name, text) => h_flex().gap(6).items_center().child(svg(`mods/workspace-chrome/${name}.svg`).size(13)).child(text);
+const label = (name, text) => h_flex().gap(6).items_center().child(svg(`mods/status-bar/icons/${name}.svg`).size(13)).child(text);
 // Work started from render runs after the render ends: cx.notify() throws while a view renders.
 const later = (cx, fn) => cx.spawn(async (cx) => { await cx.sleep(0); return fn(cx); });
 
