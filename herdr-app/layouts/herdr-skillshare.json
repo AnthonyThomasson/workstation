@@ -68,6 +68,17 @@
               "content": {
                 "mod": "agents"
               }
+            },
+            {
+              "id": "usage",
+              "type": "block",
+              "size": {
+                "px": 100
+              },
+              "min": 90,
+              "content": {
+                "mod": "usage"
+              }
             }
           ]
         },
@@ -108,6 +119,19 @@
               "window_drag": true,
               "content": {
                 "mod": "tabs"
+              }
+            },
+            {
+              "id": "github-tasks-toggle",
+              "type": "block",
+              "content": {
+                "mod": "github-tasks",
+                "props": {
+                  "role": "toggle"
+                }
+              },
+              "size": {
+                "px": 90
               }
             },
             {
@@ -194,6 +218,13 @@
                       "type": "block",
                       "content": {
                         "mod": "skillshare"
+                      }
+                    },
+                    {
+                      "id": "github-tasks",
+                      "type": "block",
+                      "content": {
+                        "mod": "github-tasks"
                       }
                     }
                   ]
