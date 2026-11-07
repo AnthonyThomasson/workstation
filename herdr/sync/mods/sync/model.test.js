@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   DEFAULTS, normalizeSettings, settingsFor, parseCheck, parseOutcome, changedFiles, badge, viewState,
   commitMessage, conflictBrief, resolved, plural, shortError, ago, pushBlocked, withSaved,
+  pullReplaces, replacesText, pullReplacedNote, fetchBlocksCheck, FETCH_GUARD_MS,
 } from "./model.js";
 
 test("settings default to ./mount.sh and Claude Code, with no repo", () => {
@@ -184,4 +185,29 @@ test("the brief for a conflict in the skillshare source says how to finish it th
   assert.match(b, /skills\/x\/SKILL\.md/);
   assert.match(b, /skillshare sync --all -g/);
   assert.ok(!/mount\.sh/.test(b));
+});
+
+test("Pull says what it will replace: the Herdr changes, none when there is no repo", () => {
+  assert.deepEqual(pullReplaces({ repo: true, herdr: ["mods/a.js", "mods/b.js"] }), ["mods/a.js", "mods/b.js"]);
+  assert.deepEqual(pullReplaces({ repo: true }), []);
+  assert.deepEqual(pullReplaces({ repo: false }), []);
+  assert.deepEqual(pullReplaces(null), []);
+  assert.equal(replacesText(1), "Replaces 1 Herdr change (backed up)");
+  assert.equal(replacesText(3), "Replaces 3 Herdr changes (backed up)");
+});
+
+test("the Pull notification mentions replaced Herdr files and backups only when there were some", () => {
+  assert.equal(pullReplacedNote({}), "");
+  assert.equal(pullReplacedNote({ replaced: "0", backup: "/x" }), "");
+  assert.equal(pullReplacedNote({ replaced: "1", backup: "/h/.workstation-backup/1" }), "Replaced 1 Herdr file; backups are in /h/.workstation-backup/1.");
+  assert.equal(pullReplacedNote({ replaced: "2" }), "Replaced 2 Herdr files (backed up).");
+});
+
+test("a fetch in flight blocks plain checks for about 60 s, then stops blocking", () => {
+  const t0 = 1_000_000;
+  assert.equal(fetchBlocksCheck(undefined, t0), false);
+  assert.equal(fetchBlocksCheck(null, t0), false);
+  assert.equal(fetchBlocksCheck(t0, t0 + 20000), true);
+  assert.equal(fetchBlocksCheck(t0, t0 + FETCH_GUARD_MS - 1), true);
+  assert.equal(fetchBlocksCheck(t0, t0 + FETCH_GUARD_MS), false, "a hung fetch no longer freezes the badge");
 });

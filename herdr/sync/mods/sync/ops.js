@@ -52,7 +52,7 @@ two_way() {
 }
 fail() { printf '@msg\\t%s\\n@result\\terror\\n' "$1"; exit 0; }
 # The files both sides changed, then undo the half-done rebase so nothing is left behind.
-# Needs $mb (merge base), $up and $tip (our tip before the rebase).
+# Needs $mb (merge base), $up and $tip (our tip before the rebase). $1 is pull or push: what it says was not done.
 conflict_report() {
   printf '@result\\tconflict\\n'
   unmerged | while IFS= read -r f; do
@@ -61,7 +61,8 @@ conflict_report() {
     printf '@conflict\\t%s\\t%s\\t%s\\n' "$f" "$r" "$l"
   done
   git rebase --abort >/dev/null 2>&1 || true
-  printf '@msg\\tBoth sides changed the same files. Nothing was pushed.\\n'
+  if [ "$1" = pull ]; then printf '@msg\\tBoth sides changed the same files. The pull was undone; the repo and Herdr are as they were.\\n'
+  else printf '@msg\\tBoth sides changed the same files. Nothing was pushed.\\n'; fi
 }
 `;
 
@@ -102,7 +103,7 @@ if [ "$n" -gt 0 ]; then
   stash0=$(git rev-parse -q --verify refs/stash || true)
   if ! git pull --rebase --autostash --quiet >"$tmp/out" 2>&1; then
     # Only a rebase that stopped on conflicting files is a conflict; anything else is an error.
-    if [ -n "$(unmerged)" ]; then conflict_report; exit 0; fi
+    if [ -n "$(unmerged)" ]; then conflict_report pull; exit 0; fi
     git rebase --abort >/dev/null 2>&1 || true
     fail "git pull failed: $(tail -n 1 "$tmp/out")"
   fi
@@ -123,7 +124,10 @@ if [ "$n" -gt 0 ]; then
 fi
 "$sp" --push >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
 copied=$(grep '^copied:' "$tmp/mount" | tail -n 1 || true)
-printf '@pulled\\t%s\\n@copied\\t%s\\n' "$n" "$copied"
+# Herdr files the script replaced (backed up) and where the backups went, for the notification.
+replaced=$(grep -c '^to Herdr: ' "$tmp/mount" || true)
+backup=$(sed -n 's/^replaced Herdr files were saved to //p' "$tmp/mount" | tail -n 1)
+printf '@pulled\\t%s\\n@copied\\t%s\\n@replaced\\t%s\\n@backup\\t%s\\n' "$n" "$copied" "\${replaced:-0}" "$backup"
 if [ "$n" -gt 0 ]; then printf '@msg\\tPulled %s commit(s) and updated Herdr\\n@result\\tok\\n' "$n"
 else printf '@msg\\tUpdated Herdr from the repo\\n@result\\tok\\n'; fi
 `;
@@ -180,7 +184,7 @@ if [ "$n" -gt 0 ]; then
   if ! git pull --rebase --quiet >"$tmp/out" 2>&1; then
     # Only a rebase that stopped on conflicting files is a conflict; anything else is an error.
     if [ -n "$(unmerged)" ]; then
-      conflict_report
+      conflict_report push
       printf '@kind\\trebase\\n'
       exit 0
     fi

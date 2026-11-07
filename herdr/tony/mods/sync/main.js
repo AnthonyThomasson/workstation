@@ -14,7 +14,7 @@ import {
 } from "herdr";
 import {
   settingsFor, normalizeSettings, badge, changedFiles, pushBlocked, PULL_FIRST, withSaved, viewState, resolved, commitMessage, conflictBrief,
-  plural, ago, DEFAULTS, sourceCommitMessage,
+  plural, ago, DEFAULTS, sourceCommitMessage, pullReplaces, replacesText, pullReplacedNote, fetchBlocksCheck,
 } from "./model.js";
 import { checkRepo, pull, push, finishMerge, PATHS } from "./ops.js";
 import { applyChoices } from "./conflicts.js";
@@ -180,9 +180,9 @@ export default class Sync extends View {
   check(cx, { fetch = false } = {}) {
     const key = activeKey(), c = context(key);
     if (!c.cfg.repo || channel.busyAt(c.on)) return Promise.resolve();
-    if (!fetch && this.fetching[key]) return Promise.resolve();
+    if (!fetch && fetchBlocksCheck(this.fetching[key]?.at)) return Promise.resolve();
     const token = this.tokens[key] = (this.tokens[key] ?? 0) + 1;
-    if (fetch) this.fetching[key] = token;
+    if (fetch) this.fetching[key] = { token, at: Date.now() };
     return cx.spawn(async (cx) => {
       try {
         const prev = c.state, at = Date.now();
@@ -193,7 +193,7 @@ export default class Sync extends View {
         const conflict = obj(shared(CONFLICT))[key];
         if (conflict && state.repo && !state.error && resolved(state, conflict)) { dropIn(CONFLICT, key); if (obj(shared(STOPPED))[key]?.target === "repo") dropIn(STOPPED, key); }
       } finally {
-        if (this.fetching[key] === token) this.fetching[key] = 0;
+        if (this.fetching[key]?.token === token) this.fetching[key] = null;
         cx.notify();
       }
     });
@@ -383,6 +383,7 @@ export default class Sync extends View {
     const title = op === "pull" ? "Pull" : "Push";
     if (out.result === "ok") {
       const bits = [out.message];
+      if (op === "pull") bits.push(pullReplacedNote(out.extra));
       let level = "success";
       // Pulled commits take effect once the targets are linked again (a push that took the remote's commits too).
       if (op === "pull" || Number(out.extra.pulled) > 0) {
@@ -397,7 +398,7 @@ export default class Sync extends View {
     if (out.result === "conflict") {
       const kind = out.extra.kind ?? "rebase";
       // A copy conflict names where Herdr's version of each file was saved, for the agent's brief (each file carries it).
-      const conflict = { kind, files: kind === "copy" ? withSaved(out.files, out.extra.saved) : out.files, saved: out.extra.saved ?? null, at: Date.now() };
+      const conflict = { kind, files: kind === "copy" ? withSaved(out.files, out.extra.saved) : out.files, saved: out.extra.saved ?? null, op, at: Date.now() };
       setIn(CONFLICT, key, conflict);
       let openAgent = op === "push";
       if (conflict.kind === "rebase" && conflict.files.length) {
@@ -531,7 +532,7 @@ export default class Sync extends View {
       if (c.conflict) {
         body.child(v_flex().flex_none().gap(6).px(14).py(12).bg(t.selected).border_b(1).border_color(t.border)
           .child(div().text_size(S().body).font_semibold().text_color(t.blocked).child("Conflict, resolving"))
-          .child(note(t, `${(c.conflict.files ?? []).map((f) => f.path).join(", ") || "See git status"}. Nothing was pushed; it clears when the repo is clean.`))
+          .child(note(t, `${(c.conflict.files ?? []).map((f) => f.path).join(", ") || "See git status"}. ${c.conflict.op === "pull" ? "The pull was undone" : "Nothing was pushed"}; it clears when the repo is clean.`))
           .child(h_flex().child(secondary("agent-again", "Open the agent again", t, req("agent"), { h: 26 }))));
       }
       if (working) body.child(h_flex().flex_none().gap(8).px(14).py(10).items_center().border_b(1).border_color(t.border).text_size(S().secondary).text_color(t.working)
@@ -541,9 +542,11 @@ export default class Sync extends View {
       const pullSub = behind.length ? `from ${st.upstream ?? "the remote"}${newer.length ? ` · ${plural(newer.length, "repo file")} newer than Herdr` : ""}`
         : newer.length ? "Pull to update Herdr from the repo"
         : st.fetchError ? `Could not fetch: ${st.fetchError}` : `Fetched ${ago(st.fetchedAt) || "not yet"}`;
+      const replaced = pullReplaces(st);
+      const pullSubShown = replaced.length && (behind.length || newer.length) ? `${pullSub} · ${replacesText(replaced.length)}` : pullSub;
       const pullOpen = this.openCommits && (behind.length > 0 || newer.length > 0);
       body.child(this.rowFrame(t, "pull",
-        this.toggleHead(t, "pull-head", pullTitle, pullSub, pullOpen, () => { this.openCommits = !this.openCommits; cx.notify(); }),
+        this.toggleHead(t, "pull-head", pullTitle, pullSubShown, pullOpen, () => { this.openCommits = !this.openCommits; cx.notify(); }),
         (behind.length || newer.length) && ready && !working ? primary("pull-button", "Pull", t, req("pull")) : disabledButton("pull-off", "Pull", t),
         pullOpen ? v_flex().gap(2).pl(20)
           .children(behind.slice(0, 50).map((cm, i) =>
@@ -551,7 +554,11 @@ export default class Sync extends View {
               .child(div().flex_none().w(56).text_color(t.muted).child(cm.hash)).child(div().flex_1().min_w(0).truncate().child(cm.subject))))
           .children(newer.slice(0, 50).map((f, i) =>
             h_flex().id(`newer-${i}`).gap(8).text_size(S().secondary)
-              .child(div().flex_1().min_w(0).truncate().child(f)).child(div().flex_none().text_color(t.dim).child("repo newer")))) : null));
+              .child(div().flex_1().min_w(0).truncate().child(f)).child(div().flex_none().text_color(t.dim).child("repo newer"))))
+          .children(replaced.length && (behind.length || newer.length) ? [div().text_size(S().secondary).text_color(t.muted).child(`${replacesText(replaced.length)}:`)] : [])
+          .children(replaced.length && (behind.length || newer.length) ? replaced.slice(0, 50).map((f, i) =>
+            h_flex().id(`replaced-${i}`).gap(8).text_size(S().secondary)
+              .child(div().flex_1().min_w(0).truncate().child(f)).child(div().flex_none().text_color(t.dim).child("Herdr"))) : []) : null));
       // 2. Push
       const n = files.length;
       body.child(this.rowFrame(t, "push",

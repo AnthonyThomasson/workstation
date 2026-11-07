@@ -94,6 +94,22 @@ export function changedFiles(state) {
 export const pushBlocked = (state) => (state?.repoNewer?.length ?? 0) > 0;
 export const PULL_FIRST = "Pull first: the repo has newer files than Herdr";
 
+// Pull makes Herdr match the repo (the sync script's --push, repo wins), so the Herdr changes ↑ are what it replaces
+// (the script backs them up). The Pull row says so before the person presses it.
+export const pullReplaces = (state) => (state?.repo === false ? [] : state?.herdr ?? []);
+export const replacesText = (n) => `Replaces ${plural(n, "Herdr change")} (backed up)`;
+
+// What the Pull notification adds when the script replaced Herdr files: how many and where the backups went.
+export function pullReplacedNote(extra) {
+  const n = Number(extra?.replaced) || 0;
+  if (!n) return "";
+  return `Replaced ${plural(n, "Herdr file")}${extra?.backup ? `; backups are in ${extra.backup}` : " (backed up)"}.`;
+}
+
+// A plain 20 s check waits while a fetch is running, but only for so long: a hung fetch must not freeze the badge.
+export const FETCH_GUARD_MS = 60000;
+export const fetchBlocksCheck = (startedAt, now = Date.now()) => Boolean(startedAt) && now - startedAt < FETCH_GUARD_MS;
+
 // { down, up, text }: ↓ commits the repo is behind its remote, ↑ files changed; no text at zero.
 export function badge(state) {
   const down = state?.behind?.length ?? 0, up = state?.repo === false ? 0 : changedFiles(state).length;

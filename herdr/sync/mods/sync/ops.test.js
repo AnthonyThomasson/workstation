@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { checkRepo, pull, push, finishMerge, CHECK } from "./ops.js";
 import { prepare, applyChoices } from "./conflicts.js";
 import { syncWorld as world, cleanWorld as clean, laterMtime as later } from "./scratch-repos.js";
-import { badge, changedFiles, pushBlocked } from "./model.js";
+import { badge, changedFiles, pushBlocked, pullReplaces, pullReplacedNote } from "./model.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const MOUNT = join(here, "../../../../mount.sh");
@@ -369,4 +369,37 @@ test("a script setting without ./ is looked up in the repo, and a path with spac
 
 test("the background check does not take git's optional locks", () => {
   assert.match(CHECK, /GIT_OPTIONAL_LOCKS=0; export GIT_OPTIONAL_LOCKS/);
+});
+
+test("a Pull conflict does not say nothing was pushed; a Push conflict keeps its wording", async () => {
+  const w = world("pull-conflict-wording");
+  try {
+    w.put(w.b, DEMO, "remote version\n");
+    w.git(w.b, "commit", "-q", "-am", "Remote edit"); w.git(w.b, "push", "-q");
+    w.put(w.a, DEMO, "local commit\n");
+    w.git(w.a, "commit", "-q", "-am", "Local edit");
+    const out = await pull(w.io, w.cfg);
+    assert.equal(out.result, "conflict", out.message);
+    assert.doesNotMatch(out.message, /Nothing was pushed/);
+    assert.match(out.message, /pull was undone/);
+    assert.equal((await checkRepo(w.io, w.cfg)).inProgress, null);
+  } finally { clean(w); }
+});
+
+test("Pull reports how many Herdr files it replaced and where the backups went", async () => {
+  const w = world("pull-replaced");
+  try {
+    w.put(w.b, "herdr/other/mods/other/main.js", "other changed remotely\n");
+    w.git(w.b, "commit", "-q", "-am", "Remote edit"); w.git(w.b, "push", "-q");
+    const f = join(w.herdr, "mods/demo/main.js");
+    writeFileSync(f, "edited in Herdr\n"); later(f);
+    const s = await checkRepo(w.io, w.cfg, { fetch: true });
+    assert.deepEqual(pullReplaces(s), ["mods/demo/main.js"], "known before Pull is pressed");
+    const out = await pull(w.io, w.cfg);
+    assert.equal(out.result, "ok", out.message);
+    assert.equal(out.extra.replaced, "2", "the Herdr edit and the remote's change");
+    assert.match(out.extra.backup, /\.workstation-backup/);
+    assert.match(pullReplacedNote(out.extra), /Replaced 2 Herdr files; backups are in .*\.workstation-backup/);
+    assert.equal(readFileSync(f, "utf8"), "one\n", "the repo won");
+  } finally { clean(w); }
 });
