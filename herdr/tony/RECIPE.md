@@ -29,44 +29,311 @@ Tony is a full Herdr window layout with a 268px navigation sidebar, icon-rich dr
 
 Copy `layouts/Tony.json` and every folder under `mods/`. The JSON records `cloned_from: { "name": "main", "version": "0.1.12" }` and has this exact structure:
 
-```text
-root (row; titlebar none, traffic_lights [12,16], canvas, terminal padding [14,12])
-├─ sidebar (column, 268px, min 44, max 480, chrome, resizable false)
-│  ├─ brand (46px, window_drag; mod workspace-chrome)
-│  ├─ sidebar-lists (column)
-│  │  ├─ spaces (weight 1, min 90; built-in spaces)
-│  │  ├─ agents (weight 1, min 90; built-in agents)
-│  │  └─ usage (100px, min 90; mod usage)
-│  └─ sidebar-footer (69px; mod workspace-chrome, props {footer:true})
-└─ work (column, resizable false)
-   ├─ tabs-row (row, 42px, resizable false)
-   │  ├─ tabs (weight 1, window_drag; mod tabs-icons)
-   │  ├─ sync-toggle (42px; mod sync, props {role:"button"})
-   │  ├─ github-tasks-toggle (42px; mod github-tasks, props {role:"toggle"})
-   │  ├─ skills-toggle (42px; mod skills, props {role:"toggle"})
-   │  └─ workflows-toggle (42px; mod workflows, props {role:"toggle"})
-   ├─ work-body (row, padding 8, gap 8)
-   │  ├─ main (active tab; pane frames and built-in pane header described above)
-   │  └─ panel (column, hidden, 368px, min 280, max 900)
-   │     └─ panel-body (stack, initially files)
-   │        ├─ files (built-in files)
-   │        ├─ changes (built-in changes)
-   │        ├─ skills (mod skills)
-   │        ├─ github-tasks (mod github-tasks)
-   │        ├─ workflows (mod workflows)
-   │        └─ sync (mod sync, props {role:"details"})
-   └─ status (28px; mod status-bar)
+```json
+{
+  "id": "root",
+  "cloned_from": {
+    "name": "main",
+    "version": "0.1.12"
+  },
+  "type": "row",
+  "titlebar": "none",
+  "traffic_lights": [
+    12,
+    16
+  ],
+  "background": "canvas",
+  "terminal_padding": [
+    14,
+    12
+  ],
+  "divider": {
+    "width": 1,
+    "color": "border"
+  },
+  "children": [
+    {
+      "id": "sidebar",
+      "type": "column",
+      "size": {
+        "px": 268
+      },
+      "min": 44,
+      "max": 480,
+      "background": "chrome",
+      "resizable": false,
+      "children": [
+        {
+          "id": "brand",
+          "type": "block",
+          "size": {
+            "px": 46
+          },
+          "window_drag": true,
+          "content": {
+            "mod": "workspace-chrome"
+          }
+        },
+        {
+          "id": "sidebar-lists",
+          "type": "column",
+          "children": [
+            {
+              "id": "spaces",
+              "type": "block",
+              "size": {
+                "weight": 1
+              },
+              "min": 90,
+              "content": {
+                "mod": "spaces"
+              }
+            },
+            {
+              "id": "agents",
+              "type": "block",
+              "size": {
+                "weight": 1
+              },
+              "min": 90,
+              "content": {
+                "mod": "agents"
+              }
+            },
+            {
+              "id": "usage",
+              "type": "block",
+              "size": {
+                "px": 100
+              },
+              "min": 90,
+              "content": {
+                "mod": "usage"
+              }
+            }
+          ]
+        },
+        {
+          "id": "sidebar-footer",
+          "type": "block",
+          "size": {
+            "px": 69
+          },
+          "content": {
+            "mod": "workspace-chrome",
+            "props": {
+              "footer": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "work",
+      "type": "column",
+      "resizable": false,
+      "children": [
+        {
+          "id": "tabs-row",
+          "type": "row",
+          "size": {
+            "px": 42
+          },
+          "resizable": false,
+          "children": [
+            {
+              "id": "tabs",
+              "type": "block",
+              "size": {
+                "weight": 1
+              },
+              "window_drag": true,
+              "content": {
+                "mod": "tabs-icons"
+              }
+            },
+            {
+              "id": "sync-toggle",
+              "type": "block",
+              "content": {
+                "mod": "sync",
+                "props": {
+                  "role": "button"
+                }
+              },
+              "size": {
+                "px": 42
+              }
+            },
+            {
+              "id": "github-tasks-toggle",
+              "type": "block",
+              "content": {
+                "mod": "github-tasks",
+                "props": {
+                  "role": "toggle"
+                }
+              },
+              "size": {
+                "px": 42
+              }
+            },
+            {
+              "id": "skills-toggle",
+              "type": "block",
+              "content": {
+                "mod": "skills",
+                "props": {
+                  "role": "toggle"
+                }
+              },
+              "size": {
+                "px": 42
+              }
+            },
+            {
+              "id": "workflows-toggle",
+              "type": "block",
+              "content": {
+                "mod": "workflows",
+                "props": {
+                  "role": "toggle"
+                }
+              },
+              "size": {
+                "px": 42
+              }
+            }
+          ]
+        },
+        {
+          "id": "work-body",
+          "type": "row",
+          "padding": 8,
+          "gap": 8,
+          "children": [
+            {
+              "id": "main",
+              "type": "block",
+              "content": {
+                "tab": "active",
+                "pane": {
+                  "gap": 8,
+                  "radius": 10,
+                  "background": "background",
+                  "lone": true,
+                  "border": {
+                    "width": 1,
+                    "color": "border"
+                  },
+                  "focus": {
+                    "width": 1,
+                    "color": "accent"
+                  },
+                  "header": {
+                    "content": {
+                      "mod": "pane"
+                    },
+                    "height": 30,
+                    "position": "top",
+                    "reveal": "always"
+                  }
+                }
+              }
+            },
+            {
+              "id": "panel",
+              "type": "column",
+              "hidden": true,
+              "size": {
+                "px": 368
+              },
+              "min": 280,
+              "max": 900,
+              "children": [
+                {
+                  "id": "panel-body",
+                  "type": "stack",
+                  "active": "files",
+                  "children": [
+                    {
+                      "id": "files",
+                      "type": "block",
+                      "content": {
+                        "mod": "files"
+                      }
+                    },
+                    {
+                      "id": "changes",
+                      "type": "block",
+                      "content": {
+                        "mod": "changes"
+                      }
+                    },
+                    {
+                      "id": "skills",
+                      "type": "block",
+                      "content": {
+                        "mod": "skills"
+                      }
+                    },
+                    {
+                      "id": "github-tasks",
+                      "type": "block",
+                      "content": {
+                        "mod": "github-tasks"
+                      }
+                    },
+                    {
+                      "id": "workflows",
+                      "type": "block",
+                      "content": {
+                        "mod": "workflows"
+                      }
+                    },
+                    {
+                      "id": "sync",
+                      "type": "block",
+                      "content": {
+                        "mod": "sync",
+                        "props": {
+                          "role": "details"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "id": "status",
+          "type": "block",
+          "size": {
+            "px": 28
+          },
+          "content": {
+            "mod": "status-bar"
+          }
+        }
+      ]
+    }
+  ]
+}
 ```
 
 The built-in mods Tony uses are **`spaces`, `agents`, `changes`, `files`, `pane`, and `workspace-chrome`**. It also invokes built-in `menu` and `new-menu` from the tab bar.
 
 ### Custom mods from their own entries
 
-- `mods/usage/` comes from [`herdr/usage/`](../usage/); it fills the 100px sidebar Usage block.
-- `mods/status-bar/` comes from [`herdr/status-bar/`](../status-bar/); it fills the 28px bottom status block.
-- `mods/skills/` comes from [`herdr/skills/`](../skills/); Tony mounts its `toggle` and default panel roles.
-- `mods/github-tasks/` and `mods/workflows/` come together from [`herdr/github-workflows/`](../github-workflows/); Tony mounts both toggles and both default panels. That entry also supplies optional Bug and Story starter workflows.
-- `mods/sync/` comes from [`herdr/sync/`](../sync/); Tony mounts its always-running `button` role and its `details` panel. Its repository path, sync script and conflict agent are configured per machine in the panel.
+The six other custom mods are built from their own entry recipes; Tony only lists their placement and props in the layout above. **`tabs-icons` is the only mod built by this recipe.**
+
+- `mods/usage/` comes from [`herdr/usage/RECIPE.md`](../usage/RECIPE.md); it fills the 100px sidebar Usage block.
+- `mods/status-bar/` comes from [`herdr/status-bar/RECIPE.md`](../status-bar/RECIPE.md); it fills the 28px bottom status block.
+- `mods/skills/` comes from [`herdr/skills/RECIPE.md`](../skills/RECIPE.md); Tony mounts its `toggle` and default panel roles.
+- `mods/github-tasks/` and `mods/workflows/` come together from [`herdr/github-workflows/RECIPE.md`](../github-workflows/RECIPE.md); Tony mounts both toggles and both default panels. That entry also supplies optional Bug and Story starter workflows.
+- `mods/sync/` comes from [`herdr/sync/RECIPE.md`](../sync/RECIPE.md); Tony mounts its always-running `button` role and its `details` panel. Its repository path, sync script and conflict agent are configured per machine in the panel.
 - These folders in Tony are real copies so the layout is self-contained. In the workstation repository, `sync.sh` refreshes them from the entry folders above; edit the owning entry rather than Tony's copy.
 
 ### `tabs-icons` (included only here)
@@ -81,9 +348,48 @@ The built-in mods Tony uses are **`spaces`, `agents`, `changes`, `files`, `pane`
 }
 ```
 
-It is derived from Herdr's built-in **`tabs`** mod, licensed **Apache-2.0**. `main.js` is a `gpui-kit` `View` built with `div`, `h_flex`, `svg` and `image`. It uses Herdr's `spaces`, `panes`, `run`, `openOverlay`, `theme`, `window`, `shared`, `layout`, `settings` and per-copy `localStorage`. Commands are `tab.rename`, `tab.move`, `tab.select`, `tab.close`, `tab.prev`, `tab.next`, `layout.select`, `layout.show`, `layout.hide`, `window.minimize`, `window.maximize` and `window.close`.
+It is derived from Herdr's built-in **`tabs`** mod, licensed **Apache-2.0**. `main.js` is a `gpui-kit` `View` built with `div`, `h_flex`, `svg` and `image`. It uses Herdr's `spaces`, `panes`, `run`, `openOverlay`, `theme`, `window`, `shared`, `layout`, `settings` and per-copy `localStorage`.
 
-Its own art is `win-min.svg`, `win-max.svg`, `win-restore.svg` and `win-close.svg`. It also references shipped assets `mods/workspace-chrome/spinner.svg`, `mods/pane/close.svg`, `mods/files/file.svg` and `mods/changes/changes.svg`. The horizontal tab list uses `overflow_x_scrollbar`; mouse-down stops propagation so pills and controls do not start a window drag.
+Its data fields and command argument shapes are:
+
+- `spaces()` supplies the active space's `id` and `tabs`. Each tab uses `id`, `name`, `active`, `zoomed` and `status` (`working`, `blocked`, `done`, or another value for no marker). `panes()` supplies each pane's `tab` and optional `program`, whose `agent`, `name`, `icon` and `tint` fields select and render the program icon/name.
+- `layout()` supplies the root `traffic_lights` and a recursive `id`/`children` tree. The mod finds `sidebar`, `panel` and `panel-body`, reading `sidebar.hidden`, `sidebar.size.px`, `panel.hidden` and `panel-body.active`. `window()` supplies `platform`, `titlebar`, `fullscreen`, `buttons` and `maximized`. `shared("workspace.panels")` is the array of enabled panel child ids. The `localStorage` value `panels` is an object keyed by space id, with a panel child id or `null` for each space.
+- `tab.rename`, `tab.select` and `tab.close` receive `{ "id": "<tab-id>" }`. `tab.move` receives `{ "id": "<dragged-tab-id>", "index": <one-based-target-index> }`, where the target is the released-over tab's zero-based position plus one. `tab.prev` and `tab.next` receive no argument object.
+- `layout.select` receives `{ "stack": "panel-body", "child": "<panel-child-id>" }`; `layout.show` and `layout.hide` receive `{ "id": "panel" }`. `window.minimize`, `window.maximize` and `window.close` receive no argument object.
+- Right-click uses `openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: "<tab-id>", space: "<space-id>" } } })`. **+** uses `openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })`.
+
+On macOS with `titlebar === "none"`, not fullscreen, and root traffic lights present, the tab row's left padding is exactly:
+
+```js
+Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom -
+  (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
+```
+
+Otherwise it is 10px. Thus the formula divides the traffic-light offset plus 64 by the zoom, subtracts the visible sidebar width (zero when hidden), and clamps the result to at least 10px.
+
+Its own art is `win-min.svg`, `win-max.svg`, `win-restore.svg` and `win-close.svg`. A truthy `program.tint` renders `program.icon` as a theme-muted, tinted `svg`; a falsy value renders it as a full-color `image`. The four window-control SVGs contain:
+
+`win-min.svg`:
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><path d="M3 8.5h10"/></svg>
+```
+
+`win-max.svg`:
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><rect x="3.5" y="3.5" width="9" height="9"/></svg>
+```
+
+`win-restore.svg`:
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><path d="M5.5 3.5h7v7"/><rect x="3.5" y="5.5" width="7" height="7"/></svg>
+```
+
+`win-close.svg`:
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><path d="m3.5 3.5 9 9m0-9-9 9"/></svg>
+```
+
+It also references shipped assets `mods/workspace-chrome/spinner.svg`, `mods/pane/close.svg`, `mods/files/file.svg` and `mods/changes/changes.svg`. The horizontal tab list uses `overflow_x_scrollbar`; mouse-down stops propagation so pills and controls do not start a window drag.
 
 No `keys.json` belongs to this entry: it supplies no layout-specific or mod-specific key bindings.
 

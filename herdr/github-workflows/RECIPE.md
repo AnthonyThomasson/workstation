@@ -84,7 +84,7 @@ Copy the examples into `~/.config/herdr-app/workflows/` (create the directory if
 - Installing only one mod leaves the combined Start/run experience incomplete. Installing the mods does not by itself add their blocks to a layout or copy the starter YAMLs into the global workflows directory.
 - Renaming either mod requires updating its asset paths, layout mod names, role-based tab/pane creation, and the hard-coded `workflows` run-pane reference. Keep duplicated helper modules synchronized.
 - Tasks' panel intentionally hides closed tickets and open tickets in statuses other than In Progress, the groomed status and the backlog status. Repository labels are capped at 200 and project items at 1,000.
-- Branch Start refuses uncommitted changes. Finish and Create PR perform real outward/destructive Git operations only after their explicit buttons; a failed multi-step finish can leave earlier steps completed. A worktree removed by Finish cannot be recovered as a worktree, though its merged commits remain.
+- Branch Start returns immediately when the checkout is already on the target branch, before the dirty check. Only switching to or creating the target branch refuses uncommitted changes. Finish and Create PR perform real outward/destructive Git operations only after their explicit buttons; a failed multi-step finish can leave earlier steps completed. A worktree removed by Finish cannot be recovered as a worktree, though its merged commits remain.
 - The small YAML implementation supports the workflow schema, comments, quoted strings, block scalars and simple lists; it is not a general YAML package. Lists of maps and inline maps other than `{}` are rejected.
 
 ## Done when

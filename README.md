@@ -51,7 +51,7 @@ To use the **Sync** mod afterward, open its tab-bar button, expand **Settings**,
 - **Sync script** to `./sync.sh` (the default).
 - **Agent for conflicts** to an installed agent.
 
-Sync then uses the same script for Pull and Push. Its down badge means incoming commits; its up badge means changed files or commits to push. The panel also exposes target, source, machine and conflict controls.
+Sync then uses the same script for Pull and Push. Its down badge means incoming commits; its up badge counts changed files only. Unpushed commits appear in the Push row instead. The panel also exposes target, source, machine and conflict controls.
 
 ## `sync.sh` reference
 
