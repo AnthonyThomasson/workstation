@@ -36,3 +36,27 @@ ignore:
 
 audit:
   block_threshold: CRITICAL
+
+mcp:
+  servers:
+    godot:
+      command: npx
+      args:
+        - -y
+        - '@coding-solo/godot-mcp@0.1.1'
+      env:
+        GODOT_PATH: /Applications/Godot_mono.app/Contents/MacOS/Godot
+      targets:
+        - claude
+
+plugins:
+  version: 2
+  packages:
+    mattpocock-skills:
+      bindings:
+        claude:
+          imported: true
+    voicemode:
+      bindings:
+        claude:
+          imported: true

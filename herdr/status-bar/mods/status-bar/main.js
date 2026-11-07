@@ -78,17 +78,17 @@ const later = (cx, fn) => cx.spawn(async (cx) => { await cx.sleep(0); return fn(
 function sourceLink(t, git) {
   const line = sourceLine(git), color = line.warn ? t.blocked : t.muted;
   return h_flex().id("source").min_w(0).h(22).px(6).gap(6).flex_shrink_1().items_center().text_color(color)
-    .child(icon("mods/skillshare/icons/git.svg", 13, color)).child(div().min_w(0).truncate().child(line.text));
+    .child(icon("mods/status-bar/icons/git.svg", 13, color)).child(div().min_w(0).truncate().child(line.text));
 }
 
 // Enabled when the repo has a remote and nothing is running; otherwise it says so.
 function syncButton(t, git, busy, onSync) {
   const base = h_flex().id("sync-both").h(22).px(8).gap(6).flex_none().items_center().rounded(6);
-  if (busy) return base.text_color(t.working).child(icon("mods/skillshare/icons/ring.svg", 12, t.working).spin(900)).child("Working…");
-  if (!git?.repo || !git.upstream) return base.text_color(t.dim).child(icon("mods/skillshare/icons/both.svg", 12, t.dim)).child("Sync both ways");
+  if (busy) return base.text_color(t.working).child(icon("mods/status-bar/icons/ring.svg", 12, t.working).spin(900)).child("Working…");
+  if (!git?.repo || !git.upstream) return base.text_color(t.dim).child(icon("mods/status-bar/icons/both.svg", 12, t.dim)).child("Sync both ways");
   return base.text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.selected).text_color(t.foreground))
     .on_click(onSync)
-    .child(icon("mods/skillshare/icons/both.svg", 12, t.muted)).child("Sync both ways");
+    .child(icon("mods/status-bar/icons/both.svg", 12, t.muted)).child("Sync both ways");
 }
 
 export default class StatusBar extends View {

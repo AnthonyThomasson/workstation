@@ -4,7 +4,6 @@
     "name": "main",
     "version": "0.1.12"
   },
-  "preview": "layouts/Tony.png",
   "type": "row",
   "titlebar": "none",
   "traffic_lights": [
@@ -138,7 +137,7 @@
               "id": "skillshare-toggle",
               "type": "block",
               "content": {
-                "mod": "skillshare",
+                "mod": "skills",
                 "props": {
                   "role": "toggle"
                 }
@@ -230,7 +229,7 @@
                       "id": "skillshare",
                       "type": "block",
                       "content": {
-                        "mod": "skillshare"
+                        "mod": "skills"
                       }
                     },
                     {

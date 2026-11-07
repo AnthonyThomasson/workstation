@@ -1,14 +1,12 @@
 .DS_Store
 # Herdr runtime state and files Herdr rewrites on start
-herdr-app/shared.json
-herdr-app/view.json
-herdr-app/window.json
-herdr-app/seen.json
-herdr-app/installed.json
+personal/herdr-app/shared.json
+personal/herdr-app/view.json
+personal/herdr-app/window.json
+personal/herdr-app/seen.json
+personal/herdr-app/installed.json
 # Workflows kept only on this computer (global ones are committed)
 skillshare/skills/synced/
-herdr-app/mods/skillshare/gpui-kit.d.ts
-herdr-app/mods/skillshare/jsconfig.json
 *.d.ts
 jsconfig.json
 skillshare/skills/skillshare/
