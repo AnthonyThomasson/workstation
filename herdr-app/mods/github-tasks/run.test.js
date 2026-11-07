@@ -78,7 +78,7 @@ test("the ticket file marks its text as data", () => {
 
 test("the orchestrator is told the protocol", () => {
   const text = orchestratorPrompt({ workflow: workflow(), ...place });
-  for (const expected of ["hc --skill", "120k", "exactly one worker", "/runs/1/spawn worker", "/runs/1/spawn reviewer", "hc wait --children any", "ask the person", "/src/app", "workflow/12-fix-the-login", "never write code"]) {
+  for (const expected of ["hc --skill", "120k", "exactly one worker", "/runs/1/spawn worker", "/runs/1/spawn reviewer", "hc wait --children any", "Keeping up with the main branch", "rebase origin/<main-branch>", "ask the person", "/src/app", "workflow/12-fix-the-login", "never write code"]) {
     assert.ok(text.includes(expected), expected);
   }
 });
