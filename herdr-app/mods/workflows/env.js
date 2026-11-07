@@ -1,6 +1,7 @@
 // Herdr's side of the store: real files, and where they are. Everything else is store.js.
 import { exec, home, appHome, readTextFile, writeTextFile, shared } from "herdr";
 import { makeStore } from "./store.js";
+import { parseCodexModels, parseKimiModels } from "./models.js";
 
 // Set to the time of each save or delete, so the panel's list refreshes.
 export const CHANGED = "workflows.changed";
@@ -17,6 +18,14 @@ const io = {
   mkdir: async (dir) => { await sh('mkdir -p "$1"', dir); },
   isDir: async (path) => (await sh('test -d "$1"', path)).code === 0,
 };
+
+// Codex's own list of models, from the cache its CLI keeps. Empty when it has none, or it cannot be read.
+export const codexModels = () => readTextFile(`${home()}/.codex/models_cache.json`)
+  .then((text) => parseCodexModels(text ?? ""), () => []);
+
+// Kimi Code's models, from its config. Only its [models] sections are read out of that file.
+export const kimiModels = () => readTextFile(`${home()}/.kimi-code/config.toml`)
+  .then((text) => parseKimiModels(text ?? ""), () => []);
 
 // gh, as labels.js wants it: a failure to start is an answer with a code, not a throw.
 export const gh = (args, where) => exec("gh", args, where)

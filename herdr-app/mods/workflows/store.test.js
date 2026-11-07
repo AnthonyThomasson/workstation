@@ -29,7 +29,7 @@ function disk(files = {}, dirs = ["/repo/herdr-app"]) {
 const wf = (name, over = {}) => {
   const w = blank();
   w.name = name;
-  w.trigger.label = "workflow:x";
+  w.trigger.labels = ["workflow:x"];
   for (const role of ROLES) w[role].prompt = "do it";
   return { ...w, ...over };
 };
@@ -159,4 +159,21 @@ test("a file saved before strategies existed loads as a branch", async () => {
   const old = JSON.stringify({ id: "old", name: "Old", trigger: { label: "x" } });
   const d = disk({ "/app/workflows.local/old.json": old }), store = makeStore({ io: d.io, dirs: DIRS });
   assert.equal((await store.load("old")).workflow.strategy, "branch");
+});
+
+test("a custom agent's command is saved in the file and survives a reload", async () => {
+  const d = disk(), store = makeStore({ io: d.io, dirs: DIRS });
+  const w = wf("Custom");
+  w.worker = { ...w.worker, agent: "custom", command: "my-agent --go" };
+  await store.save(w);
+  assert.equal(JSON.parse(d.fs.get("/app/workflows.local/custom.json")).worker.command, "my-agent --go");
+  assert.equal((await store.load("custom")).workflow.worker.command, "my-agent --go");
+});
+
+test("a custom agent without a command is refused and writes nothing", async () => {
+  const d = disk(), store = makeStore({ io: d.io, dirs: DIRS });
+  const w = wf("Custom");
+  w.reviewer = { ...w.reviewer, agent: "custom", command: "" };
+  await assert.rejects(store.save(w), (e) => e.kind === "invalid" && /command/.test(e.message));
+  assert.equal(d.fs.size, 0);
 });
