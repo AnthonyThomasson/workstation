@@ -7,19 +7,19 @@ Tony is a full Herdr window layout with a 268px navigation sidebar, icon-rich dr
 ## What you see
 
 - The window has no system title bar. On macOS, traffic lights sit at `[12, 16]`. The root uses `theme().canvas`, 1px `theme().border` dividers, and terminal padding of 14px vertically and 12px horizontally. Tony sets no theme or fonts, so the person's settings and theme choices supply them.
-- At left, a fixed, non-drag-resizable `theme().chrome` sidebar is 268px wide, with a 44px minimum and 480px maximum. A 46px **workspace-chrome** brand/window-drag strip sits on top. Below it, built-in **Spaces** and **Agents** share the flexible height equally, each with a 90px minimum. A fixed 100px **Usage** block sits beneath them, followed by a 69px **workspace-chrome** footer (`footer: true`).
+- At left, a fixed, non-drag-resizable `theme().chrome` sidebar is 268px wide, with a 44px minimum and 480px maximum. A 46px **workspace-chrome** brand/window-drag strip sits on top. Below it, built-in **Spaces**, **GitHub Tasks** and built-in **Agents** share the flexible height equally, each with a 90px minimum. A fixed 100px **Usage** block sits beneath them, followed by a 69px **workspace-chrome** footer (`footer: true`).
 - The work area starts with a 42px tab row. `tabs-icons` fills the flexible width; separate 42px blocks at the right hold the Sync, GitHub Tasks, Skills and Workflows toggle buttons.
 - The tab row's `theme().chrome` background has a bottom border and 10px horizontal padding. Tabs are nonstretching 29px-high pills with 10px horizontal padding, 7px internal gaps, 7px corners, 12.8px text and 3px between tabs. The active pill has a `theme().raised` fill, `theme().border` outline and foreground text; inactive pills use chrome fill, chrome outline and muted text. All gain `theme().hover` on hover.
 - A tab can show its 14px program icon, a name truncated to 170px, and ` Z` when zoomed. Working agents add a 12px spinner; blocked and done agents add a 6px status dot. The active tab has a 12px close icon. A right-aligned **+**, optional Files and Changes buttons, and platform window controls follow the scrolling tab list.
 - The main work body has 8px padding and an 8px gap. The active tab's terminal panes always have frames, even when alone: 10px corners, `theme().background`, a 1px border, an accent focus border, 8px between panes, and an always-visible 30px built-in **pane** header at the top.
-- A right-hand panel column is initially hidden. When opened it is 368px wide, with 280px minimum and 900px maximum, and one visible card selected from built-in **Files**, built-in **Changes**, **Skills**, **GitHub Tasks**, **Workflows** and **Sync**. A 28px **Status Bar** spans the bottom of the work area.
+- A right-hand panel column is initially hidden. When opened it is 368px wide, with 280px minimum and 900px maximum, and one visible card selected from built-in **Files**, built-in **Changes**, **Skills**, **Task settings**, **Workflows** and **Sync**. The Tasks ticket list itself stays in the left sidebar. A 28px **Status Bar** spans the bottom of the work area.
 
 ## How it behaves
 
 - Built-in Spaces, Agents, Files, Changes, pane headers and workspace chrome retain Herdr's shipped behavior. Custom Usage, Status Bar, Skills, GitHub Tasks, Workflows and Sync behavior is defined by their own entry recipes; Tony supplies their layout positions and props rather than reimplementing them.
 - `tabs-icons` chooses a tab's first agent program icon, falling back to its first pane's program. A generated name matching `tb<number>` displays that program's name (or `Terminal`); a manually assigned tab name stays unchanged. Working status spins once every 900ms using `theme().working`; blocked and done dots use their matching theme colors; idle and unreported statuses add no status marker.
 - Click a tab to select it. Double-click its label to run `tab.rename`. Press one tab and release over another to move it to that position. Right-click opens the built-in `menu` popup for that tab and space. Vertical wheel scrolling over the tab row runs `tab.prev` or `tab.next`. The active tab's close icon runs `tab.close` without also selecting the tab.
-- **+** opens the built-in `new-menu` popup at 250×512. Files and Changes buttons appear when listed in shared `workspace.panels` (default `['files', 'changes']`). Each selects its child in `panel-body` and shows `panel`, or hides the panel if already selected. The Sync, Tasks, Skills and Workflows buttons select their own panel children in the same stack.
+- **+** opens the built-in `new-menu` popup at 250×512. Files and Changes buttons appear when listed in shared `workspace.panels` (default `['files', 'changes']`). Each selects its child in `panel-body` and shows `panel`, or hides the panel if already selected. The Sync, Tasks, Skills and Workflows buttons select their own panel children in the same stack; the Tasks button opens **Task settings**, not the sidebar's ticket list.
 - `tabs-icons` remembers the selected open side panel per space in its own `localStorage` under `panels`. Switching spaces restores that space's enabled panel, or closes it; a panel outside `workspace.panels` is not restored. A one-second pending window prevents the restore from being saved over before it lands.
 - Where Herdr reports native window buttons, the row adds minimize, maximize/restore and close controls. Windows uses the included vector art; other platforms use text symbols and the built-in pane close asset. On macOS with the title bar hidden and not fullscreen, left padding grows to keep tabs clear of the configured traffic lights, including when the sidebar is hidden or narrow.
 
@@ -87,6 +87,17 @@ Copy `layouts/Tony.json` and every folder under `mods/`. The JSON records `clone
               "min": 90,
               "content": {
                 "mod": "spaces"
+              }
+            },
+            {
+              "id": "tasks",
+              "type": "block",
+              "size": {
+                "weight": 1
+              },
+              "min": 90,
+              "content": {
+                "mod": "github-tasks"
               }
             },
             {
@@ -281,7 +292,10 @@ Copy `layouts/Tony.json` and every folder under `mods/`. The JSON records `clone
                       "id": "github-tasks",
                       "type": "block",
                       "content": {
-                        "mod": "github-tasks"
+                        "mod": "github-tasks",
+                        "props": {
+                          "role": "settings"
+                        }
                       }
                     },
                     {
@@ -332,7 +346,7 @@ The six other custom mods are built from their own entry recipes; Tony only list
 - `mods/usage/` comes from [`herdr/usage/RECIPE.md`](../usage/RECIPE.md); it fills the 100px sidebar Usage block.
 - `mods/status-bar/` comes from [`herdr/status-bar/RECIPE.md`](../status-bar/RECIPE.md); it fills the 28px bottom status block.
 - `mods/skills/` comes from [`herdr/skills/RECIPE.md`](../skills/RECIPE.md); Tony mounts its `toggle` and default panel roles.
-- `mods/github-tasks/` and `mods/workflows/` come together from [`herdr/github-workflows/RECIPE.md`](../github-workflows/RECIPE.md); Tony mounts both toggles and both default panels. That entry also supplies optional Bug and Story starter workflows.
+- `mods/github-tasks/` and `mods/workflows/` come together from [`herdr/github-workflows/RECIPE.md`](../github-workflows/RECIPE.md); Tony mounts both toggles, Tasks' default ticket sidebar and its `settings` role in the right panel, and Workflows' default panel. That entry also supplies optional Bug and Story starter workflows.
 - `mods/sync/` comes from [`herdr/sync/RECIPE.md`](../sync/RECIPE.md); Tony mounts its always-running `button` role and its `details` panel. Its repository path, sync script and conflict agent are configured per machine in the panel.
 - These folders in Tony are real copies so the layout is self-contained. In the workstation repository, `sync.sh` refreshes them from the entry folders above; edit the owning entry rather than Tony's copy.
 
