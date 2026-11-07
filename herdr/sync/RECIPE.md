@@ -33,7 +33,7 @@ The script is one quoted path, not a command line: absolute, `~/…`, or relativ
 - `details.js` composes `repo-ui.js` and `settings-ui.js`. `ui.js` supplies the themed controls.
 - Herdr APIs include `exec`, `run`, `spaces`, `machines`, `focused`, `layout`, `theme`, `shared`/`setShared`, `knownAgents`, `pickFolder`, `openOverlay`/`closeOverlay`, `notify`, `readTextFile`, timers and `props`. App actions include `layout.select`, `layout.show`, `layout.hide` and `tab.new`.
 - Programs and shell utilities include `sh`, `git`, `herdr-app`, `hostname`, `mktemp`, `rm`, `cp`, `mkdir`, `find`, `cat`, `grep`, `sed`, `awk`, `cut`, `paste`, `head`, `tail`, `tr`, `cmp`, `ps`, `kill`, `sleep` and `date`. Long jobs detach with `setsid` where available or shell job control otherwise, clear `HC_SCOPE`, poll files in a temporary directory, and time out after 15 minutes.
-- Network access is through `git fetch`, `git pull` and `git push`. It reads and writes the chosen config repository and causes the configured sync script to read/write `~/.config/herdr-app`; it also writes temporary job files.
+- Network access is through `git fetch`, `git pull` and `git push`. It reads and writes the chosen config repository and causes `sync.sh` to read/write `~/.config/herdr-app`; it also writes temporary job files.
 - Art is `icons/sync.svg`, `arrow-up.svg`, `arrow-down.svg`, `ring.svg`, `alert.svg`, `check.svg`, `chevron-down.svg`, `chevron-right.svg`, `close.svg`, `folder.svg` and `settings.svg`, referenced as `mods/sync/icons/<name>.svg` and tinted with theme colors.
 
 ## Watch out
