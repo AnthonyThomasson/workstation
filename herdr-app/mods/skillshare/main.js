@@ -1,7 +1,7 @@
 // skillshare beside your agents: what the focused space's project and your global source hold,
 // what needs an update or a sync, install from a URL, and git sync of the source both ways.
-// Roles (props.role): the panel (default); "toggle", the tab-bar button that shows or hides the
-// layout's "skillshare-panel" node; dialogs: "install", "uninstall", "audit", "source",
+// Roles (props.role): the panel (default); "toggle", the tab-bar button that opens or closes the
+// layout's shared side panel on this panel, as the Files and Changes buttons do; dialogs: "install", "uninstall", "audit", "source",
 // "syncboth", "conflict", "upgrade", "text", "hook". Dialogs hand long work to the panel through
 // channel.js, because an overlay's tasks end when it closes. Install is the exception: its dialog
 // shows each step and takes the machine's lock itself, and the install runs detached, so closing
@@ -19,7 +19,13 @@ import { createChannel } from "./channel.js";
 import { operate } from "./operations.js";
 import { findProject, loadResources, loadChecks, loadMachine } from "./loader.js";
 
-const PANEL = "skillshare-panel"; // the layout node the toggle shows and hides; hidden state is the layout's, so it survives space switches
+// The side panel is the layout's shared "panel" column, whose "panel-body" stack holds Files, Changes and
+// this panel (child "skillshare"). Like those two, it is open only while the column is shown on it.
+const PANEL = "panel", STACK = "panel-body", SHOWN = "skillshare";
+const shownHere = () => {
+  const root = layout(), panel = find(root, PANEL), body = find(root, STACK);
+  return Boolean(panel && !panel.hidden && body?.active === SHOWN);
+};
 const RECENT = "skillshare.recent.v1"; // install sources, newest first
 const HIDE_DISABLED = "skillshare.hideDisabled.v1"; // false lists disabled rows; unset or true hides them
 const IGNORED = "skillshare.doctorIgnored.v1"; // doctor warnings the person chose to hide: ["scope|name|message", ...]
@@ -111,12 +117,15 @@ function find(node, id) {
 // ---- The tab-bar button ----
 
 function toggle() {
-  const t = theme(), node = find(layout(), PANEL), on = node && !node.hidden;
+  const t = theme(), on = shownHere();
   return h_flex().size_full().pr(10).items_center().bg(t.chrome).border_b(1).border_color(t.border)
     .child(h_flex().id("toggle-skillshare").h(26).px(8).gap(5).flex_none().items_center().rounded(6)
       .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
       .hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
-      .on_click(() => run("layout.toggle", { id: PANEL }))
+      .on_click(() => {
+        if (on) run("layout.hide", { id: PANEL });
+        else { run("layout.select", { stack: STACK, child: SHOWN }); run("layout.show", { id: PANEL }); }
+      })
       .child("Skillshare"));
 }
 
@@ -172,7 +181,7 @@ export default class Skillshare extends View {
     this.filter = InputState.new({ placeholder: "Filter by name or source" });
     this.filter.on("change", (_e, cx) => { this.query = this.filter.value(); cx.notify(); });
     // No remote work while the panel is hidden; showing it again refreshes (see render).
-    const hidden = () => Boolean(find(layout(), PANEL)?.hidden);
+    const hidden = () => !shownHere();
     cx.timer.every(POLL, (cx) => { if (!this.busyAt(this.ctx?.on) && !hidden()) this.refresh(cx, false); });
     cx.timer.every(1000, (cx) => {
       const n = channel.notice();
@@ -309,7 +318,7 @@ export default class Skillshare extends View {
     this.receiver();
 
     const node = find(layout(), PANEL);
-    const shownNow = !node?.hidden;
+    const shownNow = shownHere();
     if (shownNow && this.wasHidden && ctx) later(cx, (cx) => this.refresh(cx, false));
     this.wasHidden = !shownNow;
     return v_flex().id("skillshare").track_focus(this.handle).size_full().min_h(0).rounded(10).overflow_hidden()

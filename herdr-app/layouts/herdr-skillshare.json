@@ -188,26 +188,15 @@
                       "content": {
                         "mod": "changes"
                       }
+                    },
+                    {
+                      "id": "skillshare",
+                      "type": "block",
+                      "content": {
+                        "mod": "skillshare"
+                      }
                     }
                   ]
-                }
-              ]
-            },
-            {
-              "id": "skillshare-panel",
-              "type": "column",
-              "size": {
-                "px": 400
-              },
-              "min": 320,
-              "max": 720,
-              "children": [
-                {
-                  "id": "skillshare",
-                  "type": "block",
-                  "content": {
-                    "mod": "skillshare"
-                  }
                 }
               ]
             }
