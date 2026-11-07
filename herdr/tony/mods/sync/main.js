@@ -4,39 +4,68 @@
 // that machine's settings (repo path, sync script, conflict agent). Click it for the popover:
 // Pull, Push and Details. Nothing about a particular repo is written in the code.
 // Roles (props.role): the button (default); "popover" (a pointer popup), "settings" (a dialog),
-// "details" (a tab). The popover and dialog are separate views whose tasks end when they close, so
+// "text" (a dialog showing one command's output), "details" (a tab). The popover and dialogs are separate views whose tasks end when they close, so
 // they hand work to the button through channel.js, which runs it; results come back as shared state.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import {
-  exec, run, spaces, shared, setShared, theme, openOverlay, closeOverlay, knownAgents, pickFolder, notify,
+  exec, run, spaces, shared, setShared, theme, openOverlay, closeOverlay, knownAgents, pickFolder, notify, readTextFile,
   props as blockProps,
 } from "herdr";
 import {
   settingsFor, normalizeSettings, badge, changedFiles, viewState, resolved, commitMessage, conflictBrief,
   plural, ago, DEFAULTS,
 } from "./model.js";
-import { checkRepo, pull, push } from "./ops.js";
+import { checkRepo, pull, push, PATHS } from "./ops.js";
+import { createRunner } from "./jobs.js";
+import { findProject, hasSkillshare, loadTargets, syncTargets, diffText } from "./targets-ops.js";
+import { needsSync, scopesToSync } from "./targets.js";
 import { createChannel } from "./channel.js";
 import { renderDetails } from "./details.js";
-import { S, icon, stop, later, primary, secondary, disabledButton, pill, note, sectionLabel, dialogButton, dialogFrame } from "./ui.js";
+import { S, icon, stop, later, primary, secondary, disabledButton, pill, note, sectionLabel, monoBox, dialogButton, dialogFrame } from "./ui.js";
 
 const SETTINGS = "sync.settings.v1"; // { [machine]: { repo, script, agent } }; "" is this computer
 const STATE = "sync.state.v1"; // { [machine]: what the last check read }
 const CONFLICT = "sync.conflict.v1"; // { [machine]: { kind, files, saved, at } } until the repo is clean
-const CHECK_EVERY = 20 * 1000, FETCH_EVERY = 5 * 60 * 1000;
+const TARGETS = "sync.targets.v1"; // { [machine]: what the last skillshare read found; see readTargets }
+const CHECK_EVERY = 20 * 1000, FETCH_EVERY = 5 * 60 * 1000, TARGETS_EVERY = 2 * 60 * 1000;
 
 const channel = createChannel({ get: (k) => shared(k), set: (k, v) => setShared(k, v) });
 const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
 const activeSpace = () => spaces().find((s) => s.active) ?? null;
 const activeKey = () => activeSpace()?.machine ?? "";
+// The space whose folder tells which skillshare project to use on machine `key`: the shown one, else any.
+const spaceOf = (key) => spaces().find((s) => (s.machine ?? "") === key && s.active) ?? spaces().find((s) => (s.machine ?? "") === key) ?? null;
 const machineName = (key) => key || "This computer";
 
-// One exec of a script of ours on machine `on`; never rejects.
-const io = (on) => ({
-  sh: (script, args) => exec("sh", ["-c", script, "sync", ...args], { on: on || null })
+// Everything that can be slow (git fetch, pull, push, skillshare sync) runs as a detached job that is
+// polled (jobs.js), because Herdr stops an exec after 30 s. The runner adds the usual PATH.
+const runner = createRunner({
+  exec: (script, args, on) => exec("sh", ["-c", `${PATHS}\n${script}`, "sync", ...args], { on: on || null })
     .catch((e) => ({ code: 127, stdout: "", stderr: String(e?.message ?? e) })),
+  readText: (path, on) => readTextFile(path, { on: on || null }),
 });
+// With lock, the caller holds that machine's lock (channel.js) and every command keeps it fresh.
+const touching = (lock) => () => { if (lock !== undefined) channel.touch(lock); };
+
+// What ops.js runs the repo scripts with: io.sh(script, args) short, io.job(script, args) detached.
+const repoIO = (cx, on, { lock } = {}) => {
+  const touch = touching(lock);
+  return {
+    sh: (script, args) => { touch(); return runner.sh(script, args, on || null); },
+    job: (script, args) => { touch(); return runner.job(args, { on: on || null, script, sleep: (ms) => { touch(); return cx.sleep(ms); } }); },
+  };
+};
+
+// What targets-ops.js runs skillshare with.
+const skillshareIO = (cx, { lock } = {}) => {
+  const touch = touching(lock);
+  return {
+    sh: (script, args, on) => { touch(); return runner.sh(script, args, on); },
+    run: (args, o) => { touch(); return runner.run(args, o); },
+    job: (args, o) => { touch(); return runner.job(args, { ...o, sleep: (ms) => { touch(); return cx.sleep(ms); } }); },
+  };
+};
 
 const sameState = (a, b) => JSON.stringify({ ...a, at: 0 }) === JSON.stringify({ ...b, at: 0 });
 const setIn = (key, name, value) => setShared(key, { ...obj(shared(key)), [name]: value });
@@ -60,12 +89,14 @@ export default class Sync extends View {
     if (this.role === "button") return this.initButton(cx);
     if (this.role === "popover") return this.initPopover(cx);
     if (this.role === "settings") return this.initSettings(cx);
+    if (this.role === "text") return this.handle.focus();
   }
 
   render(cx) {
     if (this.role === "button") return this.renderButton(cx);
     if (this.role === "popover") return this.renderPopover(cx);
     if (this.role === "settings") return this.renderSettings(cx);
+    if (this.role === "text") return this.renderText(cx);
     return this.renderDetailsTab(cx);
   }
 
@@ -75,6 +106,33 @@ export default class Sync extends View {
     this.key = null; this.tokens = {}; this.nextRequest = channel.listen();
     cx.timer.every(CHECK_EVERY, (cx) => this.check(cx));
     cx.timer.every(FETCH_EVERY, (cx) => this.check(cx, { fetch: true }));
+    cx.timer.every(TARGETS_EVERY, (cx) => this.readTargets(cx, activeKey()));
+    this.reading = {};
+  }
+
+  // Reads skillshare on machine `key` (both scopes when the shown space's folder is a skillshare project)
+  // and keeps what needs a sync in shared: { installed, project, at, error, ok, off, items }. Items that
+  // are in sync are only counted, so the value stays small.
+  readTargets(cx, key) {
+    const on = key || null;
+    if (this.reading[key] || channel.busyAt(on)) return Promise.resolve();
+    this.reading[key] = true;
+    return cx.spawn(async (cx) => {
+      try {
+        const io = skillshareIO(cx);
+        const prev = obj(shared(TARGETS))[key];
+        if (!(await hasSkillshare(io, on))) { if (prev?.installed !== false) setIn(TARGETS, key, { installed: false, at: Date.now() }); return; }
+        const space = spaceOf(key), project = await findProject(io, on, [space?.folder ?? ""]);
+        const res = await loadTargets(io, on, project);
+        const items = res.items.filter((i) => i.state !== "ok" && i.state !== "off");
+        const next = { installed: true, project, at: Date.now(), error: res.error, ok: res.items.filter((i) => !i.notice && i.state === "ok").length,
+          off: res.items.filter((i) => !i.notice && i.state === "off").length, items };
+        if (!sameState(prev, next)) setIn(TARGETS, key, next);
+        else setIn(TARGETS, key, { ...prev, at: next.at });
+      } catch (e) {
+        setIn(TARGETS, key, { installed: true, project: null, at: Date.now(), error: String(e?.message ?? e), ok: 0, off: 0, items: [] });
+      } finally { this.reading[key] = false; cx.notify(); }
+    });
   }
 
   // Reads the shown machine's repo (with a git fetch when asked). A newer read wins over an older one.
@@ -84,7 +142,7 @@ export default class Sync extends View {
     const token = this.tokens[key] = (this.tokens[key] ?? 0) + 1;
     return cx.spawn(async (cx) => {
       const prev = c.state, at = Date.now();
-      const state = await checkRepo(io(c.on), c.cfg, { fetch });
+      const state = await checkRepo(repoIO(cx, c.on), c.cfg, { fetch });
       if (token !== this.tokens[key] || channel.busyAt(c.on)) return;
       state.fetchedAt = fetch && !state.fetchError ? at : prev?.fetchedAt ?? null;
       if (!sameState(prev, state)) setIn(STATE, key, state);
@@ -101,7 +159,9 @@ export default class Sync extends View {
 
   perform(req, cx) {
     const key = req.key ?? "", c = context(key);
-    if (req.op === "fetch") { if (key === activeKey()) return this.check(cx, { fetch: true }); return; }
+    if (req.op === "fetch") { if (key === activeKey()) { this.check(cx, { fetch: true }); return this.readTargets(cx, key); } return; }
+    if (req.op === "sync") return this.syncOp(req, key, c, cx);
+    if (req.op === "diff") return this.diffOp(req, key, c, cx);
     if (req.op === "agent") return this.openAgent(key, c, cx);
     if (!["pull", "push"].includes(req.op)) return;
     if (!c.cfg.repo) { notify({ title: "Sync", body: "Choose the config repo first (the gear in the popover).", level: "warning" }); return; }
@@ -109,7 +169,8 @@ export default class Sync extends View {
     cx.notify();
     return cx.spawn(async (cx) => {
       try {
-        const out = req.op === "pull" ? await pull(io(c.on), c.cfg) : await push(io(c.on), c.cfg, req.message || commitMessage(changedFiles(c.state).length, c.state?.host));
+        const io = repoIO(cx, c.on, { lock: c.on });
+        const out = req.op === "pull" ? await pull(io, c.cfg) : await push(io, c.cfg, req.message || commitMessage(changedFiles(c.state).length, c.state?.host));
         await this.finish(req.op, out, key, c, cx);
       } catch (e) {
         notify({ title: req.op === "pull" ? "Pull failed" : "Push failed", body: String(e?.message ?? e), level: "error" });
@@ -117,6 +178,54 @@ export default class Sync extends View {
         channel.release(c.on);
         cx.notify();
         this.check(cx, { fetch: false });
+        this.readTargets(cx, key);
+      }
+    });
+  }
+
+  // Links the targets again with what the repo now holds. Runs under the caller's lock.
+  async relink(key, c, cx) {
+    const io = skillshareIO(cx, { lock: c.on });
+    if (!(await hasSkillshare(io, c.on))) return null;
+    const project = await findProject(io, c.on, [spaceOf(key)?.folder ?? ""]);
+    return syncTargets(io, {
+      on: c.on, project, scopes: project ? ["project", "global"] : ["global"],
+      step: (text) => { channel.step(c.on, text); cx.notify(); },
+    });
+  }
+
+  // Sync targets: skillshare sync --all and sync plugins, for the scopes the Targets section named.
+  syncOp(req, key, c, cx) {
+    if (!channel.claim(c.on, "Syncing targets…")) { notify({ title: "Sync", body: "Another sync is running on this machine.", level: "warning" }); return; }
+    cx.notify();
+    return cx.spawn(async (cx) => {
+      try {
+        const project = obj(shared(TARGETS))[key]?.project ?? null;
+        const scopes = (req.scopes ?? []).filter((s) => s === "global" || (s === "project" && project));
+        const r = await syncTargets(skillshareIO(cx, { lock: c.on }), {
+          on: c.on, project, scopes: scopes.length ? scopes : ["global"],
+          step: (text) => { channel.step(c.on, text); cx.notify(); },
+        });
+        notify({ title: r.kind === "done" ? "Targets synced" : "Skillshare sync failed", body: r.text, level: r.kind === "done" ? "success" : "error" });
+      } catch (e) {
+        notify({ title: "Skillshare sync failed", body: String(e?.message ?? e), level: "error" });
+      } finally {
+        channel.release(c.on);
+        cx.notify();
+        this.readTargets(cx, key);
+      }
+    });
+  }
+
+  // Diff on one item: what the next sync would change, in a text dialog.
+  diffOp(req, key, c, cx) {
+    return cx.spawn(async (cx) => {
+      try {
+        const project = obj(shared(TARGETS))[key]?.project ?? null;
+        const r = await diffText(skillshareIO(cx), req.item, { on: c.on, project });
+        openOverlay({ mod: "sync", kind: "dialog", width: 620, height: 520, props: { role: "text", title: r.title, text: r.text } });
+      } catch (e) {
+        notify({ title: "Diff failed", body: String(e?.message ?? e), level: "error" });
       }
     });
   }
@@ -125,9 +234,14 @@ export default class Sync extends View {
     const title = op === "pull" ? "Pull" : "Push";
     if (out.result === "ok") {
       const bits = [out.message];
-      if (op === "pull" && out.extra.relinked === "yes") bits.push("Skillshare targets linked again.");
-      else if (op === "pull" && out.extra.relinked?.startsWith("failed")) bits.push(`Skillshare sync: ${out.extra.relinked}`);
-      notify({ title: `${title} done`, body: bits.filter(Boolean).join(" "), level: "success" });
+      let level = "success";
+      // Pulled commits take effect once the targets are linked again (a push that took the remote's commits too).
+      if (op === "pull" || Number(out.extra.pulled) > 0) {
+        const r = await this.relink(key, c, cx).catch((e) => ({ kind: "error", text: String(e?.message ?? e) }));
+        if (r?.kind === "done") bits.push("Skillshare targets linked again.");
+        else if (r) { bits.push(`Skillshare sync failed: ${r.text}`); level = "warning"; }
+      }
+      notify({ title: `${title} done`, body: bits.filter(Boolean).join(" "), level });
       dropIn(CONFLICT, key);
       return;
     }
@@ -156,7 +270,7 @@ export default class Sync extends View {
 
   renderButton(cx) {
     const t = theme(), key = activeKey();
-    if (this.key !== key) { this.key = key; later(cx, (cx) => this.check(cx, { fetch: true })); }
+    if (this.key !== key) { this.key = key; later(cx, (cx) => { this.check(cx, { fetch: true }); this.readTargets(cx, key); }); }
     this.render_requests(cx);
     const c = context(key), b = badge(c.state);
     const tip = {
@@ -274,11 +388,19 @@ export default class Sync extends View {
         n > 0 ? v_flex().gap(4).child(sectionLabel(t, "Commit message"))
           .child(h_flex().h(30).px(10).items_center().rounded(6).border_1().border_color(t.input).bg(t.background)
             .child(Input.new(this.msg).flex_1().min_w(0).h_full().text_size(S().secondary).text_color(t.foreground))) : null]));
-      // 3. Skillshare (filled in by the Details work of ticket #2)
+      // 3. Skillshare: what the targets still need
+      const ts = obj(shared(TARGETS))[this.key], pendingItems = ts?.items ?? [], nSync = needsSync(pendingItems);
+      const names = pendingItems.filter((i) => !i.notice && (i.state === "sync" || i.state === "missing")).map((i) => i.label);
+      const head = !ts ? ["Skillshare", "Reading targets…"]
+        : ts.installed === false ? ["Skillshare is not installed", "Nothing to link on this machine"]
+        : ts.error && !ts.ok && !pendingItems.length ? ["Skillshare could not be read", ts.error]
+        : nSync ? [`Skillshare: ${nSync} need sync`, names.length ? `${names.slice(0, 3).join(", ")}${names.length > 3 ? ` and ${names.length - 3} more` : ""}` : "Native hook files need sync"]
+        : ["Skillshare: in sync", `${ts.ok ?? 0} in sync · checked ${ago(ts.at) || "just now"}`];
       body.child(this.rowFrame(t, "skillshare",
-        v_flex().flex_1().min_w(0).child(div().text_size(S().body).font_semibold().child("Skillshare"))
-          .child(div().truncate().text_size(S().label).text_color(t.muted).child("Targets are in Details")),
-        disabledButton("sync-targets-off", "Sync targets", t), null));
+        v_flex().flex_1().min_w(0).child(div().truncate().text_size(S().body).font_semibold().child(head[0]))
+          .child(div().truncate().text_size(S().label).text_color(t.muted).child(head[1])),
+        nSync && ready && !working ? primary("sync-targets", "Sync targets", t, (_e, cx) => { channel.request({ op: "sync", key: this.key, scopes: scopesToSync(pendingItems, ts.project) }); cx.notify(); })
+          : disabledButton("sync-targets-off", "Sync targets", t), null));
     }
 
     const footer = h_flex().flex_none().px(14).py(10).gap(8).items_center().border_t(1).border_color(t.border)
@@ -343,6 +465,14 @@ export default class Sync extends View {
       [dialogButton("cancel", "Cancel", t, close), dialogButton("save", "Save", t, (_e, cx) => this.save(close, cx), "primary")], close, (cx) => this.save(close, cx));
   }
 
+  // ================= A text dialog: one command's output (a Diff) =================
+
+  renderText(cx) {
+    const t = theme(), p = blockProps() ?? {}, close = () => closeOverlay(p.overlay);
+    return dialogFrame(t, "sync-text", this.handle, p.title ?? "Output", [monoBox(t, "sync-text-body", p.text || "No output").flex_1().min_h(0)],
+      [dialogButton("close", "Close", t, close, "primary")], close, close);
+  }
+
   // ================= The Details tab =================
 
   renderDetailsTab(cx) {
@@ -350,6 +480,8 @@ export default class Sync extends View {
     if (this.key !== key) { this.key = key; later(cx, () => channel.request({ op: "fetch", key })); }
     return renderDetails({
       t, key, on: c.on, cfg: c.cfg, state: c.state, conflict: c.conflict, busy: c.busy,
+      targets: obj(shared(TARGETS))[key] ?? null, open: this.open ?? null,
+      toggle: (rowKey, cx) => { this.open = this.open === rowKey ? null : rowKey; cx.notify(); },
       request: (op) => channel.request({ ...op, key }), openSettings: () => openSettings(key),
     });
   }

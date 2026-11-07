@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkRepo, pull, push } from "./ops.js";
+import { createRunner } from "./jobs.js";
 import { badge, changedFiles } from "./model.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -24,9 +25,10 @@ const world = (name) => {
   };
   w.env = env;
   w.git = (cwd, ...args) => execFileSync("git", args, { cwd, env, encoding: "utf8" });
-  w.io = {
-    sh: (script, args) => new Promise((resolve) => execFile("sh", ["-c", script, "sync", ...args], { env, maxBuffer: 8 << 20 }, (e, stdout, stderr) => resolve({ code: e?.code ?? 0, stdout, stderr }))),
-  };
+  const sh = (script, args) => new Promise((resolve) => execFile("sh", ["-c", script, "sync", ...args], { env, maxBuffer: 8 << 20 }, (e, stdout, stderr) => resolve({ code: e?.code ?? 0, stdout, stderr })));
+  // pull, push and fetch go through the detached job runner, as they do in Herdr.
+  const runner = createRunner({ exec: sh, readText: (path) => { try { return readFileSync(path, "utf8"); } catch { return null; } }, pollMs: 20 });
+  w.io = { sh, job: (script, args) => runner.job(args, { script, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) }) };
   mkdirSync(w.home, { recursive: true }); mkdirSync(w.herdr, { recursive: true });
   writeFileSync(env.GIT_CONFIG_GLOBAL, "[init]\n\tdefaultBranch = main\n[pull]\n\trebase = true\n");
   execFileSync("git", ["init", "-q", "--bare", w.remote], { env });
@@ -94,7 +96,6 @@ test("Pull applies the remote's commit to Herdr, backs up what it replaces, and 
     assert.equal(readFileSync(join(w.herdr, "mods/demo/main.js"), "utf8"), "two\n");
     assert.ok(existsSync(join(w.herdr, "mods/demo/icon.svg")));
     assert.ok(readdirSync(join(w.herdr, ".workstation-backup")).length > 0, "a backup of the replaced Herdr file");
-    assert.equal(out.extra.relinked, "no"); // skillshare is not installed here
     const s = await checkRepo(w.io, w.cfg);
     assert.equal(badge(s).text, "");
   } finally { clean(w); }

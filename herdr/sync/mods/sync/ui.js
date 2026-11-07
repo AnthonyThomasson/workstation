@@ -10,6 +10,10 @@ export function S() {
 export const mono = () => settings().font_family || "Menlo";
 export const icon = (name, size, color) => svg(`mods/sync/icons/${name}.svg`).size(size).flex_none().text_color(color);
 export const stop = (_e, cx) => cx.stop_propagation();
+export const dot = (color, size = 8, hollow = false) => hollow
+  ? div().w(size).h(size).flex_none().rounded_full().border(1.5).border_color(color)
+  : div().w(size).h(size).flex_none().rounded_full().bg(color);
+export const warnBox = (t, text) => div().flex_none().px(12).py(10).rounded(6).bg(t.selected).text_size(S().secondary).text_color(t.blocked).child(text);
 // Work started from render runs after the render ends: cx.notify() throws while a view renders.
 export const later = (cx, fn) => cx.spawn(async (cx) => { await cx.sleep(0); return fn(cx); });
 

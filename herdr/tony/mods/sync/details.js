@@ -1,11 +1,12 @@
 // The Details tab (props.role "details"): one section per concern. Each section is a function that
 // gets the view's context and returns an element, so a section can grow without touching the others.
-//   ctx: { t, key, on, cfg, state, conflict, busy, request(op), openSettings() }
-// Targets, Source and Machines are filled in by the next jobs of ticket #2.
+//   ctx: { t, key, on, cfg, state, conflict, busy, targets, open, toggle(rowKey, cx), request(op), openSettings() }
+// Targets is in targets-ui.js; Source and Machines are filled in by the next job of ticket #2.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { S, note, secondary } from "./ui.js";
 import { badge, changedFiles, plural } from "./model.js";
+import { renderTargets } from "./targets-ui.js";
 
 const stub = (ctx, text) => note(ctx.t, text);
 
@@ -24,7 +25,7 @@ function conflicts(ctx) {
 }
 
 export const SECTIONS = [
-  { id: "targets", title: "Targets", render: (ctx) => stub(ctx, "Skillshare targets and what needs syncing will be listed here.") },
+  { id: "targets", title: "Targets", render: renderTargets },
   { id: "source", title: "Source", render: (ctx) => {
     const { t, state, cfg } = ctx, b = badge(state);
     if (!state?.repo) return stub(ctx, cfg.repo ? "The repo has not been read yet." : "No repo is set for this machine.");

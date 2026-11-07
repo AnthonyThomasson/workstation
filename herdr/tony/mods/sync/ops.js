@@ -73,7 +73,7 @@ printf '@end\\n'
 `;
 
 // Pull the remote's commits, then make Herdr match the repo (the repo wins; the script backs up what it
-// overwrites), then link skillshare's targets again.
+// overwrites). Linking skillshare's targets again is a separate step (targets-ops.js), done by main.js.
 export const PULL = `${PRELUDE}
 [ "$script_missing" = 0 ] || fail "The sync script $script was not found in the repo"
 [ -z "$inprog" ] || fail "A rebase or merge is already in progress in the repo"
@@ -95,9 +95,6 @@ if [ "$n" -gt 0 ]; then
 fi
 $script --push >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
 copied=$(grep '^copied:' "$tmp/mount" | tail -n 1 || true)
-if command -v skillshare >/dev/null 2>&1; then
-  if skillshare sync --all -g >"$tmp/ss" 2>&1; then printf '@relinked\\tyes\\n'; else printf '@relinked\\tfailed: %s\\n' "$(tail -n 1 "$tmp/ss")"; fi
-else printf '@relinked\\tno\\n'; fi
 printf '@pulled\\t%s\\n@copied\\t%s\\n' "$n" "$copied"
 printf '@msg\\tPulled %s commit(s) and updated Herdr\\n@result\\tok\\n' "$n"
 `;
@@ -162,23 +159,25 @@ printf '@pushed\\t%s\\n@pulled\\t%s\\n' "$ahead" "$n"
 printf '@msg\\tPushed %s commit(s) to %s\\n@result\\tok\\n' "$ahead" "$up"
 `;
 
-const settle = async (io, script, args) => {
-  const r = await io.sh(script, args);
+// io.sh(script, args): one short exec (Herdr stops an exec after 30 s). io.job(script, args): the same
+// script detached and polled (jobs.js); used for everything that can touch the network.
+const settle = async (io, script, args, { long = false } = {}) => {
+  const r = long && io.job ? await io.job(script, args) : await io.sh(script, args);
   return { ...r, text: `${r.stdout ?? ""}\n${r.stderr ?? ""}` };
 };
 
 // The repo's state; with fetch, after a git fetch. See parseCheck.
 export async function checkRepo(io, cfg, { fetch = false } = {}) {
-  const r = await settle(io, CHECK, [cfg.repo, cfg.script, fetch ? "1" : "0"]);
+  const r = await settle(io, CHECK, [cfg.repo, cfg.script, fetch ? "1" : "0"], { long: fetch });
   const state = parseCheck(r.stdout);
   return r.code !== 0 && !r.stdout.trim() ? { ...state, error: r.stderr.trim().split("\n").pop() || "Could not run git" } : state;
 }
 
 // Pull and push return an outcome: { result: "ok" | "conflict" | "error", message, files, extra }.
 export async function pull(io, cfg) {
-  return parseOutcome((await settle(io, PULL, [cfg.repo, cfg.script])).text);
+  return parseOutcome((await settle(io, PULL, [cfg.repo, cfg.script], { long: true })).text);
 }
 
 export async function push(io, cfg, message) {
-  return parseOutcome((await settle(io, PUSH, [cfg.repo, cfg.script, message])).text);
+  return parseOutcome((await settle(io, PUSH, [cfg.repo, cfg.script, message], { long: true })).text);
 }
