@@ -29,7 +29,8 @@ test("the source line: in the config repo, behind, uncommitted, up to date, no g
 
 test("Pull and sync: the source's own repo is pulled with skillshare, else the config repo, else the targets are linked", () => {
   const own = { git: { path: "/s", same: false, repo: true } };
-  assert.equal(pullPlan({ cfg: { repo: "/r" }, card: own }), "source");
+  assert.equal(pullPlan({ cfg: { repo: "/r" }, card: own }), "both"); // a config repo AND a separate source repo: pull both
+  assert.equal(pullPlan({ cfg: { repo: "" }, card: own }), "source");
   assert.equal(pullPlan({ cfg: { repo: "/r" }, card: { git: { path: "/s", same: true } } }), "repo");
   assert.equal(pullPlan({ cfg: { repo: "" }, card: { git: { path: "/s", same: true } } }), "targets");
   assert.equal(pullPlan({ cfg: { repo: "/r" }, card: { git: { path: "/s", repo: false } } }), "repo");

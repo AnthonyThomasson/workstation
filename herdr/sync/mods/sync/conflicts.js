@@ -164,7 +164,8 @@ export async function previewFiles(io, repo, files) {
 // A pull that both sides changed: replay it, and put the folder back as it was. Resolves to
 //   { kind: "none" }    nothing conflicts (the pull failed for another reason),
 //   { kind: "merged" }  only .metadata.json conflicted: merged per entry and the merge committed,
-//   { kind: "stopped", stopped: { repo, files, previews, upHash } }  files to ask about (nothing changed),
+//   { kind: "stopped", stopped: { repo, files, previews, shown, upHash } }  files to ask about (nothing changed;
+//                       `shown` is how many of them have a preview),
 //   { kind: "error", text }.
 export async function prepare(io, { repo, step = () => {} }) {
   step("Reading conflicts…");
@@ -180,7 +181,8 @@ export async function prepare(io, { repo, step = () => {} }) {
     return { kind: "merged" };
   }
   await io.sh(ABORT, [repo]);
-  return { kind: "stopped", stopped: { repo, files, previews: await previewFiles(io, repo, files), upHash } };
+  const previews = await previewFiles(io, repo, files);
+  return { kind: "stopped", stopped: { repo, files, previews, shown: Object.keys(previews).length, upHash } };
 }
 
 // Replays the stopped pull with the person's choice for each file ({ path: "local" | "remote" }).

@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { symlinkSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { world } from "./scratch-repos.js";
-import { checkSource, readSource, standalone, sourceGuidance, pullSource, pushSource, bothSource, resolveSource } from "./source.js";
+import { checkSource, readSource, standalone, sourceGuidance, stillStopped, pullSource, pushSource, bothSource, resolveSource } from "./source.js";
 import { sourceCommitMessage } from "./model.js";
 
 // A fake skillshare: `answers` maps the first args to a { code, stdout, stderr } or a function; calls are recorded.
@@ -146,4 +146,15 @@ test("a failure that is not a conflict is an error and nothing is read", async (
   const f = fake(w, w.a, { pull: { code: 1, stdout: "", stderr: "could not resolve host" } });
   const r = await pullSource(f, { repo: w.a });
   assert.deepEqual([r.kind, r.text], ["error", "could not resolve host"]);
+});
+
+test("a stored stopped source pull is dropped once the source no longer has commits to pull (or is another repo)", () => {
+  const stopped = { target: "source", repo: "/s", files: ["x"] };
+  const git = { repo: true, top: "/s", upstream: "origin/main", behind: [{ hash: "a" }] };
+  assert.equal(stillStopped(stopped, git), true);
+  assert.equal(stillStopped(stopped, { ...git, behind: [] }), false, "pulled elsewhere");
+  assert.equal(stillStopped(stopped, { ...git, top: "/other" }), false, "the source moved");
+  assert.equal(stillStopped(stopped, { ...git, same: true }), false, "now inside the config repo");
+  assert.equal(stillStopped(stopped, { none: true }), false);
+  assert.equal(stillStopped(stopped, null), true, "nothing read yet: keep it");
 });

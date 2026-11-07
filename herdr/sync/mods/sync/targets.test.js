@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildItems, rowSub, detailLines, groupItems, needsSync, scopesToSync, hasDiff, diffArgs, noticeText, parseSnapshot, driftFrom,
-  syncCommands, syncDone, failure, FIND_PROJECT, SNAPSHOT,
+  syncCommands, syncDone, failure, FIND_PROJECT, SNAPSHOT, keepItems,
 } from "./targets.js";
 import { findProject, loadTargets, syncTargets, diffText, hasSkillshare } from "./targets-ops.js";
 
@@ -191,4 +191,16 @@ test("diffText runs skillshare diff for the item's kind and scope and strips col
   assert.equal(m.calls[0].on, "box");
   assert.equal(r.title, "What sync would change (project)");
   assert.equal(r.text, "claude\n  + beta\n");
+});
+
+test("hook-status notices with state ok (warnings, a hooks error with a readable plan) are kept; in-sync and disabled rows are not", () => {
+  const items = buildItems("global", { list: [{ name: "stable", kind: "skill", relPath: "stable" }, { name: "off", kind: "skill", relPath: "off", disabled: true }],
+    hooks: { plan: { changes: [], warnings: ["x"] } } });
+  const kept = keepItems(items);
+  assert.deepEqual(kept.map((i) => i.key), ["global:hooks:status:warning:0"]);
+  assert.equal(kept[0].state, "ok");
+  assert.equal(kept[0].notice, true);
+  const withError = keepItems(buildItems("global", { list: [], hooks: { plan: { changes: [], warnings: [] }, error: "hooks broke" } }));
+  assert.equal(withError.length, 1);
+  assert.match(noticeText(withError[0]), /hooks broke/);
 });

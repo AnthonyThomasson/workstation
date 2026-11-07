@@ -1,6 +1,6 @@
 // The Conflicts section of the Details tab: the conflict a push or pull stopped on, both sides of each
 // file with a button to keep one, and the conflict agent. It only draws; work goes through ctx.request.
-//   ctx: { t, conflict, stopped, state, choices, pick(file, side, cx), pickAll(side, cx), request(op) } (see details.js)
+//   ctx: { t, conflict, stopped, state, choices, agentName, pick(file, side, cx), pickAll(side, cx), request(op) } (see details.js)
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { S, mono, warnBox, note, primary, secondary, disabledButton } from "./ui.js";
@@ -59,5 +59,5 @@ export function renderConflicts(ctx) {
       .when(Boolean(state?.inProgress), (el) => el.child(note(t, `A ${state.inProgress} is in progress in the repo.`, t.blocked)))))
     .when(Boolean(stopped), (el) => el.child(stopped.target === "source"
       ? div().text_size(S().body).font_semibold().text_color(t.blocked).child("Source pull stopped, nothing changed") : null).child(picker(ctx)))
-    .child(h_flex().child(secondary("reopen-agent", "Hand it to the agent", t, () => ctx.request({ op: "agent" }))));
+    .child(h_flex().child(secondary("reopen-agent", `Ask ${ctx.agentName || "the agent"}`, t, () => ctx.request({ op: "agent" }))));
 }

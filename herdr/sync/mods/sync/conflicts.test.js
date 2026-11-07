@@ -66,6 +66,7 @@ test("prepare lists the conflicting files with both sides, merges nothing and le
   assert.equal(w.git(w.a, "rev-parse", "HEAD").trim(), before.trim());
   assert.equal(w.git(w.a, "status", "--porcelain").trim(), ""); // merge undone, tree clean
   assert.equal(existsSync(join(w.a, ".git/MERGE_HEAD")), false);
+  assert.equal(r.stopped.shown, 2, "how many files have a preview");
 });
 
 test("applyChoices keeps the chosen side per file, merges .metadata.json per entry and commits", async () => {

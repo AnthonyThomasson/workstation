@@ -51,11 +51,12 @@ export function sourceText(git) {
   return behind ? `↓${behind} behind` : dirty ? `${dirty} uncommitted` : "up to date";
 }
 
-// What "Pull and sync" does on a machine: "repo" (its config repo is set, and the source is in it or
-// not its own repo), "source" (the source is its own git repo: skillshare pull), or "targets" (only
-// link the targets).
+// What "Pull and sync" does on a machine: "both" (a config repo is set AND the source is its own git
+// repo: pull the config repo, then the source), "repo" (its config repo is set, and the source is in it or
+// not its own repo), "source" (only the source's own repo: skillshare pull), or "targets" (only link the targets).
 export function pullPlan({ cfg, card }) {
-  if (standalone(card?.git) && card.git.repo !== false) return "source";
+  const own = standalone(card?.git) && card.git.repo !== false;
+  if (own) return cfg?.repo ? "both" : "source";
   if (cfg?.repo) return "repo";
   return "targets";
 }

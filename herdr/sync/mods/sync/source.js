@@ -76,6 +76,17 @@ export function sourceGuidance(g) {
   };
 }
 
+// Whether a stored stopped pull of the source is still stopped, judged on a fresh read of the source: the
+// repo is still the one it was, still its own repo, and still has commits to pull. A pull resolved
+// elsewhere (in a terminal, on the dashboard) leaves nothing to pull, so the stored question is dropped.
+// With no read yet it stays.
+export function stillStopped(stopped, git) {
+  if (!git) return true;
+  if (git.none || git.error || git.same || git.repo === false) return false;
+  if (git.top && stopped?.repo && git.top !== stopped.repo) return false;
+  return (git.behind?.length ?? 0) > 0;
+}
+
 const done = (text) => ({ kind: "done", text });
 const warn = (text) => ({ kind: "warn", text });
 const error = (text) => ({ kind: "error", text });

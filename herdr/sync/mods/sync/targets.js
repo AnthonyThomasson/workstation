@@ -205,6 +205,10 @@ export function groupItems(items) {
   };
 }
 
+// The rows worth keeping from a read: every notice (hook status, whatever its state: a warning is a notice that
+// is "ok") and every row that is not in sync or switched off. In-sync rows are only counted.
+export const keepItems = (items) => items.filter((i) => i.notice || (i.state !== "ok" && i.state !== "off"));
+
 // What needs a sync: changed or missing rows, plus native hook files that need one.
 export function needsSync(items) {
   const g = groupItems(items);
