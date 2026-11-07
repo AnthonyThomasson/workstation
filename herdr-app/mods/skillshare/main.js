@@ -126,6 +126,7 @@ function toggle() {
         if (on) run("layout.hide", { id: PANEL });
         else { run("layout.select", { stack: STACK, child: SHOWN }); run("layout.show", { id: PANEL }); }
       })
+      .child(svg("mods/skillshare/icons/skillshare.svg").size(14))
       .child("Skillshare"));
 }
 
