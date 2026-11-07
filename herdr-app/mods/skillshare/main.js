@@ -592,8 +592,13 @@ export default class Skillshare extends View {
     cx.spawn(async (cx) => {
       const copied = await exec("sh", ["-c", 'printf %s "$1" | pbcopy', "fix", prompt]).catch(() => ({ code: 1 }));
       run("tab.new", { name: "Fix skillshare", folder: ctx.folder || undefined, argv: ["claude"] });
+      if (copied.code === 0) {
+        // Let Claude start, then paste into the new tab's terminal: the prompt is typed, not sent.
+        await cx.sleep(1500);
+        run("terminal.paste", {});
+      }
       channel.say(copied.code === 0 ? "done" : "warn", copied.code === 0
-        ? "Fix prompt copied. Paste it into Claude (⌘V) and press Enter to start."
+        ? "Fix prompt pasted into Claude. Check it, then press Enter to start."
         : "Could not copy the fix prompt; it is not on the clipboard.");
       cx.notify();
     });
