@@ -12,7 +12,7 @@ orchestrator:
   command: ""
   model: opus
   effort: high
-  prompt: ""
+  prompt: If the orchestrator thinks it needs any more that 2 workers decline to do the work and recomend using a non-kimi workflow.
   planning: "Diagnose with the project's fix skill if it has one, else `mattpocock-skills:diagnosing-bugs`. Reproduce the bug first; planning ends only with a failing test that reproduces it. Agree the fix with the user before changing code."
   retro: "Look back on the run: what slowed it, what to write down for next time. Then ask whether to finish (merge, push, close the ticket)."
 
