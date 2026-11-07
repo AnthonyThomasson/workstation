@@ -119,7 +119,7 @@ assert_same_tree "$R/personal/herdr-app/workflows" "$H/workflows"
 assert_absent "$H/keys.json"
 assert_absent "$H/settings.json"
 assert_has "copied: "
-assert_exists "$H/mods/status-bar/icons/both.svg"
+assert_exists "$H/mods/status-bar/icons/branch.svg"
 mount
 assert_status 0 "$RC"
 assert_has "copied: 0 to Herdr, 0 to the repo;"

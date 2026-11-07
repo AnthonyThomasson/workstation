@@ -121,6 +121,16 @@
               }
             },
             {
+              "id": "sync",
+              "type": "block",
+              "content": {
+                "mod": "sync"
+              },
+              "size": {
+                "px": 80
+              }
+            },
+            {
               "id": "github-tasks-toggle",
               "type": "block",
               "content": {
