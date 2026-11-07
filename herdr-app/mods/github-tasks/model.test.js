@@ -1,0 +1,112 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { normalizeItems, groupTickets, chooseProject, classifyError, age, ticketLine, signInFrom } from "./model.js";
+
+test("reads gh's one-time code and page from its sign-in output", () => {
+  const out = "\n! One-time code (AA8B-5FB7) copied to clipboard\nOpen this URL to continue in your web browser: https://github.com/login/device\n";
+  assert.deepEqual(signInFrom(out), { code: "AA8B-5FB7", url: "https://github.com/login/device" });
+  assert.deepEqual(signInFrom(""), { code: null, url: null });
+  assert.deepEqual(signInFrom("! One-time code (6D7D-8CDC)"), { code: "6D7D-8CDC", url: null });
+});
+
+const REPO = "me/app";
+const issue = (id, over = {}) => ({
+  id,
+  isArchived: false,
+  status: { name: "Todo" },
+  content: { __typename: "Issue", number: Number(id), title: `Issue ${id}`, url: `https://x/${id}`, state: "OPEN", stateReason: null, createdAt: "2026-01-01T00:00:00Z", repository: { nameWithOwner: REPO }, ...over },
+});
+const ticket = (key, createdAt, over = {}) => ({ key, draft: false, number: 1, title: key, url: "u", state: "OPEN", reason: null, createdAt, status: null, ...over });
+
+test("keeps only this repo's issues and drafts", () => {
+  const got = normalizeItems([
+    issue("1"),
+    issue("2", { repository: { nameWithOwner: "me/other" } }),
+    { id: "pr", isArchived: false, content: { __typename: "PullRequest", repository: { nameWithOwner: REPO } } },
+    { id: "draft", isArchived: false, status: null, content: { __typename: "DraftIssue", title: "Idea", createdAt: "2026-02-01T00:00:00Z" } },
+    { ...issue("3"), isArchived: true },
+    { id: "hidden", isArchived: false, content: null },
+    null,
+  ], REPO);
+  assert.deepEqual(got.map((t) => t.key), ["1", "draft"]);
+  assert.equal(got[1].draft, true);
+  assert.equal(got[1].url, null);
+  assert.equal(got[1].state, "OPEN");
+});
+
+test("matches the repo whatever its case", () => {
+  assert.equal(normalizeItems([issue("1")], "ME/App").length, 1);
+});
+
+test("carries the project status and the close reason", () => {
+  const [t] = normalizeItems([issue("1", { state: "CLOSED", stateReason: "NOT_PLANNED" })], REPO);
+  assert.equal(t.status, "Todo");
+  assert.equal(t.reason, "NOT_PLANNED");
+});
+
+test("orders open tickets newest first", () => {
+  const { open } = groupTickets([ticket("old", "2026-01-01T00:00:00Z"), ticket("new", "2026-03-01T00:00:00Z"), ticket("mid", "2026-02-01T00:00:00Z")]);
+  assert.deepEqual(open.map((t) => t.key), ["new", "mid", "old"]);
+});
+
+test("a reopened issue and a draft are open", () => {
+  const { open, closed } = groupTickets([ticket("re", "2026-01-01T00:00:00Z", { reason: "REOPENED" }), ticket("d", "2026-01-02T00:00:00Z", { draft: true })]);
+  assert.equal(open.length, 2);
+  assert.equal(closed.length, 0);
+});
+
+test("splits closed tickets by reason, in a fixed order, newest first, without empty sections", () => {
+  const closed = (key, createdAt, reason) => ticket(key, createdAt, { state: "CLOSED", reason });
+  const got = groupTickets([
+    closed("none", "2026-01-01T00:00:00Z", null),
+    closed("dupe", "2026-01-01T00:00:00Z", "DUPLICATE"),
+    closed("done-old", "2026-01-01T00:00:00Z", "COMPLETED"),
+    closed("done-new", "2026-02-01T00:00:00Z", "COMPLETED"),
+    closed("odd", "2026-02-01T00:00:00Z", "SOMETHING_NEW"),
+  ]);
+  assert.deepEqual(got.closed.map((s) => s.label), ["Completed", "Duplicate", "Closed"]);
+  assert.deepEqual(got.closed[0].tickets.map((t) => t.key), ["done-new", "done-old"]);
+  assert.deepEqual(got.closed[2].tickets.map((t) => t.key), ["odd", "none"]);
+  assert.equal(got.open.length, 0);
+});
+
+test("a ticket with no readable date sorts last", () => {
+  const { open } = groupTickets([ticket("bad", "nope"), ticket("good", "2026-01-01T00:00:00Z")]);
+  assert.deepEqual(open.map((t) => t.key), ["good", "bad"]);
+});
+
+test("chooses the saved project, else the first", () => {
+  const projects = [{ id: "a" }, { id: "b" }];
+  assert.equal(chooseProject(projects, "b").id, "b");
+  assert.equal(chooseProject(projects, "gone").id, "a");
+  assert.equal(chooseProject(projects).id, "a");
+  assert.equal(chooseProject([], "a"), null);
+});
+
+test("names gh's failures", () => {
+  assert.equal(classifyError("GraphQL: Your token has not been granted the required scopes to execute this query. The 'projectsV2' field requires one of the following scopes: ['read:project']"), "no-scope");
+  assert.equal(classifyError("To get started with GitHub CLI, please run:  gh auth login"), "no-auth");
+  assert.equal(classifyError("HTTP 401: Bad credentials"), "no-auth");
+  assert.equal(classifyError("failed to run git: fatal: not a git repository (or any of the parent directories): .git"), "not-a-repo");
+  assert.equal(classifyError("no git remotes found"), "not-a-repo");
+  assert.equal(classifyError("none of the git remotes configured for this repository point to a known GitHub host"), "not-a-repo");
+  assert.equal(classifyError("HTTP 502: Bad gateway"), "other");
+  assert.equal(classifyError(undefined), "other");
+});
+
+test("says how old a ticket is", () => {
+  const now = Date.parse("2026-11-06T12:00:00Z");
+  assert.equal(age("2026-11-06T11:59:30Z", now), "just now");
+  assert.equal(age("2026-11-06T11:15:00Z", now), "45m ago");
+  assert.equal(age("2026-11-06T09:00:00Z", now), "3h ago");
+  assert.equal(age("2026-11-03T12:00:00Z", now), "3d ago");
+  assert.equal(age("2026-08-06T12:00:00Z", now), "3mo ago");
+  assert.equal(age("2024-11-06T12:00:00Z", now), "2y ago");
+  assert.equal(age("nope", now), "");
+});
+
+test("writes the line under a title, skipping what's missing", () => {
+  const now = Date.parse("2026-11-06T12:00:00Z");
+  assert.equal(ticketLine(ticket("a", "2026-11-03T12:00:00Z", { number: 12, status: "In progress" }), now), "#12 · In progress · 3d ago");
+  assert.equal(ticketLine(ticket("b", "2026-11-03T12:00:00Z", { draft: true }), now), "Draft · 3d ago");
+});
