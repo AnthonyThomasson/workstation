@@ -1,0 +1,53 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/runkids/skillshare/main/schemas/config.schema.json
+
+sources:
+  skills: /Users/athomasson/.config/skillshare/skills
+  agents: /Users/athomasson/.config/skillshare/agents
+
+mode: merge
+
+targets:
+  antigravity:
+    skills:
+      path: /Users/athomasson/.gemini/config/skills
+  antigravity-cli:
+    skills:
+      path: /Users/athomasson/.gemini/antigravity-cli/skills
+  claude:
+    skills:
+      path: /Users/athomasson/.claude/skills
+  copilot:
+    skills:
+      path: /Users/athomasson/.copilot/skills
+  cursor:
+    skills:
+      path: /Users/athomasson/.cursor/skills
+  devin:
+    skills:
+      path: /Users/athomasson/.config/devin/skills
+  gemini:
+    skills:
+      path: /Users/athomasson/.gemini/skills
+  hermes:
+    skills:
+      path: /Users/athomasson/.hermes/skills
+  kimi-code:
+    skills:
+      path: /Users/athomasson/.kimi-code/skills
+  opencode:
+    skills:
+      path: /Users/athomasson/.config/opencode/skills
+  universal:
+    skills:
+      path: /Users/athomasson/.agents/skills
+  windsurf:
+    skills:
+      path: /Users/athomasson/.codeium/windsurf/skills
+
+ignore:
+  - .DS_Store
+  - .git/
+  - __pycache__/
+
+audit:
+  block_threshold: CRITICAL
