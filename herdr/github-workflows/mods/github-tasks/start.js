@@ -99,7 +99,7 @@ async function paneOf(made, cx) {
 
 // Starts it. ticket: as GitHub holds it. Throws with a message for the person; nothing is left running then,
 // though a branch or worktree already made stays for the next try. Returns { resumed } when the run was already going.
-export async function startRun(workflow, ticket, repo, where, cx) {
+export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   if (where?.on) throw new Error(`This space is on ${where.on}. Workflows only run on this computer for now.`);
   if (!where?.cwd) throw new Error("This space has no folder to work in.");
 
@@ -144,7 +144,11 @@ export async function startRun(workflow, ticket, repo, where, cx) {
     if (!pane) throw new Error("its pane didn't appear");
     await app("pane.split", {
       pane, direction: "right", mod: "workflows",
-      props: { role: "run", id, orchestrator: made.terminal, title: ticketName(ticket), workflow: workflow.name, branch, folder: workDir },
+      props: {
+        role: "run", id, orchestrator: made.terminal, title: ticketName(ticket), workflow: workflow.name, branch, folder: workDir,
+        strategy: workflow.strategy, repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null },
+        projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
+      },
     });
     run("pane.focus", { pane }); // the person answers the orchestrator there
   } catch (e) {
