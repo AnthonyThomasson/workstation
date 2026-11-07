@@ -7,7 +7,7 @@
 // shows each step and takes the machine's lock itself, and the install runs detached, so closing
 // the dialog does not stop it.
 import { View, div, image, svg } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
 import { exec, hc, run, spaces, agents, focused, machines, shared, setShared, theme, settings, layout, openOverlay, closeOverlay, nextCommand, readTextFile, props as blockProps } from "herdr";
 import {
   KINDS, SCOPES, DISCOVER, AUDIT,
@@ -423,6 +423,20 @@ export default class Skillshare extends View {
     return v_flex().mx(8).mb(3).rounded(8).bg(t.raised).child(head).child(this.details(t, item, ctx));
   }
 
+  // A click on a skill opens its file (SKILL.md, or the agent's .md) rendered as Markdown.
+  viewSkill(item, ctx, cx) {
+    const project = item.scope === "project" ? this.project : null;
+    const rel = item.kind === "agents" ? `agents/${item.rel}.md` : `skills/${item.rel}/SKILL.md`;
+    cx.spawn(async () => {
+      const r = project
+        ? await sh('cat "$1/.skillshare/$2"', [project, rel], ctx.on)
+        : await sh('cat "$HOME/.config/skillshare/$1"', [rel], ctx.on);
+      const ok = r?.code === 0;
+      openOverlay({ mod: "skillshare", kind: "dialog", width: 760, height: 620,
+        props: { role: "skill", title: item.label, text: ok ? r.stdout : null, error: `Could not read ${rel}` } });
+    });
+  }
+
   details(t, item, ctx) {
     const lines = [];
     if (item.rel && item.rel !== item.label) lines.push(item.rel);
@@ -438,6 +452,7 @@ export default class Skillshare extends View {
     }
     const agent = this.receiver();
     const buttons = [];
+    if (item.kind === "skills" || item.kind === "agents") buttons.push(secondary(`read-${item.key}`, "Read", t, (_e, cx) => this.viewSkill(item, ctx, cx)));
     for (const action of ["enable", "disable", "remove"]) {
       if (!hookArgs(item, action)) continue;
       const label = action[0].toUpperCase() + action.slice(1);
@@ -820,6 +835,12 @@ export default class Skillshare extends View {
       return dialogFrame(t, "upgrade", this.handle, `Update skillshare on ${p.label}?`,
         [note(t, `Replaces skillshare v${String(p.from ?? "?").replace(/^v/, "")} with v${String(p.to).replace(/^v/, "")} on ${p.label} (skillshare upgrade --cli).`, t.foreground)],
         [dialogButton("cancel", "Cancel", t, close), dialogButton("go", "Update", t, go, "primary")], close, go);
+    }
+    if (p.role === "skill") {
+      const body = p.text != null ? TextView.markdown("skill-md", p.text).selectable(true) : note(t, p.error ?? "Could not read this file.", t.ansi1);
+      return dialogFrame(t, "skill", this.handle, p.title ?? "Skill",
+        [div().id("skill-body").flex_1().min_h(0).overflow_y_scrollbar().px(14).py(12).child(body)],
+        [dialogButton("close", "Close", t, close, "primary")], close, close);
     }
     if (p.role === "text") {
       return dialogFrame(t, "text", this.handle, p.title ?? "Output", [monoBox(t, "out", p.text ?? "", true)], [dialogButton("close", "Close", t, close, "primary")], close, close);
