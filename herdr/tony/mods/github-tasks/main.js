@@ -2,7 +2,7 @@
 // show, newest first. Clicking one opens it in a tab of its
 // own to edit (editor.js), and saving pushes the change to GitHub.
 // Roles (props.role): the panel (default); "toggle", the tab-bar button that opens or closes the
-// layout's shared side panel on this panel, as Files, Changes and Skillshare do; "editor", one ticket
+// layout's shared side panel on this panel, as Files, Changes and Skills do; "editor", one ticket
 // in the center, opened by a click on a row; "settings", the statuses and grooming prompt, in a tab.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -104,7 +104,7 @@ export default class GitHubTasks extends View {
     this.loaded = false;
   }
 
-  // Where the panel looks: the selected space's focused terminal's folder, as Skillshare does, because
+  // Where the panel looks: the selected space's focused terminal's folder, as Skills does, because
   // a space's own folder can be some other repo or just home. Focus moving to a panel has no folder,
   // so each space's last one is remembered.
   context() {

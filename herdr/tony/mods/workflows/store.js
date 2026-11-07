@@ -5,9 +5,8 @@
 //
 // A workflow's scope is the folder it is in (see model.js SCOPES). dirs maps each scope to its folder:
 //   { global?, repo? }
-// a scope without a folder is not available (no workstation repo found, or the selected space is not in
-// a repo), and nothing is listed from it or written to it. The global folder is in the workstation repo
-// and the repo one in a project's, so git carries those; nothing here runs git.
+// a scope without a folder is not available (global always has one; repo has none when the selected space
+// is not in a repo), and nothing is listed from it or written to it. Nothing here runs git.
 import { parse, serialize, slug, validate, SCOPES, SCOPE_LABELS } from "./model.js";
 
 export class StoreError extends Error {

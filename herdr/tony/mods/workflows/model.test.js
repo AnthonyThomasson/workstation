@@ -253,3 +253,8 @@ test("a file from before scopes, with a global flag, reads and is saved without 
   assert.equal("global" in old, false);
   assert.equal("global" in parseYaml(serialize(old)), false);
 });
+
+test("the global scope says where it is kept, with no repo or sync tool in it", () => {
+  assert.match(SCOPE_HINTS.global, /~\/\.config\/herdr-app\/workflows/);
+  assert.doesNotMatch(SCOPE_HINTS.global, /workstation|skillshare/i);
+});

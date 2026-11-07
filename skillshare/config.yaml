@@ -60,3 +60,5 @@ plugins:
       bindings:
         claude:
           imported: true
+
+preserve_tilde_on_save: true

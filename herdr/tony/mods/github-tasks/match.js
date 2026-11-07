@@ -58,23 +58,7 @@ export function matchWorkflows(workflows, labels) {
 
 // ---- Where workflows are kept (the same places the Workflows mod uses) -------------------------------
 
-// The folder Skillshare keeps its skills in, from its config.yaml (sources: skills: <path>). Its git repo is
-// the workstation repo, where global workflows are kept.
-export function skillshareSource(configText, home) {
-  const fallback = `${home}/.config/skillshare/skills`;
-  let inSources = false;
-  for (const line of String(configText ?? "").split(/\r?\n/)) {
-    if (/^sources:\s*(#.*)?$/.test(line)) { inSources = true; continue; }
-    if (inSources && /^\S/.test(line)) break;
-    const m = inSources && /^\s+skills:\s*(.+?)\s*(#.*)?$/.exec(line);
-    if (m) {
-      const path = m[1].replace(/^(["'])(.*)\1$/, "$2");
-      return path === "~" ? home : path.startsWith("~/") ? `${home}/${path.slice(2)}` : path;
-    }
-  }
-  return fallback;
-}
-
 export const firstLine = (s) => String(s ?? "").split("\n").map((l) => l.trim()).find(Boolean) ?? null;
 export const repoWorkflowsDir = (repoRoot) => `${repoRoot}/.herdr/workflows`;
-export const globalWorkflowsDir = (workstationRoot) => `${workstationRoot}/herdr-app/workflows`;
+// Global ones: the workflows folder of the Herdr home (~/.config/herdr-app, or $HERDR_APP_HOME).
+export const globalWorkflowsDir = (appHome) => `${String(appHome).replace(/\/+$/, "")}/workflows`;
