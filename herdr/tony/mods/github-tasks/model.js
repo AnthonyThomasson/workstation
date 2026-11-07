@@ -180,11 +180,17 @@ export function groomArgv(agent, base, { model, effort }) {
   return argv;
 }
 
-export const DEFAULT_STATUSES = { backlog: "To Do", groomed: "Up Next" };
+export const DEFAULT_STATUSES = { backlog: "To Do", groomed: "Up Next", inProgress: "In Progress", inReview: "In Review" };
 
 export function normalizeSettings(raw) {
   const text = (v, fallback) => (typeof v === "string" && v.trim() ? v.trim() : fallback);
-  return { backlog: text(raw?.backlog, DEFAULT_STATUSES.backlog), groomed: text(raw?.groomed, DEFAULT_STATUSES.groomed) };
+  return Object.fromEntries(Object.keys(DEFAULT_STATUSES).map((k) => [k, text(raw?.[k], DEFAULT_STATUSES[k])]));
+}
+
+// The names a workflow run moves its ticket through; passed to the run pane, which cannot import this mod.
+export function runStatuses(raw) {
+  const { inProgress, inReview } = normalizeSettings(raw);
+  return { inProgress, inReview };
 }
 
 // Status names match ignoring case, spaces and punctuation: GitHub's own default is "Todo", not "To Do".
@@ -196,7 +202,7 @@ const same = sameStatus;
 export function groupByStage(open, settings) {
   const s = normalizeSettings(settings);
   const pick = (name) => (open ?? []).filter((t) => same(t.status, name)).sort(newestFirst);
-  return { inProgress: pick("In progress"), inReview: pick("In review"), groomed: pick(s.groomed), backlog: pick(s.backlog) };
+  return { inProgress: pick(s.inProgress), inReview: pick(s.inReview), groomed: pick(s.groomed), backlog: pick(s.backlog) };
 }
 
 // What the agent is first told. It reads the backlog itself with gh; nothing from the tickets is pasted in.

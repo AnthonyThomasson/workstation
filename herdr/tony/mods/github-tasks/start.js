@@ -1,7 +1,8 @@
 // Starts a workflow on a ticket: gets the folder ready, writes what the agents read, and opens a tab with the
 // orchestrator's terminal on the left and the Workflows mod's list of its agents on the right. From there the
 // orchestrator runs the ticket itself (run.js says how).
-import { exec, hc, home, knownAgents, notify, panes, readTextFile, run, spaces, terminals, writeTextFile } from "herdr";
+import { exec, hc, home, knownAgents, notify, panes, readTextFile, run, shared, spaces, terminals, writeTextFile } from "herdr";
+import { runStatuses, statusesKey } from "./model.js";
 import { agentArgv, branchName, FOLDER_LABEL, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
 
 const ROLES = ["orchestrator", "worker", "reviewer"];
@@ -168,7 +169,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
     const props = {
       role: "run", id, orchestrator: made.terminal, title: ticketName(ticket), workflow: workflow.name, branch, folder: workDir,
       strategy: workflow.strategy, repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null },
-      projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
+      projectId: board.project?.id ?? null, statusField: board.statusField ?? null, statuses: runStatuses(shared(statusesKey(repo))),
     };
     await writeTextFile(`${runDir}/pane.json`, JSON.stringify(props), null).catch(() => {}); // View reopens the pane from this
     await app("pane.split", { pane, direction: "right", mod: "workflows", props });

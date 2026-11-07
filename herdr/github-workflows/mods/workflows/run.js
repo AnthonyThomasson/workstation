@@ -29,6 +29,7 @@ export class RunPage {
     this.ticket = props?.ticket ?? null; // { number, key }
     this.projectId = props?.projectId ?? null;
     this.statusField = props?.statusField ?? null; // { id, options }
+    this.statuses = props?.statuses ?? null; // { inProgress, inReview }: the names Tasks is set to move tickets through
     this.stage = Number(shared(stageKey(this.id))) || 0; // the furthest status already set
     this.pr = shared(prKey(this.id)) || null; // { url, state, number }
     this.busy = null; // "pr" | "finish" while one runs
@@ -73,7 +74,7 @@ export class RunPage {
     if (stage <= this.stage || this.moving || !this.statusField || !this.projectId || !this.ticket?.key) return;
     this.moving = true;
     cx.spawn(async (cx) => {
-      const option = optionFor(this.statusField.options, stage);
+      const option = optionFor(this.statusField.options, stage, this.statuses);
       try {
         if (option) {
           const r = await exec("gh", statusArgs({ projectId: this.projectId, itemId: this.ticket.key, fieldId: this.statusField.id, optionId: option.id }));

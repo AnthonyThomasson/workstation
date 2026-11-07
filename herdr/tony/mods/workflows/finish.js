@@ -12,7 +12,11 @@ export const STAGES = ["in progress", "in review"]; // what a ticket becomes as 
 export const stageOf = (agents) => (agents.reviewers?.length ? 2 : agents.workers?.length ? 1 : 0);
 
 // The project's Status option for a stage, or null when the project has none by that name.
-export const optionFor = (options, stage) => (options ?? []).find((o) => statusKey(o.name) === statusKey(STAGES[stage - 1])) ?? null;
+// statuses: { inProgress, inReview } as configured in Tasks; absent (old runs) means the defaults in STAGES.
+export function optionFor(options, stage, statuses) {
+  const name = (stage === 1 ? statuses?.inProgress : statuses?.inReview) || STAGES[stage - 1];
+  return (options ?? []).find((o) => statusKey(o.name) === statusKey(name)) ?? null;
+}
 
 export const STATUS_MUTATION = `mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) {
   updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: { singleSelectOptionId: $option } }) { projectV2Item { id } }

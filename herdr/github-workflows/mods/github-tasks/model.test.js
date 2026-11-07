@@ -152,11 +152,27 @@ test("a save needs a title and a status the project has", () => {
   assert.equal(checkTask({ title: "T", status: null }, options), null);
 });
 
-import { normalizeSettings, groupByStage, groomPrompt, setupPrompt, groomArgv, normalizeGroomer, DEFAULT_STATUSES, recentlyDone, middleEllipsis } from "./model.js";
+import { normalizeSettings, groupByStage, groomPrompt, setupPrompt, groomArgv, normalizeGroomer, DEFAULT_STATUSES, runStatuses, recentlyDone, middleEllipsis } from "./model.js";
 
 test("grooming statuses default to To Do and Up Next", () => {
   assert.deepEqual(normalizeSettings(undefined), DEFAULT_STATUSES);
-  assert.deepEqual(normalizeSettings({ backlog: " Ideas ", groomed: "" }), { backlog: "Ideas", groomed: "Up Next" });
+  assert.deepEqual(normalizeSettings({ backlog: " Ideas ", groomed: "" }), { ...DEFAULT_STATUSES, backlog: "Ideas" });
+});
+
+test("in progress and in review statuses default and can be renamed", () => {
+  assert.equal(DEFAULT_STATUSES.inProgress, "In Progress");
+  assert.equal(DEFAULT_STATUSES.inReview, "In Review");
+  const s = normalizeSettings({ inProgress: " Doing ", inReview: "" });
+  assert.equal(s.inProgress, "Doing");
+  assert.equal(s.inReview, "In Review");
+  assert.deepEqual(runStatuses({ inProgress: "Doing" }), { inProgress: "Doing", inReview: "In Review" });
+});
+
+test("groups tickets by the configured in progress and in review names", () => {
+  const open = [ticket("a", "2026-01-01T00:00:00Z", { status: "Doing" }), ticket("b", "2026-01-01T00:00:00Z", { status: "Checking" }), ticket("c", "2026-01-01T00:00:00Z", { status: "In Progress" })];
+  const g = groupByStage(open, { inProgress: "Doing", inReview: "Checking" });
+  assert.deepEqual(g.inProgress.map((t) => t.key), ["a"]);
+  assert.deepEqual(g.inReview.map((t) => t.key), ["b"]);
 });
 
 test("groups open tickets by stage, newest first, dropping other statuses", () => {

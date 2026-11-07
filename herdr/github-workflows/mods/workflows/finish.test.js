@@ -16,6 +16,16 @@ test("optionFor matches status names loosely", () => {
   assert.equal(optionFor(undefined, 1), null);
 });
 
+test("optionFor uses the configured names, falling back to the defaults", () => {
+  const options = [{ id: "a", name: "Doing" }, { id: "b", name: "Checking" }, { id: "c", name: "In progress" }];
+  const statuses = { inProgress: "Doing", inReview: "Checking" };
+  assert.equal(optionFor(options, 1, statuses).id, "a");
+  assert.equal(optionFor(options, 2, statuses).id, "b");
+  assert.equal(optionFor(options, 1, {}).id, "c");
+  assert.equal(optionFor(options, 1, null).id, "c");
+  assert.equal(optionFor([{ id: "x", name: "In Review" }], 2, { inProgress: "Doing" }).id, "x");
+});
+
 test("statusArgs sends the ids as variables", () => {
   const a = statusArgs({ projectId: "P", itemId: "I", fieldId: "F", optionId: "O" });
   assert.ok(a.includes("option=O") && a.includes("item=I") && a[0] === "api");
