@@ -10,6 +10,10 @@ export const AGENTS = ["claude", "codex", "gemini", "pi", "cursor", "devin", "ag
 // An agent that is not one of those: its `command` is what opens it (run in the space's folder).
 export const CUSTOM = "custom";
 export const AGENT_LABELS = { [CUSTOM]: "Custom command" };
+// A workflow with no trigger labels is the fallback: it starts only for a ticket whose labels match no
+// other workflow's trigger.
+export const FALLBACK_HINT = "No labels: this workflow starts only for a ticket that matches none of the other workflows' labels.";
+export const isFallback = (workflow) => normalize(workflow).trigger.labels.length === 0;
 // With several trigger labels: whether an issue with any one of them starts the workflow, or only one
 // that has all of them.
 export const MATCHES = ["any", "all"];
@@ -17,6 +21,16 @@ export const MATCH_LABELS = { any: "Any of them", all: "All of them" };
 export const MATCH_HINTS = {
   any: "Starts when an issue gets any one of these labels.",
   all: "Starts only once an issue has every one of these labels.",
+};
+// Where a workflow is kept. The folder it is in says which, so the file does not.
+//   global  in the workstation repo's herdr-app/workflows, which Skillshare's push and pull carry to
+//           other machines, and to other people using the same repo
+//   repo    in <repo>/.herdr/workflows of the repo a space is in, committed with that project
+export const SCOPES = ["global", "repo"];
+export const SCOPE_LABELS = { global: "Global", repo: "Repo" };
+export const SCOPE_HINTS = {
+  global: "Kept in the workstation repo. Push it with Skillshare to sync it to your other machines and to other people.",
+  repo: "Kept in the repo's .herdr/workflows folder, to commit with the repo. Listed only while a space in that repo is selected.",
 };
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 // How the work is kept apart from the main checkout: a branch in the folder the space is in, or a git
@@ -32,7 +46,7 @@ const text = (v) => (typeof v === "string" ? v : "");
 
 export const blankRole = () => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium" });
 export const blank = () => ({
-  version: VERSION, id: "", name: "", global: false, strategy: "branch", trigger: { labels: [], match: "any" },
+  version: VERSION, id: "", name: "", strategy: "branch", trigger: { labels: [], match: "any" },
   orchestrator: blankRole(), worker: blankRole(), reviewer: blankRole(),
 });
 
@@ -77,7 +91,6 @@ export function normalize(raw) {
     version: VERSION,
     id: text(r.id),
     name: text(r.name).trim(),
-    global: r.global === true,
     strategy: text(r.strategy) || "branch", // an older file has none, and worked on a branch
     trigger: normalizeTrigger(r.trigger),
     orchestrator: normalizeRole(r.orchestrator),
@@ -95,7 +108,6 @@ export function validate(workflow, takenIds = []) {
   else if (!slug(w.name)) add("name", "The name needs a letter or a number.");
   else if (!w.id && takenIds.includes(slug(w.name))) add("name", "A workflow with that name already exists.");
   if (!STRATEGIES.includes(w.strategy)) add("strategy", `The work strategy must be one of ${STRATEGIES.join(", ")}.`);
-  if (!w.trigger.labels.length) add("trigger", "Set at least one GitHub label that triggers it.");
   if (!MATCHES.includes(w.trigger.match)) add("match", `The trigger must match ${MATCHES.join(" or ")} of its labels.`);
   for (const role of ROLES) {
     const r = w[role], name = ROLE_LABELS[role];
@@ -116,7 +128,7 @@ export function serialize(workflow) {
   const w = normalize(workflow);
   const role = (r) => ({ prompt: r.prompt, agent: r.agent, command: r.command, model: r.model, effort: r.effort });
   return `${JSON.stringify({
-    version: w.version, id: w.id, name: w.name, global: w.global, strategy: w.strategy, trigger: { labels: w.trigger.labels, match: w.trigger.match },
+    version: w.version, id: w.id, name: w.name, strategy: w.strategy, trigger: { labels: w.trigger.labels, match: w.trigger.match },
     orchestrator: role(w.orchestrator), worker: role(w.worker), reviewer: role(w.reviewer),
   }, null, 2)}\n`;
 }

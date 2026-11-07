@@ -6,7 +6,6 @@ herdr-app/window.json
 herdr-app/seen.json
 herdr-app/installed.json
 # Workflows kept only on this computer (global ones are committed)
-herdr-app/workflows.local/
 skillshare/skills/synced/
 herdr-app/mods/skillshare/gpui-kit.d.ts
 herdr-app/mods/skillshare/jsconfig.json

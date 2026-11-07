@@ -8,7 +8,7 @@ import {
 
 const isMetadata = (f) => f === ".metadata.json" || f.endsWith("/.metadata.json");
 const lines = (r) => String(r.stdout ?? "").split("\n").map((s) => s.trim()).filter(Boolean);
-const BOTH_WAYS = ["push", "--pull", "-m", "Update skills from Herdr"];
+const BOTH_WAYS = ["push", "--pull", "-m", "Update workstation from Herdr"];
 const done = (text) => ({ kind: "done", text });
 const warn = (text) => ({ kind: "warn", text });
 const error = (text) => ({ kind: "error", text });

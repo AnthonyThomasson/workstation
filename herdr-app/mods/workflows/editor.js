@@ -1,14 +1,14 @@
 // One workflow, in the center: a tab the Workflows panel opens (props.role "editor", props.id the
-// workflow's id, or null for a new one). The trigger labels, the Global box, and for the orchestrator,
+// workflow's id, or null for a new one). The trigger labels, where it is kept (global, or the repo), and for the orchestrator,
 // the worker and the reviewer their agent, model, effort and prompt. Save writes the JSON file.
 // Not a View of its own: main.js builds one in init and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { run, setShared, theme } from "herdr";
-import { ROLES, ROLE_LABELS, AGENTS, AGENT_LABELS, CUSTOM, EFFORTS, STRATEGIES, STRATEGY_LABELS, STRATEGY_HINTS, MATCHES, MATCH_LABELS, MATCH_HINTS, blank, normalize, isDirty, uniqueLabels } from "./model.js";
+import { ROLES, ROLE_LABELS, AGENTS, AGENT_LABELS, CUSTOM, EFFORTS, STRATEGIES, STRATEGY_LABELS, STRATEGY_HINTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, SCOPES, SCOPE_LABELS, SCOPE_HINTS, blank, normalize, isDirty, uniqueLabels } from "./model.js";
 import { StoreError } from "./store.js";
-import { S, icon, stop, iconButton, action, checkbox } from "./ui.js";
-import { CHANGED, store, repoDir, gh, codexModels, kimiModels } from "./env.js";
+import { S, icon, stop, iconButton, action } from "./ui.js";
+import { CHANGED, store, gh, codexModels, kimiModels, workstationRepo } from "./env.js";
 import { modelsFor, matchModels, hasModel } from "./models.js";
 import { findRepo, loadLabels, matchLabels, hasLabel } from "./labels.js";
 
@@ -18,12 +18,16 @@ const scrim = (t) => (/^#[0-9a-f]{6}$/i.test(t.background ?? "") ? `${t.backgrou
 export class WorkflowEditor {
   constructor(props, cx) {
     this.id = props?.id ?? null;
-    this.where = props?.where ?? {}; // the selected space's folder and machine, to find its repo
+    this.where = props?.where ?? {}; // the selected space's folder and machine, to find its repo's labels
+    this.scope = props?.scope ?? "global"; // where the file is kept (model.js SCOPES)
+    this.baseScope = this.scope;
+    this.repoRoot = props?.repoRoot ?? null; // the repo of the space this was opened from: where "Repo" is
+    this.workstation = null; // the workstation repo, where "Global" is; found below
+    this.ready = workstationRepo().then((root) => { this.workstation = root; cx.notify(); }, () => {});
     this.nameInput = InputState.new({ value: "", placeholder: "Feature development" });
     this.labelInput = InputState.new({ value: "", placeholder: "Type a label and press Enter" });
     this.triggerLabels = []; // the labels already added, shown as chips; the field holds the next one
     this.match = "any";
-    this.global = false;
     this.strategy = "branch";
     this.roles = {};
     for (const role of ROLES) {
@@ -66,7 +70,7 @@ export class WorkflowEditor {
     this.search.on("change", (_e, cx) => cx.notify());
     this.search.on("submit", (_e, cx) => { const first = this.options()[0]; if (first) this.choose(first, cx); });
 
-    this.previous = null; // what the file held when it was read: { workflow, text, global }
+    this.previous = null; // what the file held when it was read: { workflow, text, scope }
     this.base = blank();
     this.loaded = false;
     this.loadError = null;
@@ -142,6 +146,13 @@ export class WorkflowEditor {
     this.addLabel(exact?.name ?? this.suggestions()[0]?.name ?? text, cx);
   }
 
+  setScope(scope, cx) {
+    if (this.unavailable(scope)) return;
+    this.scope = scope;
+    if (this.notice?.kind === "saved") this.notice = null;
+    cx.notify();
+  }
+
   setMatch(match, cx) {
     this.match = match;
     if (this.notice?.kind === "saved") this.notice = null;
@@ -150,7 +161,7 @@ export class WorkflowEditor {
 
   // The form as a workflow.
   current() {
-    const w = { ...blank(), id: this.id ?? "", name: this.nameInput.value(), global: this.global, strategy: this.strategy, trigger: { labels: [...this.triggerLabels, this.labelInput.value()], match: this.match } };
+    const w = { ...blank(), id: this.id ?? "", name: this.nameInput.value(), strategy: this.strategy, trigger: { labels: [...this.triggerLabels, this.labelInput.value()], match: this.match } };
     for (const role of ROLES) {
       const r = this.roles[role];
       w[role] = { prompt: r.prompt.value(), agent: r.agent, command: r.command.value(), model: r.model.value(), effort: r.effort };
@@ -164,7 +175,6 @@ export class WorkflowEditor {
     this.triggerLabels = [...workflow.trigger.labels];
     this.match = workflow.trigger.match;
     this.labelInput.set_value("");
-    this.global = workflow.global;
     this.strategy = workflow.strategy;
     for (const role of ROLES) {
       const r = this.roles[role], w = workflow[role];
@@ -177,8 +187,20 @@ export class WorkflowEditor {
     this.base = normalize(workflow);
   }
 
+  // The stores for what is known now: this workflow's repo and the workstation repo, where they exist.
+  store() {
+    return store({ workstation: this.workstation, repo: this.repoRoot });
+  }
+
+  // Whether each scope can be saved to here, and why not when it cannot.
+  unavailable(scope) {
+    if (scope === "global" && !this.workstation) return "No workstation repo found. Skillshare's skills aren't in a git repo with a herdr-app folder; set the repo in the Workflows panel.";
+    if (scope === "repo" && !this.repoRoot) return "The space this was opened from isn't a git repo on this computer.";
+    return null;
+  }
+
   dirty() {
-    return this.loaded && isDirty(this.base, this.current());
+    return this.loaded && (isDirty(this.base, this.current()) || this.scope !== this.baseScope);
   }
 
   load(cx) {
@@ -188,13 +210,17 @@ export class WorkflowEditor {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
+        await this.ready; // the workstation repo, which a global workflow is in
         if (this.id) {
-          const found = await store().load(this.id);
+          const found = await this.store().load(this.scope, this.id);
           if (!found) throw new Error("This workflow's file is gone.");
           this.previous = found;
+          this.baseScope = found.scope;
           this.show(found.workflow);
         } else {
           this.previous = null;
+          // A new workflow goes where it can: global, else the repo of the space it was opened from.
+          if (this.unavailable("global") && !this.unavailable("repo")) this.scope = this.baseScope = "repo";
           this.show(blank());
         }
         this.loaded = true;
@@ -207,6 +233,7 @@ export class WorkflowEditor {
 
   revert(cx) {
     this.show(this.base);
+    this.scope = this.baseScope;
     this.notice = null;
     cx.notify();
   }
@@ -220,20 +247,20 @@ export class WorkflowEditor {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const s = store();
+        const s = this.store();
         // Overwrite: take the file as it is now as the thing being replaced.
-        if (force && this.id) this.previous = (await s.load(this.id)) ?? this.previous;
-        const saved = await s.save(after, this.previous);
+        if (force && this.previous) this.previous = (await s.load(this.previous.scope, this.id)) ?? this.previous;
+        const saved = await s.save(after, this.scope, this.previous);
         const named = !this.id || saved.workflow.name !== this.base.name;
         this.id = saved.workflow.id;
-        this.previous = { workflow: saved.workflow, text: saved.text, global: saved.global };
+        this.previous = { workflow: saved.workflow, text: saved.text, scope: saved.scope };
+        this.baseScope = saved.scope;
         this.base = normalize(saved.workflow);
         this.triggerLabels = [...saved.workflow.trigger.labels]; // what was typed is now one of the chips
         this.labelInput.set_value("");
-        const extra = saved.global && !saved.mirror.mirrored
-          ? (saved.mirror.error ? ` Not copied to the clone: ${saved.mirror.error}.` : " Set the workstation clone in the Workflows panel to copy it there.")
-          : saved.global ? " Copied to the workstation clone." : "";
-        this.notice = { kind: "saved", text: `Saved.${extra}` };
+        const where = { global: `in ${this.workstation}/herdr-app/workflows. Push it from the Skillshare panel to share it`, repo: `in ${this.repoRoot}/.herdr/workflows. Commit it with the repo` }[saved.scope];
+        const extra = ` ${where}.`;
+        this.notice = { kind: "saved", text: `Saved${extra}` };
         if (named) run("tab.rename", { name: saved.workflow.name });
         setShared(CHANGED, Date.now());
       } catch (e) {
@@ -333,7 +360,6 @@ export class WorkflowEditor {
   }
 
   renderBasics(t) {
-    const repo = repoDir();
     return v_flex().flex_none().gap(12)
       .child(v_flex().gap(4).child(this.heading(t, "Name")).child(this.field(t, "name", this.nameInput, 36)))
       .child(this.renderTrigger(t))
@@ -348,12 +374,21 @@ export class WorkflowEditor {
             .child(STRATEGY_LABELS[strategy] ?? strategy);
         })))
         .child(div().text_size(S().label).text_color(t.muted).child(STRATEGY_HINTS[this.strategy] ?? "")))
-      .child(v_flex().gap(4)
-        .child(checkbox("workflow-global", "Global", this.global, t, (_e, cx) => { this.global = !this.global; if (this.notice?.kind === "saved") this.notice = null; cx.notify(); }))
-        .child(div().pl(24).text_size(S().label).text_color(t.muted)
-          .child(this.global
-            ? (repo ? `Saved for everyone using this workstation, and copied to ${repo}/herdr-app/workflows.` : "Saved for everyone using this workstation. Set the workstation clone in the Workflows panel to copy it into the repo.")
-            : "Only on this computer.")));
+      .child(v_flex().gap(4).child(this.heading(t, "Kept"))
+        .child(h_flex().flex_wrap().gap(4).children(SCOPES.map((scope) => {
+          const on = scope === this.scope, off = Boolean(this.unavailable(scope)) && !on;
+          return h_flex().id(`scope-${scope}`).h(28).px(12).items_center().rounded(6)
+            .border_1().border_color(t.border).bg(on ? t.selected : t.background).text_size(S().secondary)
+            .text_color(on ? t.foreground : t.muted).when(on, (el) => el.font_semibold())
+            .when(off, (el) => el.opacity(0.4))
+            .when(!off, (el) => el.cursor_pointer().hover((x) => x.bg(on ? t.selected : t.hover)).on_mouse_down("left", stop)
+              .on_click((_e, cx) => this.setScope(scope, cx)))
+            .child(SCOPE_LABELS[scope]);
+        })))
+        .child(div().text_size(S().label).text_color(t.muted).child(SCOPE_HINTS[this.scope] ?? ""))
+        .when(Boolean(this.unavailable(this.scope)), (el) => el.child(div().text_size(S().label).text_color(t.ansi1).child(this.unavailable(this.scope))))
+        .when(!this.unavailable(this.scope), (el) => el.child(div().text_size(S().label).text_color(t.muted)
+          .child(`In ${this.scope === "global" ? `${this.workstation}/herdr-app/workflows` : `${this.repoRoot}/.herdr/workflows`}.`))));
   }
 
   // The labels that start the workflow: the added ones as chips, a field that adds the next and completes from
@@ -369,7 +404,7 @@ export class WorkflowEditor {
       .child(div().max_w(260).truncate().child(name))
       .child(iconButton(`remove-label-${name}`, "close", t, (_e, cx) => this.removeLabel(name, cx)));
     return v_flex().gap(4)
-      .child(this.heading(t, "Trigger", "the GitHub labels that start this workflow"))
+      .child(this.heading(t, "Trigger", "the GitHub labels that start this workflow, or none"))
       .when(added.length > 0, (el) => el.child(h_flex().flex_wrap().gap(6).children(added.map(chip))))
       .child(this.field(t, "trigger", this.labelInput))
       .when(found.length > 0, (el) => el.child(v_flex().id("trigger-suggestions").p(4).gap(2).rounded(8).border_1().border_color(t.border).bg(t.popover)
@@ -390,6 +425,7 @@ export class WorkflowEditor {
             .child(MATCH_LABELS[match]);
         })))
         .child(div().text_size(S().label).text_color(t.muted).child(MATCH_HINTS[this.match] ?? ""))))
+      .when(count === 0, (el) => el.child(div().text_size(S().label).text_color(t.muted).child(FALLBACK_HINT)))
       .when(Boolean(this.labelNote), (el) => el.child(div().text_size(S().label).text_color(t.muted).child(this.labelNote)))
       .when(missing.length > 0, (el) => el.child(div().text_size(S().label).text_color(t.blocked ?? t.muted)
         .child(`${this.repo} has no label named ${missing.map((l) => `"${l}"`).join(", ")}. ${missing.length > 1 ? "They" : "It"} can't start anything until ${missing.length > 1 ? "they exist" : "it exists"} on GitHub.`)));

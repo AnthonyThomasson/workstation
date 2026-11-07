@@ -692,7 +692,7 @@ export default class Skillshare extends View {
       this.url.on("change", (_e, cx) => { this.error = null; cx.notify(); });
     }
     if (p.role === "conflict") this.choices = {};
-    if (p.role === "source") this.msg = InputState.new({ placeholder: "Update skills" });
+    if (p.role === "source") this.msg = InputState.new({ placeholder: "Update workstation" });
   }
 
   renderDialog(cx) {
@@ -756,7 +756,7 @@ export default class Skillshare extends View {
       const pullLabel = ahead && behind ? "Pull and merge" : behind ? `Pull ${plural(behind, "commit")}` : "Pull";
       const pull = () => { showPanel(); request({ op: "pull", on: p.on, repo: g.top }); close(); };
       const push = () => behind ? channel.say("warn", "Push rejected · origin has newer commits. Use Sync both ways.") || close() : pushNow();
-      const pushNow = () => { showPanel(); request({ op: "push", on: p.on, commit: dirty > 0, message: this.msg.value().trim() || "Update skills" }); close(); };
+      const pushNow = () => { showPanel(); request({ op: "push", on: p.on, commit: dirty > 0, message: this.msg.value().trim() || "Update workstation" }); close(); };
       const both = () => { close(); openOverlay({ mod: "skillshare", kind: "dialog", width: 460, height: 360, props: { role: "syncboth", on: p.on, repo: g.top, git: g } }); };
       const small = { h: 30, px: 12, size: S().secondary };
       return dialogFrame(t, "source", this.handle, "Source repository",

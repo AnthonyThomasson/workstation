@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { blank, normalize, validate, slug, snapshot, isDirty, serialize, parse, uniqueLabels, ROLES, EFFORTS, AGENTS, STRATEGIES, CUSTOM, AGENT_LABELS, MATCHES } from "./model.js";
+import { blank, normalize, validate, slug, snapshot, isDirty, serialize, parse, uniqueLabels, ROLES, EFFORTS, AGENTS, STRATEGIES, CUSTOM, AGENT_LABELS, MATCHES, SCOPES, SCOPE_LABELS, SCOPE_HINTS, isFallback } from "./model.js";
 
 const valid = (over = {}) => {
   const w = blank();
@@ -22,7 +22,7 @@ test("a blank workflow has every role with a default agent and effort", () => {
   const w = blank();
   for (const role of ROLES) assert.deepEqual(w[role], { prompt: "", agent: "claude", command: "", model: "", effort: "medium" });
   assert.deepEqual(w.trigger, { labels: [], match: "any" });
-  assert.equal(w.global, false);
+  assert.equal("global" in w, false); // where it is kept is the folder's business
   assert.equal(w.strategy, "branch");
 });
 
@@ -52,9 +52,8 @@ test("the agent and effort lists hold what Herdr and the editor offer", () => {
 });
 
 test("normalize survives junk and keeps an agent it does not know", () => {
-  const w = normalize({ name: "  X ", global: "yes", trigger: "nope", worker: { agent: "newagent", model: " m ", effort: 3 }, orchestrator: null });
+  const w = normalize({ name: "  X ", trigger: "nope", worker: { agent: "newagent", model: " m ", effort: 3 }, orchestrator: null });
   assert.equal(w.name, "X");
-  assert.equal(w.global, false); // only a real true counts
   assert.deepEqual(w.trigger, { labels: [], match: "any" });
   assert.equal(w.worker.agent, "newagent");
   assert.equal(w.worker.model, "m");
@@ -63,13 +62,23 @@ test("normalize survives junk and keeps an agent it does not know", () => {
   assert.deepEqual(normalize(null), normalize({}));
 });
 
+test("a workflow with no trigger labels is valid, and is the fallback", () => {
+  const w = valid();
+  w.trigger.labels = [];
+  assert.deepEqual(validate(w), []);
+  assert.equal(isFallback(w), true);
+  assert.equal(isFallback(valid()), false);
+  assert.deepEqual(JSON.parse(serialize(w)).trigger, { labels: [], match: "any" });
+  assert.equal(isFallback(parse(serialize(w))), true);
+});
+
 test("a complete workflow has no problems", () => {
   assert.deepEqual(validate(valid()), []);
 });
 
 test("validate names each missing piece", () => {
   const fields = validate(blank()).map((p) => p.field);
-  assert.deepEqual(fields, ["name", "trigger", "orchestrator.prompt", "worker.prompt", "reviewer.prompt"]);
+  assert.deepEqual(fields, ["name", "orchestrator.prompt", "worker.prompt", "reviewer.prompt"]);
 });
 
 test("validate rejects a whitespace prompt, an empty agent and an unknown effort", () => {
@@ -100,10 +109,10 @@ test("dirty tracking sees edits and ignores shape noise", () => {
 });
 
 test("serialize and parse round-trip, in a fixed key order", () => {
-  const w = valid({ id: "feature-work", global: true, strategy: "worktree" });
+  const w = valid({ id: "feature-work", strategy: "worktree" });
   const text = serialize(w);
   assert.ok(text.endsWith("}\n"));
-  assert.deepEqual(Object.keys(JSON.parse(text)), ["version", "id", "name", "global", "strategy", "trigger", "orchestrator", "worker", "reviewer"]);
+  assert.deepEqual(Object.keys(JSON.parse(text)), ["version", "id", "name", "strategy", "trigger", "orchestrator", "worker", "reviewer"]);
   assert.deepEqual(Object.keys(JSON.parse(text).worker), ["prompt", "agent", "command", "model", "effort"]);
   assert.deepEqual(parse(text), normalize(w));
 });
@@ -181,9 +190,12 @@ test("an unknown match is a problem, and any and all are not", () => {
   assert.deepEqual(validate(valid({ trigger: { labels: ["a", "b"], match: "most" } })).map((p) => p.field), ["match"]);
 });
 
-test("a trigger needs at least one label", () => {
-  assert.deepEqual(validate(valid({ trigger: { labels: [], match: "any" } })).map((p) => p.field), ["trigger"]);
-  assert.deepEqual(validate(valid({ trigger: { labels: ["  ", ""], match: "any" } })).map((p) => p.field), ["trigger"]);
+test("a trigger with no labels, or only blank ones, is the fallback and is valid", () => {
+  for (const labels of [[], ["  ", ""]]) {
+    const w = valid({ trigger: { labels, match: "any" } });
+    assert.deepEqual(validate(w), []);
+    assert.equal(isFallback(w), true);
+  }
 });
 
 test("a file from before triggers had several labels reads as one label", () => {
@@ -214,4 +226,15 @@ test("adding, removing or reordering trigger labels, or changing the match, is a
   const two = valid({ trigger: { labels: ["a", "b"], match: "any" } });
   assert.equal(isDirty(two, { ...two, trigger: { ...two.trigger, labels: ["b", "a"] } }), true);
   assert.equal(isDirty(two, { ...two, trigger: { ...two.trigger, labels: ["a", "b", "A"] } }), false); // a repeat is dropped
+});
+
+test("the scopes are global and repo, each with a name and a hint", () => {
+  assert.deepEqual(SCOPES, ["global", "repo"]);
+  for (const scope of SCOPES) { assert.ok(SCOPE_LABELS[scope]); assert.ok(SCOPE_HINTS[scope]); }
+});
+
+test("a file from before scopes, with a global flag, reads and is saved without it", () => {
+  const old = parse(JSON.stringify({ id: "x", name: "X", global: true, trigger: { labels: ["a"] } }));
+  assert.equal("global" in old, false);
+  assert.equal("global" in JSON.parse(serialize(old)), false);
 });

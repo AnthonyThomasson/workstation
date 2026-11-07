@@ -1,5 +1,5 @@
-// Tasks: the tickets on the GitHub Project linked to the selected space's repo. Open tickets first,
-// then a collapsed section per close reason, each newest first. Clicking one opens it in a tab of its
+// Tasks: the tickets on the GitHub Project linked to the selected space's repo. Only open tickets
+// show, newest first. Clicking one opens it in a tab of its
 // own to edit (editor.js), and saving pushes the change to GitHub.
 // Roles (props.role): the panel (default); "toggle", the tab-bar button that opens or closes the
 // layout's shared side panel on this panel, as Files, Changes and Skillshare do; "editor", one ticket
@@ -63,7 +63,6 @@ export default class GitHubTasks extends View {
     if (this.role === "toggle") return;
     if (this.role === "editor") { this.editor = new TaskEditor(blockProps(), cx); return; }
     this.handle = cx.focus_handle();
-    this.expanded = new Set(); // closed sections opened this session
     this.auth = new Auth();
     this.changedAt = shared(CHANGED) ?? null; // a save in an editor tab refreshes the list
     this.lastCwd = new Map();
@@ -215,19 +214,13 @@ export default class GitHubTasks extends View {
     if (!this.loaded) return v_flex().flex_1().min_h(0).p(16).gap(10).children([0, 1, 2, 3, 4].map((i) => div().h(44).flex_none().rounded(8).bg(t.chrome).opacity(1 - i * 0.15)));
     if (!this.project) return message(note(t, `No project linked to ${this.repo}.`));
 
-    const { open, closed } = this.groups, now = Date.now();
+    const { open } = this.groups, now = Date.now();
     const rows = [];
     if (this.error) rows.push(div().px(14).py(8).child(this.renderProblem(t, ctx)));
     if (this.truncated) rows.push(div().px(14).pt(10).child(note(t, `Showing the first ${MAX_ITEMS.toLocaleString()} project items, so some tickets may be missing.`, t.blocked)));
     rows.push(this.sectionTitle(t, `Open · ${open.length}`));
     if (open.length) rows.push(...open.map((ticket) => this.row(t, ticket, now, ticket.draft ? t.muted : t.ansi2)));
-    else rows.push(div().px(14).py(4).child(note(t, closed.length ? "No open tickets." : `No tickets for ${this.repo} on this project.`)));
-    if (closed.length) rows.push(div().flex_none().h(1).mx(14).mt(10).mb(4).bg(t.border));
-    for (const section of closed) {
-      const isOpen = this.expanded.has(section.key);
-      rows.push(this.closedHeader(t, section, isOpen));
-      if (isOpen) rows.push(...section.tickets.map((ticket) => this.row(t, ticket, now, section.key === "COMPLETED" ? t.ansi5 : t.muted)));
-    }
+    else rows.push(div().px(14).py(4).child(note(t, `No open tickets for ${this.repo} on this project.`)));
     return div().id("tickets").flex_1().min_h(0).overflow_y_scrollbar().child(v_flex().pb(16).children(rows));
   }
 
@@ -243,18 +236,6 @@ export default class GitHubTasks extends View {
 
   sectionTitle(t, label) {
     return h_flex().flex_none().min_h(28).px(14).pt(10).pb(4).items_center().text_size(S().label).font_semibold().text_color(t.muted).child(label);
-  }
-
-  closedHeader(t, section, isOpen) {
-    return h_flex().id(`section-${section.key}`).flex_none().h(30).mx(8).px(6).gap(6).items_center().rounded(6).cursor_pointer()
-      .text_size(S().label).font_semibold().text_color(t.muted).hover((s) => s.bg(t.hover))
-      .on_mouse_down("left", stop)
-      .on_click((_e, cx) => {
-        if (isOpen) this.expanded.delete(section.key); else this.expanded.add(section.key);
-        cx.notify();
-      })
-      .child(icon(isOpen ? "chevron-down" : "chevron-right", 14, t.muted))
-      .child(`${section.label} · ${section.tickets.length}`);
   }
 
   // A click opens the ticket in a tab to edit. Its folder and machine go along, so the editor asks
