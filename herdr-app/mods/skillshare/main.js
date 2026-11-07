@@ -23,6 +23,9 @@ const PANEL = "skillshare-panel"; // the layout node the toggle shows and hides;
 const RECENT = "skillshare.recent.v1"; // install sources, newest first
 const HIDE_DISABLED = "skillshare.hideDisabled.v1"; // false lists disabled rows; unset or true hides them
 const IN_SYNC_VIEW = "skillshare.inSyncView.v1"; // "list", or unset for In sync skills/agents grouped by source
+const IGNORED = "skillshare.doctorIgnored.v1"; // doctor warnings the person chose to hide: ["scope|name|message", ...]
+const ignoredList = () => (Array.isArray(shared(IGNORED)) ? shared(IGNORED) : []);
+const doctorKey = (scope, c) => `${scope}|${c.name}|${c.message}`;
 const POLL = 20000, CHECK_EVERY = 10 * 60 * 1000, MACHINES_POLL = 60000, NOTICE_MS = 4000;
 // SKILLSHARE_THEME: the panel runs without a terminal, so skillshare can't probe the theme and warns.
 const PATHS = 'PATH="$HOME/.local/bin:$HOME/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH; SKILLSHARE_THEME=dark; export SKILLSHARE_THEME';
@@ -570,13 +573,19 @@ export default class Skillshare extends View {
     });
   }
 
-  doctorRow(t, c) {
+  doctorRow(t, c, scope, ignored = false) {
     const color = c.status === "error" ? t.ansi1 : t.blocked;
+    const key = doctorKey(scope, c);
+    const id = `${scope}-${c.name}`;
+    const action = c.status !== "warning" ? null
+      : ignored ? secondary(`restore-${id}`, "Restore", t, (_e, cx) => { setShared(IGNORED, ignoredList().filter((k) => k !== key)); cx.notify(); }, { h: 24, px: 8, size: S().label, quiet: true })
+      : secondary(`ignore-${id}`, "Ignore", t, () => openOverlay({ mod: "skillshare", kind: "dialog", width: 460, height: 230, props: { role: "ignore", key, name: c.name, scope } }), { h: 24, px: 8, size: S().label, quiet: true });
     return v_flex().gap(4).px(12).py(8).rounded(8).border_1().border_color(t.border).bg(t.background)
       .child(h_flex().gap(8).items_center()
         .child(dot(color, 8))
         .child(div().flex_1().min_w(0).truncate().text_size(S().secondary).font_semibold().child(c.name))
-        .child(pill(c.status, t)))
+        .child(pill(c.status, t))
+        .when(Boolean(action), (el) => el.child(action)))
       .child(div().text_size(S().secondary).text_color(t.foreground).child(c.message))
       .children((c.details ?? []).map((l) => div().text_size(S().label).text_color(t.muted).child(l)));
   }
@@ -592,14 +601,20 @@ export default class Skillshare extends View {
     if (!ctx) body.push(note(t, "Open a space to run doctor."));
     else if (this.doctorError) body.push(note(t, this.doctorError, t.ansi1));
     else if (!this.doctor) body.push(note(t, this.doctorLoading ? "Running skillshare doctor…" : "Doctor has not run yet."));
+    const hidden = new Set(ignoredList());
     for (const r of this.doctor ?? []) {
       const errors = r.checks.filter((c) => c.status === "error");
-      const warns = r.checks.filter((c) => c.status === "warning");
-      const rest = r.checks.length - errors.length - warns.length;
+      const warns = r.checks.filter((c) => c.status === "warning" && !hidden.has(doctorKey(r.scope, c)));
+      const ignored = r.checks.filter((c) => c.status === "warning" && hidden.has(doctorKey(r.scope, c)));
+      const rest = r.checks.length - errors.length - warns.length - ignored.length;
       const label = r.scope === "project" ? "Project" : "Global";
       body.push(sectionLabel(t, `${label} · ${plural(errors.length, "error")} · ${plural(warns.length, "warning")} · ${rest} other`));
       if (!errors.length && !warns.length) body.push(note(t, "No errors or warnings."));
-      body.push(...errors.map((c) => this.doctorRow(t, c)), ...warns.map((c) => this.doctorRow(t, c)));
+      body.push(...errors.map((c) => this.doctorRow(t, c, r.scope)), ...warns.map((c) => this.doctorRow(t, c, r.scope)));
+      if (ignored.length) {
+        body.push(sectionLabel(t, `Ignored · ${ignored.length}`));
+        body.push(...ignored.map((c) => this.doctorRow(t, c, r.scope, true)));
+      }
     }
     return v_flex().flex_1().min_h(0).child(header)
       .child(div().id("doctor").flex_1().min_h(0).overflow_y_scrollbar().child(v_flex().p(14).gap(10).children(body)));
@@ -678,6 +693,12 @@ export default class Skillshare extends View {
       return dialogFrame(t, "hook", this.handle, `${label} “${it.label}”?`,
         [note(t, `${it.scope} · ${p.on ?? "local"}`), note(t, wording[p.action], t.foreground)],
         [dialogButton("cancel", "Cancel", t, close), dialogButton("go", label, t, go, p.action === "remove" ? "danger" : undefined)], close, null);
+    }
+    if (p.role === "ignore") {
+      const go = () => { setShared(IGNORED, [...new Set([...ignoredList(), p.key])]); close(); };
+      return dialogFrame(t, "ignore", this.handle, `Are you sure you want to ignore “${p.name}”?`,
+        [note(t, `Hides this ${p.scope} warning in the Doctor tab. skillshare doctor still reports it, and you can restore it from the Ignored list.`, t.foreground)],
+        [dialogButton("cancel", "Cancel", t, close), dialogButton("go", "Ignore", t, go, "primary")], close, go);
     }
     if (p.role === "uninstall") {
       const it = p.item;
