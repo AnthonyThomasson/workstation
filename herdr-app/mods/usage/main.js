@@ -1,9 +1,8 @@
 // Usage under the Agents panel, one line per provider: the session (S) and weekly (W) share used.
 // Claude's numbers come from the status-line feed Claude Code writes as it runs
 // (~/.cache/herdr-usage/claude-status.json, kept by ~/.claude/statusline-usage.sh). Kimi's come from
-// the Kimi Code login: the refresh button trades the stored refresh token for a new login (the CLI's
-// own refresh grant), writes it back in the CLI's format, then reads the usage. Kimi is never
-// refreshed on its own. A window that is not reported shows no figure.
+// the Kimi Code login: the refresh button trades the stored refresh token for a new login (the CLI's own refresh grant), writes it back in the CLI's format,
+// then reads the usage. Kimi is never refreshed on its own. A window that is not reported shows no figure.
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme, home, readTextFile, writeTextFile, exec, nextCommand } from "herdr";
@@ -15,10 +14,19 @@ const KIMI_CLIENT = "17e5f671-d194-4dfb-9706-5516cb48c098"; // the Kimi Code CLI
 const KIMI_OAUTH = "https://auth.kimi.ai";
 const KIMI_USAGE = "https://api.kimi.ai/coding/v1/usages";
 const SAVED = "kimi.reading.v1"; // the last Kimi reading, kept for the next start
+const CLAUDE_SAVED = "claude.reading.v1"; // the last Claude reading that had limits, kept for the next start
 const LOGO = { claude: "mods/usage/icons/claude.svg", kimi: "mods/usage/icons/kimi.svg" };
 const REFRESH_ICON = "mods/usage/icons/refresh.svg";
 
 const stop = (_e, cx) => cx.stop_propagation();
+
+// A refresh button for a row's right edge. It spins while its provider is being read.
+const refreshButton = (t, id, busy, onRefresh) => {
+  const icon = svg(REFRESH_ICON).size(13).flex_none().text_color(busy ? t.muted : t.foreground);
+  return div().id(id).size(20).flex_none().flex().items_center().justify_center().rounded(4)
+    .when(!busy, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => onRefresh(cx)))
+    .child(busy ? icon.spin(900) : icon);
+};
 
 // Reset times come as epoch seconds or milliseconds; both become milliseconds.
 const epochMs = (v) => (v == null ? null : Number(v) > 1e12 ? Number(v) : Number(v) * 1000);
@@ -92,17 +100,17 @@ async function kimiReading(cx) {
   return { session: limit(usages?.limit_5h), weekly: limit(usages?.limit_7d), at: Date.now() };
 }
 
-function loadSaved() {
-  try { return JSON.parse(localStorage.getItem(SAVED) || "null"); } catch (_e) { return null; }
+function loadSaved(key) {
+  try { return JSON.parse(localStorage.getItem(key) || "null"); } catch (_e) { return null; }
 }
-function remember(reading) {
-  try { localStorage.setItem(SAVED, JSON.stringify(reading)); } catch (_e) { /* kept for this run only */ }
+function remember(key, reading) {
+  try { localStorage.setItem(key, JSON.stringify(reading)); } catch (_e) { /* kept for this run only */ }
 }
 
 export default class Usage extends View {
   init(_props, cx) {
-    this.claude = null; this.claudeError = null; this.claudeLoaded = false;
-    this.kimi = loadSaved(); this.kimiError = null; this.kimiBusy = false;
+    this.claude = loadSaved(CLAUDE_SAVED); this.claudeError = null; this.claudeLoaded = false;
+    this.kimi = loadSaved(SAVED); this.kimiError = null; this.kimiBusy = false;
     cx.timer.every(REFRESH, (cx) => this.refreshClaude(cx));
     this.refreshClaude(cx);
     // The mod's command: "usage.refresh-kimi" (herdr-app do usage.refresh-kimi) does what the button does.
@@ -118,7 +126,10 @@ export default class Usage extends View {
   refreshClaude(cx) {
     cx.spawn(async (cx) => {
       try {
-        this.claude = await claudeReading();
+        // A session's feed has no limits until its first API response, and such a session overwrites the
+        // feed. Keep the last reading that had limits rather than showing "not connected" for that moment.
+        const reading = await claudeReading();
+        if (reading) { this.claude = reading; remember(CLAUDE_SAVED, reading); }
         this.claudeError = null;
       } catch (e) {
         this.claude = null;
@@ -136,7 +147,7 @@ export default class Usage extends View {
     cx.spawn(async (cx) => {
       try {
         this.kimi = await kimiReading(cx);
-        remember(this.kimi);
+        remember(SAVED, this.kimi);
       } catch (e) {
         this.kimiError = e.reason === "sign-in" ? "sign in again" : e.reason === "no-login" ? "not signed in" : "unavailable";
         console.log(`usage kimi: ${e?.message ?? e}`);
@@ -149,18 +160,14 @@ export default class Usage extends View {
 
   render(cx) {
     const t = theme();
-    const busy = this.kimiBusy;
     // What a provider's line says in place of, or next to, its figures. Null when there is nothing to say.
     const claudeNote = this.claudeError ? "unavailable" : !this.claudeLoaded ? "checking…" : !this.claude ? "not connected" : null;
-    const kimiNote = busy ? "refreshing…" : this.kimiError ? this.kimiError : !this.kimi ? "not connected" : null;
-    const icon = svg(REFRESH_ICON).size(13).flex_none().text_color(busy ? t.muted : t.foreground);
-    const button = div().id("usage-kimi-refresh").size(20).flex_none().flex().items_center().justify_center().rounded(4)
-      .when(!busy, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => this.refreshKimi(cx)))
-      .child(busy ? icon.spin(900) : icon);
+    const kimiNote = this.kimiBusy ? "refreshing…" : this.kimiError ? this.kimiError : !this.kimi ? "not connected" : null;
+    const kimiButton = refreshButton(t, "usage-kimi-refresh", this.kimiBusy, (cx) => this.refreshKimi(cx));
     return v_flex().id("usage").size_full().min_h(0).px(PAD).py(10).gap(8).border_t(1).border_color(t.border)
       .child(div().text_size(11).font_semibold().text_color(t.muted).child("Usage"))
       .child(this.row(t, { id: "claude", reading: this.claude, note: claudeNote }))
-      .child(this.row(t, { id: "kimi", reading: this.kimi, note: kimiNote, button }));
+      .child(this.row(t, { id: "kimi", reading: this.kimi, note: kimiNote, button: kimiButton }));
   }
 
   // One provider on one line: logo, S and W percentages, a note, and an optional button at the right.
