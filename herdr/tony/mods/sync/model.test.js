@@ -157,3 +157,11 @@ test("small helpers", () => {
   assert.equal(shortError("a\nb\n  \n"), "b");
   assert.equal(shortError(""), "");
 });
+
+test("the brief for a conflict in the skillshare source says how to finish it there", () => {
+  const b = conflictBrief({ repo: "/s", script: "./mount.sh", kind: "rebase", target: "source", files: [{ path: "skills/x/SKILL.md", remote: "B", local: "A" }] });
+  assert.match(b, /skillshare source at \/s/);
+  assert.match(b, /skills\/x\/SKILL\.md/);
+  assert.match(b, /skillshare sync --all -g/);
+  assert.ok(!/mount\.sh/.test(b));
+});

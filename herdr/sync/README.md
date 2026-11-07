@@ -17,15 +17,26 @@ Click the button.
 | --- | --- | --- |
 | Behind by N commits (expands to list them) | **Pull** | `git pull --rebase`, then the sync script with `--push` (the repo wins; the script backs up any Herdr file it overwrites), then `skillshare sync --all -g` if skillshare is installed. |
 | N files changed in Herdr (expands to list the files, with an editable commit message and "N commits not pushed") | **Push** | The sync script with `--pull`, commit everything, `git pull --rebase`, push to the branch's upstream. If the rebase brought in remote commits, the sync script runs with `--push` afterwards so Herdr matches. |
-| Skillshare | Sync targets | Placeholder; targets are in Details. |
+| Skillshare: N need sync | **Sync targets** | `skillshare sync --all` and `skillshare sync plugins`, for global and project scope. |
 
 `Details…` opens a tab with Targets, Source, Machines and Conflicts. The gear opens the settings dialog.
+
+## Details
+
+- **Targets**: what skillshare's targets still need (items "missing" or changed since the last sync, native hook files, hook plan notices), with a per-item **Diff** and **Sync targets**.
+- **Source**: the skillshare source folder comes from `skillshare status --json -g`. When it lies inside the config repo, the section is one line saying Push and Pull in the popover cover it. When it is its own git repo, the section shows the repo path and remote, uncommitted / to push / to pull tags, the changed files, and the guidance "Pull blocked while uncommitted changes" and "Push rejected, origin has newer commits". Actions: a commit message (generated, editable), **Commit and push**, **Pull**, and **Both ways** (`skillshare push --pull`, which commits, pulls, pushes and links the targets). After a pull the targets are linked again.
+- **Machines**: a card for this computer and each Herdr machine: skillshare version (an "update" pill, or "skillshare not found"), the source's git state, target count, "Needs sync" count, doctor errors and warnings, "Checked N ago". The cards refresh every 60 seconds while the tab is shown. **Pull and sync** pulls that machine's own source repo, or else its config repo, or else just links the targets. **Update to <version>** asks first, then runs `skillshare upgrade --cli --force` there.
+- **Conflicts**: see below.
 
 `git fetch` runs every 5 minutes and whenever the popover opens. The local check, the sync script's `--pull --dry-run` plus `git status`, runs every 20 seconds.
 
 ## Conflicts
 
 When a push's rebase, or its copy of Herdr's files, meets a conflict, sync undoes the half-done rebase and pushes nothing. It opens the conflict agent in a new tab in the repo folder with a brief naming each conflicting file and what each side changed. The button and popover show "Conflict, resolving" until the repo is clean: no rebase or merge in progress, no unmerged files, and the remote's commits contained in the repo.
+
+### Choosing a side
+
+A pull of the skillshare source, and a repo Pull or Push that hit a conflict, stop with nothing changed. Details, Conflicts shows both sides of each conflicting file (the lines the other side lacks are marked) and a **Keep this** button per side, plus **Keep all local** and **Keep all remote**. `.metadata.json` is merged entry by entry without asking: an entry changed on one side takes that side; changed on both, the later `installed_at` wins and an edit beats a delete. **Apply choices** replays the merge, takes the chosen side of each file and commits it; then the targets are linked again (source), or the sync script runs with `--push` and, for a stopped Push, the merge is pushed (repo). Before applying, sync fetches again: if the remote moved since you looked, or other files conflict now, nothing is applied and you are asked again. **Hand it to the agent** opens the conflict agent instead, with a brief naming each file.
 
 A copy conflict means Herdr's copy of a file would overwrite an uncommitted edit in the repo. The repo's edit is put back and Herdr's version is saved under `.sync-backup/conflict-<time>/herdr/` in the repo (sync adds `.sync-backup/` to the repo's `.git/info/exclude`).
 
@@ -46,7 +57,11 @@ The sync script must take `--push` (repo to Herdr), `--pull` (Herdr to repo) and
 - `model.js` pure logic: settings, parsing what the scripts print, the badge, the conflict brief
 - `ops.js` the check, pull and push shell scripts and the functions that run them
 - `channel.js` how the popover and dialogs hand work to the button (shared values, one lock per machine)
-- `details.js` the Details tab, one function per section
+- `details.js` the Details tab frame and its sections
+- `targets.js`, `targets-ops.js`, `targets-ui.js` the Targets section: reading skillshare, sync and diff
+- `source.js`, `source-ui.js` the skillshare source's own git repo: state, pull, push, both ways
+- `conflicts.js`, `conflicts-ui.js` choosing a side per file on a stopped pull; the per-entry `.metadata.json` merge
+- `machines.js`, `machines-ui.js` the Machines cards, "Pull and sync" and the CLI upgrade
 - `ui.js` the shared look
 - `main.js` the views: button, popover, settings dialog, details tab
-- `*.test.js` run with `node --test herdr/sync/mods/sync` (`ops.test.js` uses throwaway git repositories and this repo's `mount.sh`)
+- `*.test.js` run with `node --test herdr/sync/mods/sync` (`ops.test.js`, `conflicts.test.js` and `source.test.js` use throwaway git repositories, `scratch-repos.js` builds them; `ops.test.js` also runs this repo's `mount.sh`). The real skillshare CLI is never run by the tests.

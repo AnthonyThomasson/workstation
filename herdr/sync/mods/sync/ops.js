@@ -159,6 +159,21 @@ printf '@pushed\\t%s\\n@pulled\\t%s\\n' "$ahead" "$n"
 printf '@msg\\tPushed %s commit(s) to %s\\n@result\\tok\\n' "$ahead" "$up"
 `;
 
+// After the person chose a side for each conflicting file (conflicts.js) and the merge was committed:
+// make Herdr match the repo ($script --push; the repo wins and the script backs up what it replaces) and,
+// with $3 = 1, push the merge to the upstream branch.
+export const FINISH = `${PRELUDE}
+[ "$script_missing" = 0 ] || fail "The sync script $script was not found in the repo"
+[ -z "$inprog" ] || fail "A rebase or merge is still in progress in the repo"
+$script --push >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
+if [ "$3" = 1 ]; then
+  [ -n "$up" ] || fail "This branch has no remote branch to push to"
+  remote=\${up%%/*}; rbranch=\${up#*/}
+  git push --quiet "$remote" "HEAD:$rbranch" >"$tmp/out" 2>&1 || fail "Push was rejected: $(tail -n 1 "$tmp/out")"
+  printf '@msg\\tMerged, updated Herdr and pushed\\n@result\\tok\\n'
+else printf '@msg\\tMerged and updated Herdr\\n@result\\tok\\n'; fi
+`;
+
 // io.sh(script, args): one short exec (Herdr stops an exec after 30 s). io.job(script, args): the same
 // script detached and polled (jobs.js); used for everything that can touch the network.
 const settle = async (io, script, args, { long = false } = {}) => {
@@ -180,4 +195,9 @@ export async function pull(io, cfg) {
 
 export async function push(io, cfg, message) {
   return parseOutcome((await settle(io, PUSH, [cfg.repo, cfg.script, message], { long: true })).text);
+}
+
+// After a conflict was resolved by choosing sides: Herdr matches the repo, and with push the merge goes up.
+export async function finishMerge(io, cfg, { push: andPush = false } = {}) {
+  return parseOutcome((await settle(io, FINISH, [cfg.repo, cfg.script, andPush ? "1" : "0"], { long: true })).text);
 }

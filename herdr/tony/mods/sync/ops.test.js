@@ -8,7 +8,8 @@ import { realpathSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, exis
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkRepo, pull, push } from "./ops.js";
+import { checkRepo, pull, push, finishMerge } from "./ops.js";
+import { prepare, applyChoices } from "./conflicts.js";
 import { createRunner } from "./jobs.js";
 import { badge, changedFiles } from "./model.js";
 
@@ -181,6 +182,28 @@ test("when the remote and Herdr change the same file, Push pushes nothing and na
     assert.deepEqual(s.unmerged, []);
     assert.equal(s.unpushed.length, 1);
     assert.equal(s.behind.length, 1);
+  } finally { clean(w); }
+});
+
+test("a push conflict can be settled by choosing a side: the merge is committed, Herdr matches and it is pushed", async () => {
+  const w = world("choose");
+  try {
+    w.put(w.b, "herdr/demo/mods/demo/main.js", "remote version\n");
+    w.git(w.b, "commit", "-q", "-am", "Remote edit of the demo"); w.git(w.b, "push", "-q");
+    const f = join(w.herdr, "mods/demo/main.js");
+    writeFileSync(f, "herdr version\n"); later(f);
+    assert.equal((await push(w.io, w.cfg, "Sync")).result, "conflict");
+    const p = await prepare(w.io, { repo: w.a });
+    assert.equal(p.kind, "stopped");
+    assert.deepEqual(p.stopped.files, ["herdr/demo/mods/demo/main.js"]);
+    const a = await applyChoices(w.io, { repo: w.a, choices: { "herdr/demo/mods/demo/main.js": "remote" }, upHash: p.stopped.upHash });
+    assert.equal(a.kind, "applied");
+    const out = await finishMerge(w.io, w.cfg, { push: true });
+    assert.equal(out.result, "ok", out.message);
+    assert.equal(readFileSync(f, "utf8"), "remote version\n", "Herdr now matches the repo");
+    const s = await checkRepo(w.io, w.cfg, { fetch: true });
+    assert.equal(s.behind.length + s.unpushed.length, 0, "pushed");
+    assert.equal(w.git(w.remote, "show", "main:herdr/demo/mods/demo/main.js"), "remote version\n");
   } finally { clean(w); }
 });
 

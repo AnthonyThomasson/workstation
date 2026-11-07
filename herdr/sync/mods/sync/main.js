@@ -4,19 +4,22 @@
 // that machine's settings (repo path, sync script, conflict agent). Click it for the popover:
 // Pull, Push and Details. Nothing about a particular repo is written in the code.
 // Roles (props.role): the button (default); "popover" (a pointer popup), "settings" (a dialog),
-// "text" (a dialog showing one command's output), "details" (a tab). The popover and dialogs are separate views whose tasks end when they close, so
+// "text" (a dialog showing one command's output), "upgrade" (a confirm dialog), "details" (a tab). The popover and dialogs are separate views whose tasks end when they close, so
 // they hand work to the button through channel.js, which runs it; results come back as shared state.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import {
-  exec, run, spaces, shared, setShared, theme, openOverlay, closeOverlay, knownAgents, pickFolder, notify, readTextFile,
+  exec, run, spaces, machines, shared, setShared, theme, openOverlay, closeOverlay, knownAgents, pickFolder, notify, readTextFile,
   props as blockProps,
 } from "herdr";
 import {
   settingsFor, normalizeSettings, badge, changedFiles, viewState, resolved, commitMessage, conflictBrief,
-  plural, ago, DEFAULTS,
+  plural, ago, DEFAULTS, sourceCommitMessage,
 } from "./model.js";
-import { checkRepo, pull, push, PATHS } from "./ops.js";
+import { checkRepo, pull, push, finishMerge, PATHS } from "./ops.js";
+import { previewFiles, applyChoices, UPHASH } from "./conflicts.js";
+import { checkSource, pullSource, pushSource, bothSource, resolveSource } from "./source.js";
+import { loadMachine, upgradeCli, pullPlan, bareVersion } from "./machines.js";
 import { createRunner } from "./jobs.js";
 import { findProject, hasSkillshare, loadTargets, syncTargets, diffText } from "./targets-ops.js";
 import { needsSync, scopesToSync } from "./targets.js";
@@ -28,6 +31,10 @@ const SETTINGS = "sync.settings.v1"; // { [machine]: { repo, script, agent } }; 
 const STATE = "sync.state.v1"; // { [machine]: what the last check read }
 const CONFLICT = "sync.conflict.v1"; // { [machine]: { kind, files, saved, at } } until the repo is clean
 const TARGETS = "sync.targets.v1"; // { [machine]: what the last skillshare read found; see readTargets }
+const SOURCE = "sync.source.v1"; // { [machine]: the skillshare source's git state; see readSourceState }
+const STOPPED = "sync.stopped.v1"; // { [machine]: a pull stopped on a conflict, waiting for a choice per file }
+const BUMP = "sync.machines.bump.v1"; // changes when the Machines cards should be read again
+const MACHINES_EVERY = 60 * 1000;
 const CHECK_EVERY = 20 * 1000, FETCH_EVERY = 5 * 60 * 1000, TARGETS_EVERY = 2 * 60 * 1000;
 
 const channel = createChannel({ get: (k) => shared(k), set: (k, v) => setShared(k, v) });
@@ -89,7 +96,8 @@ export default class Sync extends View {
     if (this.role === "button") return this.initButton(cx);
     if (this.role === "popover") return this.initPopover(cx);
     if (this.role === "settings") return this.initSettings(cx);
-    if (this.role === "text") return this.handle.focus();
+    if (this.role === "text" || this.role === "upgrade") return this.handle.focus();
+    if (this.role === "details") return this.initDetails(cx);
   }
 
   render(cx) {
@@ -97,6 +105,7 @@ export default class Sync extends View {
     if (this.role === "popover") return this.renderPopover(cx);
     if (this.role === "settings") return this.renderSettings(cx);
     if (this.role === "text") return this.renderText(cx);
+    if (this.role === "upgrade") return this.renderUpgrade(cx);
     return this.renderDetailsTab(cx);
   }
 
@@ -107,7 +116,8 @@ export default class Sync extends View {
     cx.timer.every(CHECK_EVERY, (cx) => this.check(cx));
     cx.timer.every(FETCH_EVERY, (cx) => this.check(cx, { fetch: true }));
     cx.timer.every(TARGETS_EVERY, (cx) => this.readTargets(cx, activeKey()));
-    this.reading = {};
+    this.reading = {}; this.readingSource = {};
+    cx.timer.every(TARGETS_EVERY, (cx) => this.readSourceState(cx, activeKey()));
   }
 
   // Reads skillshare on machine `key` (both scopes when the shown space's folder is a skillshare project)
@@ -135,6 +145,24 @@ export default class Sync extends View {
     });
   }
 
+  // Reads the skillshare source's git state on machine `key` into shared (see source.js). With fetch, after a
+  // git fetch. The source inside the config repo is only marked (same): the repo's own check covers it.
+  readSourceState(cx, key, { fetch = false } = {}) {
+    const on = key || null;
+    if (this.readingSource[key] || channel.busyAt(on)) return Promise.resolve();
+    this.readingSource[key] = true;
+    return cx.spawn(async (cx) => {
+      try {
+        const io = skillshareIO(cx), at = Date.now(), prev = obj(shared(SOURCE))[key];
+        const g = (await hasSkillshare(io, on)) ? await checkSource(io, { on, configRepo: settingsFor(shared(SETTINGS), key).repo, fetch }) : null;
+        const next = g ? { ...g, uncommitted: (g.uncommitted ?? []).slice(0, 300), at, fetchedAt: fetch && !g.fetchError ? at : prev?.fetchedAt ?? null } : { none: true, at };
+        if (!sameState(prev, next)) setIn(SOURCE, key, next); else setIn(SOURCE, key, { ...prev, at });
+      } catch (e) {
+        setIn(SOURCE, key, { path: null, error: String(e?.message ?? e), at: Date.now() });
+      } finally { this.readingSource[key] = false; cx.notify(); }
+    });
+  }
+
   // Reads the shown machine's repo (with a git fetch when asked). A newer read wins over an older one.
   check(cx, { fetch = false } = {}) {
     const key = activeKey(), c = context(key);
@@ -147,7 +175,7 @@ export default class Sync extends View {
       state.fetchedAt = fetch && !state.fetchError ? at : prev?.fetchedAt ?? null;
       if (!sameState(prev, state)) setIn(STATE, key, state);
       const conflict = obj(shared(CONFLICT))[key];
-      if (conflict && state.repo && !state.error && resolved(state, conflict)) dropIn(CONFLICT, key);
+      if (conflict && state.repo && !state.error && resolved(state, conflict)) { dropIn(CONFLICT, key); if (obj(shared(STOPPED))[key]?.target === "repo") dropIn(STOPPED, key); }
       cx.notify();
     });
   }
@@ -159,7 +187,12 @@ export default class Sync extends View {
 
   perform(req, cx) {
     const key = req.key ?? "", c = context(key);
-    if (req.op === "fetch") { if (key === activeKey()) { this.check(cx, { fetch: true }); return this.readTargets(cx, key); } return; }
+    if (req.op === "fetch") { if (key === activeKey()) { this.check(cx, { fetch: true }); this.readSourceState(cx, key, { fetch: true }); return this.readTargets(cx, key); } return; }
+    if (["srcpull", "srcpush", "srcboth"].includes(req.op)) return this.sourceOp(req, key, c, cx);
+    if (req.op === "resolve") return this.resolveOp(req, key, c, cx);
+    if (req.op === "dismiss") { dropIn(STOPPED, key); cx.notify(); return; }
+    if (req.op === "pullsync") return this.pullSyncOp(req, key, c, cx);
+    if (req.op === "upgrade") return this.upgradeOp(req, key, c, cx);
     if (req.op === "sync") return this.syncOp(req, key, c, cx);
     if (req.op === "diff") return this.diffOp(req, key, c, cx);
     if (req.op === "agent") return this.openAgent(key, c, cx);
@@ -179,8 +212,91 @@ export default class Sync extends View {
         cx.notify();
         this.check(cx, { fetch: false });
         this.readTargets(cx, key);
+        this.readSourceState(cx, key);
       }
     });
+  }
+
+  // Runs `work(io, step, cx)` under machine `c.on`'s lock. work resolves to { kind, text, stopped?, relink? }
+  // (a source operation's result), which is shown as a notification; a stopped pull is kept for the
+  // Conflicts section, and `relink` links the targets again when the work went well.
+  locked(key, c, cx, busyText, title, work) {
+    if (!channel.claim(c.on, busyText)) { notify({ title: "Sync", body: "Another sync is running on this machine.", level: "warning" }); return; }
+    cx.notify();
+    return cx.spawn(async (cx) => {
+      try {
+        const step = (text) => { channel.step(c.on, text); cx.notify(); };
+        const r = await work(skillshareIO(cx, { lock: c.on }), step, cx);
+        if (r.stopped) {
+          setIn(STOPPED, key, { target: r.target ?? "source", ...r.stopped, at: Date.now() });
+          notify({ title: "Conflict, resolving", body: `${r.text} Open Details, Conflicts to choose a side per file.`, level: "warning" });
+        } else {
+          if (r.kind === "done") dropIn(STOPPED, key);
+          const relinked = r.kind === "done" && r.relink ? await this.relink(key, c, cx).catch((e) => ({ kind: "error", text: String(e?.message ?? e) })) : null;
+          const extra = relinked?.kind === "done" ? " Skillshare targets linked again." : relinked ? ` Skillshare sync failed: ${relinked.text}` : "";
+          const level = r.kind === "done" ? (relinked && relinked.kind !== "done" ? "warning" : "success") : r.kind === "warn" ? "warning" : "error";
+          notify({ title: r.kind === "done" ? `${title} done` : r.kind === "warn" ? `${title} stopped` : `${title} failed`, body: `${r.text}${extra}`, level });
+        }
+      } catch (e) {
+        notify({ title: `${title} failed`, body: String(e?.message ?? e), level: "error" });
+      } finally {
+        channel.release(c.on);
+        setShared(BUMP, Date.now());
+        cx.notify();
+        this.check(cx, { fetch: false });
+        this.readTargets(cx, key);
+        this.readSourceState(cx, key);
+      }
+    });
+  }
+
+  // Commit/push/pull the skillshare source when it is its own git repo (source.js).
+  sourceOp(req, key, c, cx) {
+    const g = obj(shared(SOURCE))[key], repo = req.repo ?? g?.top;
+    if (!repo) { notify({ title: "Sync", body: "The skillshare source is not in a git repository.", level: "warning" }); return; }
+    const message = req.message || sourceCommitMessage(g?.uncommitted?.length ?? 0, g?.host);
+    const label = { srcpull: ["Pulling the source…", "Source pull"], srcpush: ["Pushing the source…", "Source push"], srcboth: ["Syncing the source…", "Source sync"] }[req.op];
+    return this.locked(key, c, cx, label[0], label[1], async (io, step) => {
+      const r = req.op === "srcpull" ? await pullSource(io, { on: c.on, repo, step })
+        : req.op === "srcpush" ? await pushSource(io, { on: c.on, message, step })
+        : await bothSource(io, { on: c.on, repo, message, step });
+      return { ...r, relink: req.op !== "srcpush" };
+    });
+  }
+
+  // The person's choice for each file of a stopped pull. The source goes through skillshare; the config
+  // repo through git, then the sync script (repo to Herdr) and, when a push stopped, the push.
+  resolveOp(req, key, c, cx) {
+    const st = obj(shared(STOPPED))[key];
+    if (!st) return;
+    const title = st.target === "repo" ? (st.push ? "Push" : "Pull") : "Source pull";
+    return this.locked(key, c, cx, "Applying your choices…", title, async (io, step, cx) => {
+      if (st.target !== "repo") return { ...(await resolveSource(io, { on: c.on, stopped: st, choices: req.choices ?? {}, step })), relink: true };
+      const git = repoIO(cx, c.on, { lock: c.on });
+      const r = await applyChoices(git, { repo: st.repo, choices: req.choices ?? {}, upHash: st.upHash, step });
+      if (r.kind === "again") return { kind: "warn", text: "The remote changed since you chose. Pick again.", target: "repo", stopped: { ...r.stopped, push: st.push } };
+      if (r.kind === "error") return { kind: "error", text: r.text };
+      if (r.kind === "none") return { kind: "warn", text: "Nothing conflicts any more. Pull or push again." };
+      step("Updating Herdr…");
+      const out = await finishMerge(git, c.cfg, { push: Boolean(st.push) });
+      if (out.result !== "ok") return { kind: "error", text: out.message || "The sync script stopped." };
+      dropIn(CONFLICT, key);
+      return { kind: "done", text: out.message, relink: true };
+    });
+  }
+
+  // "Pull and sync" on a Machines card: the source's own repo with skillshare pull, else the machine's
+  // config repo (pull, then the sync script), else only link the targets (machines.js pullPlan).
+  pullSyncOp(req, key, c, cx) {
+    const plan = pullPlan({ cfg: c.cfg, card: req.card });
+    if (plan === "repo") return this.perform({ op: "pull", key }, cx);
+    if (plan === "source") return this.sourceOp({ op: "srcpull", repo: req.card?.git?.top }, key, c, cx);
+    return this.locked(key, c, cx, "Syncing targets…", "Sync", async () => ({ kind: "done", text: "Nothing to pull on this machine.", relink: true }));
+  }
+
+  // "Update to <version>": skillshare upgrade --cli --force on that machine (the person confirmed in a dialog).
+  upgradeOp(req, key, c, cx) {
+    return this.locked(key, c, cx, `Updating skillshare on ${req.label}…`, "Update", (io, step) => upgradeCli(io, { on: c.on, label: req.label, step }));
   }
 
   // Links the targets again with what the repo now holds. Runs under the caller's lock.
@@ -248,6 +364,12 @@ export default class Sync extends View {
     if (out.result === "conflict") {
       const conflict = { kind: out.extra.kind ?? "rebase", files: out.files, saved: out.extra.saved ?? null, at: Date.now() };
       setIn(CONFLICT, key, conflict);
+      if (conflict.kind === "rebase" && conflict.files.length) {
+        // Both sides of each file, so Details can offer a choice per file as well as the agent.
+        const git = repoIO(cx, c.on, { lock: c.on }), repo = c.state?.top ?? c.cfg.repo, paths = conflict.files.map((f) => f.path);
+        const [previews, up] = await Promise.all([previewFiles(git, repo, paths).catch(() => ({})), git.sh(UPHASH, [repo]).catch(() => ({ stdout: "" }))]);
+        setIn(STOPPED, key, { target: "repo", repo, files: paths, previews, upHash: up.stdout.trim(), push: op === "push", at: Date.now() });
+      }
       notify({ title: "Conflict, resolving", body: `${out.message} ${plural(out.files.length, "file")}: ${out.files.map((f) => f.path).join(", ")}`, level: "warning" });
       await this.openAgent(key, { ...c, conflict }, cx);
       return;
@@ -257,20 +379,22 @@ export default class Sync extends View {
 
   // The configured agent, in a new tab in the repo folder, with a brief naming each conflicting file.
   async openAgent(key, c, cx) {
-    const conflict = c.conflict ?? obj(shared(CONFLICT))[key];
+    const stopped = obj(shared(STOPPED))[key];
+    const fromSource = stopped?.target === "source" && !(c.conflict ?? obj(shared(CONFLICT))[key]);
+    const conflict = fromSource ? { kind: "rebase", files: stopped.files.map((path) => ({ path })) } : c.conflict ?? obj(shared(CONFLICT))[key];
     if (!conflict) return;
     const wanted = c.cfg.agent || DEFAULTS.agent;
     const list = await knownAgents({ on: c.on }).catch(() => []);
     const agent = list.find((a) => a.key === wanted && a.installed) ?? list.find((a) => a.key === wanted) ?? null;
-    const repo = c.state?.top ?? c.cfg.repo;
-    const task = conflictBrief({ repo, script: c.cfg.script, kind: conflict.kind, files: conflict.files });
+    const repo = fromSource ? stopped.repo : c.state?.top ?? c.cfg.repo;
+    const task = conflictBrief({ repo, script: c.cfg.script, kind: conflict.kind, files: conflict.files, target: fromSource ? "source" : "repo" });
     const space = spaces().find((s) => (s.machine ?? "") === key && s.active) ?? spaces().find((s) => (s.machine ?? "") === key);
     run("tab.new", { name: "Sync conflict", space: space?.id, folder: repo, argv: agent?.run ?? [wanted], task });
   }
 
   renderButton(cx) {
     const t = theme(), key = activeKey();
-    if (this.key !== key) { this.key = key; later(cx, (cx) => { this.check(cx, { fetch: true }); this.readTargets(cx, key); }); }
+    if (this.key !== key) { this.key = key; later(cx, (cx) => { this.check(cx, { fetch: true }); this.readTargets(cx, key); this.readSourceState(cx, key, { fetch: true }); }); }
     this.render_requests(cx);
     const c = context(key), b = badge(c.state);
     const tip = {
@@ -473,16 +597,75 @@ export default class Sync extends View {
       [dialogButton("close", "Close", t, close, "primary")], close, close);
   }
 
+  // ================= A confirm dialog: update the skillshare CLI on a machine =================
+
+  renderUpgrade(cx) {
+    const t = theme(), p = blockProps() ?? {}, close = () => closeOverlay(p.overlay);
+    const go = () => { channel.request({ op: "upgrade", key: p.key ?? "", label: p.label }); close(); };
+    return dialogFrame(t, "sync-upgrade", this.handle, `Update skillshare on ${p.label}?`,
+      [note(t, `Replaces skillshare v${bareVersion(p.from ?? "?")} with v${bareVersion(p.to)} on ${p.label} (skillshare upgrade --cli --force).`, t.foreground)],
+      [dialogButton("cancel", "Cancel", t, close), dialogButton("go", "Update", t, go, "primary")], close, go);
+  }
+
   // ================= The Details tab =================
+
+  initDetails(cx) {
+    this.cards = {}; this.cardsAt = 0; this.cardsLoading = false; this.bump = null;
+    this.choices = {}; this.stoppedAt = null; this.autoSrc = ""; this.srcEdited = false;
+    this.srcMsg = InputState.new({ placeholder: "Commit message" });
+    this.srcMsg.on("change", () => { this.srcEdited = this.srcMsg.value() !== this.autoSrc; });
+    // Renders keep the Machines cards fresh: a render with cards older than a minute reads them again, and
+    // this tick makes a shown tab render once a minute. A tab that is not shown does not render, so it reads nothing.
+    cx.timer.every(MACHINES_EVERY, (cx) => cx.notify());
+  }
+
+  // Reads every machine's card: this computer and each Herdr machine (an unreachable one still gets a card).
+  loadMachines(cx) {
+    if (this.cardsLoading) return;
+    this.cardsLoading = true;
+    return cx.spawn(async (cx) => {
+      try {
+        const names = new Set([...machines().map((m) => m.name), ...spaces().map((sp) => sp.machine)].filter(Boolean));
+        for (const k of Object.keys(this.cards)) if (k && !names.has(k)) delete this.cards[k];
+        const io = skillshareIO(cx);
+        await Promise.all(["", ...names].map(async (key) => {
+          const on = key || null, label = on ?? "this computer";
+          if (!this.cards[key]) this.cards[key] = { on, label, here: !on, checking: true };
+          if (on && machines().find((m) => m.name === on)?.layout === "unavailable") { this.cards[key] = { on, label, error: "Herdr can't reach this machine right now" }; cx.notify(); return; }
+          try { this.cards[key] = await loadMachine(io, on, { configRepo: settingsFor(shared(SETTINGS), key).repo }); } catch (e) { this.cards[key] = { on, label, here: !on, error: String(e?.message ?? e) }; }
+          cx.notify();
+        }));
+        this.cardsAt = Date.now();
+      } finally { this.cardsLoading = false; cx.notify(); }
+    });
+  }
 
   renderDetailsTab(cx) {
     const t = theme(), key = activeKey(), c = context(key);
     if (this.key !== key) { this.key = key; later(cx, () => channel.request({ op: "fetch", key })); }
+    const bump = shared(BUMP) ?? null;
+    if (!this.cardsLoading && (Date.now() - this.cardsAt > MACHINES_EVERY - 15 * 1000 || bump !== this.bump)) { this.bump = bump; later(cx, (cx) => this.loadMachines(cx)); }
+    const source = obj(shared(SOURCE))[key] ?? null, stopped = obj(shared(STOPPED))[key] ?? null;
+    if (stopped?.at !== this.stoppedAt) { this.stoppedAt = stopped?.at ?? null; this.choices = {}; }
+    // The commit message for the source follows the changed-file count until the person edits it.
+    const auto = sourceCommitMessage(source?.uncommitted?.length ?? 0, source?.host);
+    if (auto !== this.autoSrc) {
+      const wasAuto = !this.srcEdited;
+      this.autoSrc = auto;
+      if (wasAuto) later(cx, (cx) => { this.srcMsg.set_value(auto); this.srcEdited = false; cx.notify(); });
+    }
     return renderDetails({
       t, key, on: c.on, cfg: c.cfg, state: c.state, conflict: c.conflict, busy: c.busy,
       targets: obj(shared(TARGETS))[key] ?? null, open: this.open ?? null,
       toggle: (rowKey, cx) => { this.open = this.open === rowKey ? null : rowKey; cx.notify(); },
-      request: (op) => channel.request({ ...op, key }), openSettings: () => openSettings(key),
+      request: (op) => channel.request({ key, ...op }), openSettings: () => openSettings(key),
+      source, srcMsg: this.srcMsg,
+      machines: { cards: Object.values(this.cards), at: this.cardsAt, loading: this.cardsLoading },
+      busyFor: (k) => channel.busyAt(k || null),
+      confirmUpgrade: (m, to) => openOverlay({ mod: "sync", kind: "dialog", width: 440, height: 220, props: { role: "upgrade", key: m.on ?? "", label: m.label, from: m.version, to } }),
+      stopped, choices: this.choices,
+      pick: (file, side, cx) => { this.choices[file] = side; cx.notify(); },
+      pickAll: (side, cx) => { for (const f of stopped?.files ?? []) this.choices[f] = side; cx.notify(); },
     });
   }
 }

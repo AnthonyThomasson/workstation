@@ -1,41 +1,21 @@
 // The Details tab (props.role "details"): one section per concern. Each section is a function that
 // gets the view's context and returns an element, so a section can grow without touching the others.
 //   ctx: { t, key, on, cfg, state, conflict, busy, targets, open, toggle(rowKey, cx), request(op), openSettings() }
-// Targets is in targets-ui.js; Source and Machines are filled in by the next job of ticket #2.
+// Each section lives in its own file: targets-ui.js, source-ui.js, machines-ui.js, conflicts-ui.js. The view (main.js) adds
+// what each needs to ctx: source, srcMsg, machines, busyFor(key), confirmUpgrade(card, to), stopped, choices, pick, pickAll.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { S, note, secondary } from "./ui.js";
-import { badge, changedFiles, plural } from "./model.js";
+import { S, secondary } from "./ui.js";
 import { renderTargets } from "./targets-ui.js";
-
-const stub = (ctx, text) => note(ctx.t, text);
-
-function conflicts(ctx) {
-  const { t, conflict, state } = ctx;
-  if (!conflict) return note(t, "No conflict. When a push or pull meets one, it is listed here until the repo is clean.");
-  return v_flex().gap(8)
-    .child(div().text_size(S().body).font_semibold().text_color(t.blocked).child("Conflict, resolving"))
-    .child(note(t, conflict.kind === "copy"
-      ? "Copying Herdr's files would overwrite uncommitted edits in the repo. Nothing was copied or pushed."
-      : "Both sides changed the same files. The rebase was undone and nothing was pushed."))
-    .children((conflict.files ?? []).map((f) => v_flex().gap(2).child(div().text_size(S().body).child(f.path))
-      .when(Boolean(f.remote || f.local), (el) => el.child(note(t, `remote: ${f.remote || "-"} · here: ${f.local || "-"}`)))))
-    .child(h_flex().child(secondary("reopen-agent", "Open the agent again", t, () => ctx.request({ op: "agent" }))))
-    .when(Boolean(state?.inProgress), (el) => el.child(note(t, `A ${state.inProgress} is in progress in the repo.`, t.blocked)));
-}
+import { renderSource } from "./source-ui.js";
+import { renderMachines } from "./machines-ui.js";
+import { renderConflicts } from "./conflicts-ui.js";
 
 export const SECTIONS = [
   { id: "targets", title: "Targets", render: renderTargets },
-  { id: "source", title: "Source", render: (ctx) => {
-    const { t, state, cfg } = ctx, b = badge(state);
-    if (!state?.repo) return stub(ctx, cfg.repo ? "The repo has not been read yet." : "No repo is set for this machine.");
-    return v_flex().gap(3)
-      .child(div().text_size(S().body).child(state.top ?? cfg.repo))
-      .child(note(t, `${state.branch ?? "(detached)"}${state.upstream ? ` → ${state.upstream}` : " (no remote branch)"}`))
-      .child(note(t, `${plural(b.down, "commit")} behind · ${plural(changedFiles(state).length, "file")} changed · ${plural(state.unpushed?.length ?? 0, "commit")} not pushed`));
-  } },
-  { id: "machines", title: "Machines", render: (ctx) => stub(ctx, "Each Herdr machine's source state will be listed here.") },
-  { id: "conflicts", title: "Conflicts", render: conflicts },
+  { id: "source", title: "Source", render: renderSource },
+  { id: "machines", title: "Machines", render: renderMachines },
+  { id: "conflicts", title: "Conflicts", render: renderConflicts },
 ];
 
 export function renderDetails(ctx) {

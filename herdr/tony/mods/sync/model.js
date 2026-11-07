@@ -44,6 +44,8 @@ export function parseCheck(text) {
     else if (tag === "noscript") out.error = `The sync script ${a} was not found in the repo`;
     else if (tag === "scripterr") out.error = `The sync script failed: ${a}`;
     else if (tag === "fetcherr") out.fetchError = a || "git fetch failed";
+    else if (tag === "remote") out.remote = a ?? "";
+    else if (tag === "same") out.same = a === "1";
   }
   if (!any) out.error = "No answer from the repo";
   return out;
@@ -121,11 +123,14 @@ export function viewState({ settings, state, conflict, busy }) {
   return "ok";
 }
 
+// The default message for committing the skillshare source's own repo; the person can edit it.
+export const sourceCommitMessage = (n, host) => `Update ${n ? plural(n, "file") : "skills"} in the skillshare source${host ? ` on ${host}` : ""}`;
+
 export const commitMessage = (n, host) => `Sync${n ? ` ${plural(n, "file")}` : ""} from Herdr${host ? ` on ${host}` : ""}`;
 
 // The agent's first message: what is in conflict and how to finish. kind: "rebase" (the remote and the
 // repo changed the same files) or "copy" (copying Herdr's files would overwrite uncommitted repo edits).
-export function conflictBrief({ repo, script, kind, files }) {
+export function conflictBrief({ repo, script, kind, files, target }) {
   const list = (files ?? []).map((f) => {
     const lines = [`- ${f.path}`];
     if (kind === "copy") {
@@ -137,6 +142,18 @@ export function conflictBrief({ repo, script, kind, files }) {
     }
     return lines.join("\n");
   }).join("\n");
+  if (target === "source") {
+    return [
+      `Pulling the skillshare source at ${repo} hit a conflict.`,
+      "",
+      "Conflicting files:",
+      list || "- (none listed; run `git status`)",
+      "",
+      "The pull was stopped and undone, so nothing changed. Run `git pull`, resolve each conflicted file with me keeping what both sides meant, commit the merge, then run `skillshare sync --all -g` so the targets match.",
+      "In .metadata.json merge entry by entry: an entry changed on one side takes that side; changed on both, keep the one with the later installed_at.",
+      "Ask me whenever it is not clear which side should win.",
+    ].join("\n");
+  }
   const how = kind === "copy"
     ? `Nothing was copied or pushed. Compare the two versions of each file with me and keep what we both want in the repo working tree, then run ${script} --pull again (Herdr to repo), commit, \`git pull --rebase\` and \`git push\`.`
     : `The push was stopped and the rebase undone, so nothing was pushed and the repo is as it was before. Run \`git pull --rebase\`, resolve each conflicted file with me keeping what both sides meant, \`git rebase --continue\`, then \`${script} --push\` so Herdr's config matches the repo, and \`git push\`.`;
