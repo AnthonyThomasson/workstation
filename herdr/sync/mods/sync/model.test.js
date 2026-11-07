@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULTS, normalizeSettings, settingsFor, parseCheck, parseOutcome, changedFiles, badge, viewState,
-  commitMessage, conflictBrief, resolved, plural, shortError,
+  commitMessage, conflictBrief, resolved, plural, shortError, ago,
 } from "./model.js";
 
 test("settings default to ./mount.sh and Claude Code, with no repo", () => {
@@ -104,6 +104,17 @@ test("a conflict is resolved once nothing is half done and the remote is contain
   assert.equal(resolved({ inProgress: null, unmerged: ["a"], behind: [] }), false);
   assert.equal(resolved({ inProgress: null, unmerged: [], behind: [{}] }), false);
   assert.equal(resolved(null), false);
+  // A copy conflict stays until its files are no longer uncommitted.
+  const copy = { kind: "copy", files: [{ path: "a.js" }] };
+  assert.equal(resolved({ inProgress: null, unmerged: [], behind: [], uncommitted: [{ path: "a.js" }] }, copy), false);
+  assert.equal(resolved({ inProgress: null, unmerged: [], behind: [], uncommitted: [{ path: "b.js" }] }, copy), true);
+});
+
+test("how long ago", () => {
+  assert.equal(ago(0), "");
+  assert.equal(ago(1000, 20000), "just now");
+  assert.equal(ago(0 + 1, 5 * 60000 + 1), "5 min ago");
+  assert.equal(ago(1, 2 * 3600000 + 1), "2 h ago");
 });
 
 test("the default commit message names the count and the machine", () => {

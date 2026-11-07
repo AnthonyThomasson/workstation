@@ -94,8 +94,21 @@ export function badge(state) {
   return { down, up, text: parts.join(" ") };
 }
 
-// A conflict is over when nothing is half done, no file is unmerged, and the remote's commits are in the repo.
-export const resolved = (state) => Boolean(state) && !state.inProgress && !(state.unmerged?.length) && !(state.behind?.length);
+// A conflict is over when nothing is half done, no file is unmerged and the remote's commits are in the
+// repo. A copy conflict (Herdr's file against an uncommitted repo edit) is over when those files are
+// no longer uncommitted: they were merged and committed.
+export function resolved(state, conflict) {
+  if (!state || state.inProgress || state.unmerged?.length || state.behind?.length) return false;
+  if (conflict?.kind === "copy") return !state.uncommitted?.some((f) => (conflict.files ?? []).some((c) => c.path === f.path));
+  return true;
+}
+
+// "just now", "5 min ago", "2 h ago"; "" when never.
+export function ago(at, now = Date.now()) {
+  if (!at) return "";
+  const m = Math.floor((now - at) / 60000);
+  return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.floor(m / 60)} h ago`;
+}
 
 // What the button and popover show: unset (no repo chosen), loading, norepo, error, conflict, busy, ok.
 export function viewState({ settings, state, conflict, busy }) {

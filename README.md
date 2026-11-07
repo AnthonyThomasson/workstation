@@ -9,7 +9,7 @@ My [Herdr](https://herdr.dev) setup: the **Tony** layout, the mods it uses, my k
   - `herdr/status-bar/` the `status-bar` mod
   - `herdr/skills/` the `skills` mod (a modified copy of the MIT-licensed `skillshare` mod from [runkids/skillshare](https://github.com/runkids/skillshare); see its `LICENSE`)
   - `herdr/github-workflows/` the `github-tasks` and `workflows` mods, plus starter workflows `workflows/bug.yaml` and `workflows/story.yaml`
-  - `herdr/sync/` placeholder for the sync mod
+  - `herdr/sync/` the `sync` mod: a button in the tab bar that shows how far Herdr and the repo are apart, with Pull and Push (see its README)
   - `herdr/tony/` the Tony layout (`layouts/Tony.json`) with real copies of every custom mod it uses in `mods/`, including `tabs-icons`, which lives only here. The other copies are made from the entry folders above; edit those, not Tony's copies.
 - `personal/herdr-app/` my own files: `keys.json`, `settings.json`, `themes/` and `workflows/`
 - `skillshare/` Skillshare config and skills: `config.yaml`, `agents/`, and `skills/` (installed skills at the top level, tracked in `.metadata.json`; my own in `skills/mine/`)
