@@ -1,6 +1,6 @@
 // Runs the check, pull and push scripts against throwaway git repositories: a bare remote and two
 // clones (A is the config repo whose Herdr folder is HERDR_APP_HOME, B is "another machine"), with the
-// real mount.sh as the sync script. Nothing outside the scratch folder is touched.
+// real sync.sh as the sync script. Nothing outside the scratch folder is touched.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, execFile } from "node:child_process";
@@ -14,7 +14,7 @@ import { syncWorld as world, cleanWorld as clean, laterMtime as later } from "./
 import { badge, changedFiles, pushBlocked, pullReplaces, pullReplacedNote } from "./model.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const MOUNT = join(here, "../../../../mount.sh");
+const MOUNT = join(here, "../../../../sync.sh");
 
 
 test("a fresh clone with Herdr in step shows no badge", async () => {
@@ -325,7 +325,7 @@ test("paths with spaces and non-ASCII characters come through unquoted, and the 
     // A mod file with a space: committed, synced to Herdr, then edited on both sides.
     w.put(w.a, "herdr/demo/mods/demo/my file.js", "v1\n");
     w.git(w.a, "add", "-A"); w.git(w.a, "commit", "-q", "-m", "spaces"); w.git(w.a, "push", "-q");
-    execFileSync("sh", [join(w.a, "mount.sh"), "--push"], { env: w.env, cwd: w.a });
+    execFileSync("sh", [join(w.a, "sync.sh"), "--push"], { env: w.env, cwd: w.a });
     w.put(w.a, "herdr/demo/mods/demo/my file.js", "repo edit\n");
     const h = join(w.herdr, "mods/demo/my file.js");
     writeFileSync(h, "herdr edit\n"); later(h);
@@ -356,8 +356,8 @@ test("sync never writes to .git/info/exclude and never commits its own backups",
 test("a script setting without ./ is looked up in the repo, and a path with spaces is not split", async () => {
   const w = world("script-path");
   try {
-    assert.equal((await checkRepo(w.io, { ...w.cfg, script: "mount.sh" })).error, null);
-    cpSync(join(w.a, "mount.sh"), join(w.a, "my sync.sh"));
+    assert.equal((await checkRepo(w.io, { ...w.cfg, script: "sync.sh" })).error, null);
+    cpSync(join(w.a, "sync.sh"), join(w.a, "my sync.sh"));
     const f = join(w.herdr, "mods/demo/main.js");
     writeFileSync(f, "edited in Herdr\n"); later(f);
     const s = await checkRepo(w.io, { ...w.cfg, script: "./my sync.sh" });

@@ -49,10 +49,10 @@ Per machine: this computer, and each machine from `hc machine ls`. The Settings 
 | Setting | Default |
 | --- | --- |
 | Config repo (folder path on that machine; this computer has a Browse button) | empty; the panel shows only Settings |
-| Sync script: a path, relative to the repo (`mount.sh` and `./mount.sh` are the same), absolute or `~/…`; spaces are fine, arguments are not | `./mount.sh` |
+| Sync script: a path, relative to the repo (`sync.sh` and `./sync.sh` are the same), absolute or `~/…`; spaces are fine, arguments are not | `./sync.sh` (a saved `./mount.sh` or `mount.sh`, the old name, counts as the default) |
 | Agent for conflicts (an installed agent from Herdr's list) | Claude Code |
 
-The sync script must take `--push` (repo to Herdr), `--pull` (Herdr to repo) and `--dry-run`, and, with `--dry-run` alone, print `to repo: <path>` or `to repo (new): <path>` for each file it would copy to the repo and `to Herdr: <path>` or `to Herdr (new): <path>` for each file it would copy to Herdr. This repo's `mount.sh` does.
+The sync script must take `--push` (repo to Herdr), `--pull` (Herdr to repo) and `--dry-run`, and, with `--dry-run` alone, print `to repo: <path>` or `to repo (new): <path>` for each file it would copy to the repo and `to Herdr: <path>` or `to Herdr (new): <path>` for each file it would copy to Herdr. This repo's `sync.sh` does.
 
 ## Files
 
@@ -67,4 +67,4 @@ The sync script must take `--push` (repo to Herdr), `--pull` (Herdr to repo) and
 - `machines.js`, `machines-ui.js` the Machines cards, "Pull and sync" and the CLI upgrade
 - `ui.js` the shared look
 - `main.js` the views: the button (icon), the Details panel, and the text, upgrade and srcboth dialogs
-- `*.test.js` run with `node --test herdr/sync/mods/sync` (`ops.test.js`, `conflicts.test.js` and `source.test.js` use throwaway git repositories, `scratch-repos.js` builds them; `ops.test.js` also runs this repo's `mount.sh`). The real skillshare CLI is never run by the tests.
+- `*.test.js` run with `node --test herdr/sync/mods/sync` (`ops.test.js`, `conflicts.test.js` and `source.test.js` use throwaway git repositories, `scratch-repos.js` builds them; `ops.test.js` also runs this repo's `sync.sh`). The real skillshare CLI is never run by the tests.

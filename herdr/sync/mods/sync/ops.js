@@ -2,7 +2,7 @@
 // run them through io.sh(script, args) and read what they print (model.js). No Herdr imports, so the
 // tests (ops.test.js) run them against real git repositories.
 //
-//   args: $1 repo path, $2 sync script (default ./mount.sh, relative to the repo), $3 per script.
+//   args: $1 repo path, $2 sync script (default ./sync.sh, relative to the repo), $3 per script.
 //   Every script ends with "@result\t<ok|conflict|error>" and "@msg\t<text>" (pull and push) or "@end" (check).
 import { parseCheck, parseOutcome } from "./model.js";
 
@@ -25,7 +25,7 @@ up=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
 tmp=$(mktemp -d "\${TMPDIR:-/tmp}/sync.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 tab=$(printf '\\t')
-# The sync script is a path: absolute, ~/..., or relative to the repo (./mount.sh and mount.sh are the same). It is
+# The sync script is a path: absolute, ~/..., or relative to the repo (./sync.sh and sync.sh are the same). It is
 # always quoted, so a path with spaces works and the setting is never split into words.
 case "$script" in
   "~/"*) sp=$HOME/\${script#"~/"} ;;
@@ -122,11 +122,11 @@ if [ "$n" -gt 0 ]; then
     exit 0
   fi
 fi
-"$sp" --push >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
-copied=$(grep '^copied:' "$tmp/mount" | tail -n 1 || true)
+"$sp" --push >"$tmp/script-out" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/script-out")"
+copied=$(grep '^copied:' "$tmp/script-out" | tail -n 1 || true)
 # Herdr files the script replaced (backed up) and where the backups went, for the notification.
-replaced=$(grep -c '^to Herdr: ' "$tmp/mount" || true)
-backup=$(sed -n 's/^replaced Herdr files were saved to //p' "$tmp/mount" | tail -n 1)
+replaced=$(grep -c '^to Herdr: ' "$tmp/script-out" || true)
+backup=$(sed -n 's/^replaced Herdr files were saved to //p' "$tmp/script-out" | tail -n 1)
 printf '@pulled\\t%s\\n@copied\\t%s\\n@replaced\\t%s\\n@backup\\t%s\\n' "$n" "$copied" "\${replaced:-0}" "$backup"
 if [ "$n" -gt 0 ]; then printf '@msg\\tPulled %s commit(s) and updated Herdr\\n@result\\tok\\n' "$n"
 else printf '@msg\\tUpdated Herdr from the repo\\n@result\\tok\\n'; fi
@@ -149,12 +149,12 @@ status_lines | while IFS="$tab" read -r xy f; do
   [ -f "$f" ] || continue
   mkdir -p "$tmp/pre/$(dirname "$f")"; cp -p "$f" "$tmp/pre/$f"
 done
-"$sp" --pull >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
+"$sp" --pull >"$tmp/script-out" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/script-out")"
 # The copy must not overwrite an uncommitted edit made in the repo. Tony's copies are regenerated, so skip them.
 if [ -d "$tmp/pre" ]; then
   (cd "$tmp/pre" && find . -type f | sed 's|^\\./||') | while IFS= read -r f; do
-    grep -qxF "Tony copy (changed): $f" "$tmp/mount" && continue
-    grep -qxF "Tony copy (new): $f" "$tmp/mount" && continue
+    grep -qxF "Tony copy (changed): $f" "$tmp/script-out" && continue
+    grep -qxF "Tony copy (new): $f" "$tmp/script-out" && continue
     cmp -s "$tmp/pre/$f" "$f" || printf '%s\\n' "$f"
   done > "$tmp/clash"
   if [ -s "$tmp/clash" ]; then
@@ -191,7 +191,7 @@ if [ "$n" -gt 0 ]; then
     git rebase --abort >/dev/null 2>&1 || true
     fail "git pull failed: $(tail -n 1 "$tmp/out")"
   fi
-  "$sp" --push >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
+  "$sp" --push >"$tmp/script-out" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/script-out")"
 fi
 ahead=$(git rev-list --count "$up"..HEAD)
 if [ "$ahead" -eq 0 ]; then printf '@pushed\\t0\\n@msg\\tNothing to push\\n@result\\tok\\n'; exit 0; fi
@@ -207,7 +207,7 @@ printf '@msg\\tPushed %s commit(s) to %s\\n@result\\tok\\n' "$ahead" "$up"
 export const FINISH = `${PRELUDE}
 [ "$script_missing" = 0 ] || fail "The sync script $script was not found in the repo"
 [ -z "$inprog" ] || fail "A rebase or merge is still in progress in the repo"
-"$sp" --push >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
+"$sp" --push >"$tmp/script-out" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/script-out")"
 if [ "$3" = 1 ]; then
   [ -n "$up" ] || fail "This branch has no remote branch to push to"
   remote=\${up%%/*}; rbranch=\${up#*/}

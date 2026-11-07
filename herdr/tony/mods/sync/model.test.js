@@ -6,17 +6,24 @@ import {
   pullReplaces, replacesText, pullReplacedNote, fetchBlocksCheck, FETCH_GUARD_MS,
 } from "./model.js";
 
-test("settings default to ./mount.sh and Claude Code, with no repo", () => {
-  assert.deepEqual(normalizeSettings(undefined), { repo: "", script: "./mount.sh", agent: "claude" });
-  assert.deepEqual(normalizeSettings({ repo: "  ~/cfg ", script: " ", agent: "" }), { repo: "~/cfg", script: "./mount.sh", agent: "claude" });
+test("settings default to ./sync.sh and Claude Code, with no repo", () => {
+  assert.deepEqual(normalizeSettings(undefined), { repo: "", script: "./sync.sh", agent: "claude" });
+  assert.deepEqual(normalizeSettings({ repo: "  ~/cfg ", script: " ", agent: "" }), { repo: "~/cfg", script: "./sync.sh", agent: "claude" });
   assert.deepEqual(normalizeSettings({ repo: "/r", script: "sh sync.sh", agent: "codex" }), { repo: "/r", script: "sh sync.sh", agent: "codex" });
-  assert.equal(DEFAULTS.script, "./mount.sh");
+  assert.equal(DEFAULTS.script, "./sync.sh");
+});
+
+test("a saved ./mount.sh or mount.sh is the old default and becomes ./sync.sh", () => {
+  assert.equal(normalizeSettings({ script: "./mount.sh" }).script, "./sync.sh");
+  assert.equal(normalizeSettings({ script: " mount.sh " }).script, "./sync.sh");
+  assert.equal(normalizeSettings({ script: "./my-mount.sh" }).script, "./my-mount.sh");
+  assert.equal(settingsFor({ vps: { script: "./mount.sh" } }, "vps").script, "./sync.sh");
 });
 
 test("settings are kept per machine, this computer under the empty key", () => {
   const all = { "": { repo: "/a" }, vps: { repo: "/b", agent: "codex" } };
   assert.equal(settingsFor(all, "").repo, "/a");
-  assert.deepEqual(settingsFor(all, "vps"), { repo: "/b", script: "./mount.sh", agent: "codex" });
+  assert.deepEqual(settingsFor(all, "vps"), { repo: "/b", script: "./sync.sh", agent: "codex" });
   assert.equal(settingsFor(all, "other").repo, "");
   assert.equal(settingsFor(null, "").repo, "");
 });
@@ -58,7 +65,7 @@ test("reads the check script's output", () => {
 
 test("a folder that is not a repo, or a missing script, is reported", () => {
   assert.deepEqual(parseCheck("@norepo\n"), { repo: false, error: null });
-  assert.equal(parseCheck("@top\t/x\n@noscript\t./mount.sh\n@end").error, "The sync script ./mount.sh was not found in the repo");
+  assert.equal(parseCheck("@top\t/x\n@noscript\t./sync.sh\n@end").error, "The sync script ./sync.sh was not found in the repo");
   assert.equal(parseCheck("").error, "No answer from the repo");
 });
 
@@ -137,7 +144,7 @@ test("the script's last words become an outcome", () => {
 
 test("the brief for the conflict agent names every file and both sides", () => {
   const brief = conflictBrief({
-    repo: "/work/cfg", script: "./mount.sh", kind: "rebase",
+    repo: "/work/cfg", script: "./sync.sh", kind: "rebase",
     files: [{ path: "README.md", remote: "Edit readme; Fix typo", local: "Reword readme" }, { path: "mods/x.js", remote: "", local: "Change x" }],
   });
   assert.match(brief, /\/work\/cfg/);
@@ -146,8 +153,8 @@ test("the brief for the conflict agent names every file and both sides", () => {
   assert.match(brief, /Reword readme/);
   assert.match(brief, /mods\/x\.js/);
   assert.match(brief, /git pull --rebase/);
-  assert.match(brief, /\.\/mount\.sh --push/);
-  const copy = conflictBrief({ repo: "/r", script: "./mount.sh", kind: "copy", files: [{ path: "herdr/a.js", remote: "", local: "", saved: ".sync-backup/conflict-1/herdr/herdr/a.js" }] });
+  assert.match(brief, /\.\/sync\.sh --push/);
+  const copy = conflictBrief({ repo: "/r", script: "./sync.sh", kind: "copy", files: [{ path: "herdr/a.js", remote: "", local: "", saved: ".sync-backup/conflict-1/herdr/herdr/a.js" }] });
   assert.match(copy, /uncommitted/);
   assert.match(copy, /\.sync-backup\/conflict-1/);
   assert.doesNotMatch(copy, /Nothing was copied/, "the files that did not clash were copied");
@@ -169,7 +176,7 @@ test("a copy conflict names where Herdr's version of each file was saved", () =>
   assert.equal(files[0].saved, ".sync-backup/conflict-1/herdr/herdr/a.js");
   assert.equal(files[1].saved, ".sync-backup/conflict-1/herdr/b c.js");
   assert.deepEqual(withSaved([{ path: "x" }], null), [{ path: "x" }]);
-  assert.match(conflictBrief({ repo: "/r", script: "./mount.sh", kind: "copy", files }), /Herdr's version is saved at \.sync-backup\/conflict-1\/herdr\/herdr\/a\.js/);
+  assert.match(conflictBrief({ repo: "/r", script: "./sync.sh", kind: "copy", files }), /Herdr's version is saved at \.sync-backup\/conflict-1\/herdr\/herdr\/a\.js/);
 });
 
 test("small helpers", () => {
@@ -180,11 +187,11 @@ test("small helpers", () => {
 });
 
 test("the brief for a conflict in the skillshare source says how to finish it there", () => {
-  const b = conflictBrief({ repo: "/s", script: "./mount.sh", kind: "rebase", target: "source", files: [{ path: "skills/x/SKILL.md", remote: "B", local: "A" }] });
+  const b = conflictBrief({ repo: "/s", script: "./sync.sh", kind: "rebase", target: "source", files: [{ path: "skills/x/SKILL.md", remote: "B", local: "A" }] });
   assert.match(b, /skillshare source at \/s/);
   assert.match(b, /skills\/x\/SKILL\.md/);
   assert.match(b, /skillshare sync --all -g/);
-  assert.ok(!/mount\.sh/.test(b));
+  assert.ok(!/sync\.sh/.test(b));
 });
 
 test("Pull says what it will replace: the Herdr changes, none when there is no repo", () => {

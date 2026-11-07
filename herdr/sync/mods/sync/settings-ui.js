@@ -32,7 +32,7 @@ export function renderSettings(ctx) {
     .when(s.open || s.forced, (el) => el
       .when(s.forced, (e) => e.child(note(t, "Choose the git repository that holds your Herdr config, and sync stays one click away.")))
       .child(field("Config repo", s.repo, key ? `The repo's path on ${key}.` : "The git repository that holds your Herdr config.", browse))
-      .child(field("Sync script", s.script, "Run from the repo folder with --push, --pull and --dry-run. Default ./mount.sh."))
+      .child(field("Sync script", s.script, "Run from the repo folder with --push, --pull and --dry-run. Default ./sync.sh."))
       .child(agentRow)
       .child(h_flex().child(primary("save", "Save", t, (_e, cx) => s.save(cx)))));
 }

@@ -1,13 +1,16 @@
 // What the sync mod knows, with no Herdr and no I/O: settings, the check script's output, the badge,
 // the conflict brief. The tests (model.test.js) run under node.
 
-export const DEFAULTS = { repo: "", script: "./mount.sh", agent: "claude" };
+export const DEFAULTS = { repo: "", script: "./sync.sh", agent: "claude" };
 
 // One machine's settings from whatever is stored: trimmed, with the defaults filled in.
 export function normalizeSettings(raw) {
   const o = raw && typeof raw === "object" ? raw : {};
   const text = (v) => (typeof v === "string" ? v.trim() : "");
-  return { repo: text(o.repo), script: text(o.script) || DEFAULTS.script, agent: text(o.agent) || DEFAULTS.agent };
+  // "./mount.sh" was the default script before it was renamed; a machine that saved it explicitly gets the new default.
+  const script = text(o.script);
+  const oldDefault = script === "./mount.sh" || script === "mount.sh";
+  return { repo: text(o.repo), script: (oldDefault ? "" : script) || DEFAULTS.script, agent: text(o.agent) || DEFAULTS.agent };
 }
 
 // Settings are kept per machine: this computer under "", every other machine under its name.

@@ -1,14 +1,14 @@
 #!/bin/sh
-# Tests for mount.sh. Run with: sh tests/mount.test.sh
+# Tests for sync.sh. Run with: sh tests/sync.test.sh
 #
 # Every test works on a scratch copy of the repo, a scratch Herdr config folder and a scratch
-# Skillshare folder under $TMPDIR, and runs mount.sh with HOME pointed at a scratch folder too.
+# Skillshare folder under $TMPDIR, and runs sync.sh with HOME pointed at a scratch folder too.
 # Nothing in ~/.config/herdr-app or ~/.config/skillshare is ever read or written.
 
 set -u
 
 real_repo=$(cd "$(dirname "$0")/.." && pwd)
-base=$(mktemp -d "${TMPDIR:-/tmp}/mount-test.XXXXXX")
+base=$(mktemp -d "${TMPDIR:-/tmp}/sync-test.XXXXXX")
 trap 'rm -rf "$base"' EXIT
 base=$(cd "$base" && pwd)
 
@@ -55,14 +55,14 @@ new_world() {
   R="$T/repo"; H="$T/herdr"; S="$T/skillshare-home"; HOME_DIR="$T/home"
   rm -rf "$T"
   mkdir -p "$R" "$H" "$HOME_DIR"
-  cp "$real_repo/mount.sh" "$R/"
+  cp "$real_repo/sync.sh" "$R/"
   cp -R "$real_repo/herdr" "$real_repo/personal" "$real_repo/skillshare" "$R/"
   find "$R" -name .DS_Store -delete
 }
 
-# mount ARGS...: run the script from the scratch repo; sets $OUT (stdout+stderr) and $RC.
-mount() {
-  OUT=$(cd "$R" && HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./mount.sh "$@" 2>&1)
+# run_sync ARGS...: run the script from the scratch repo; sets $OUT (stdout+stderr) and $RC.
+run_sync() {
+  OUT=$(cd "$R" && HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./sync.sh "$@" 2>&1)
   RC=$?
 }
 
@@ -88,7 +88,7 @@ expected="$T/expected"
   (cd ../personal/herdr-app && find themes workflows -type f)
 ) | sort > "$expected"
 before=$(cd "$R" && find . -type f | sort | xargs cksum)
-mount --dry-run
+run_sync --dry-run
 assert_status 0 "$RC"
 printf '%s\n' "$OUT" | sed -n 's/^to Herdr (new): //p' | sort > "$T/listed"
 assert_same_file "$expected" "$T/listed"
@@ -103,7 +103,7 @@ assert_absent "$S/config.yaml"
 
 # 2. A real run copies every mapping, and Tony's copies are exact copies of the entry folders.
 new_world "run-copies-the-mappings"
-mount
+run_sync
 assert_status 0 "$RC"
 for entry in usage status-bar skills github-workflows; do
   for mod in "$R/herdr/$entry/mods/"*/; do
@@ -120,17 +120,17 @@ assert_absent "$H/keys.json"
 assert_absent "$H/settings.json"
 assert_has "copied: "
 assert_exists "$H/mods/status-bar/icons/branch.svg"
-mount
+run_sync
 assert_status 0 "$RC"
 assert_has "copied: 0 to Herdr, 0 to the repo;"
 assert_lacks "to Herdr: "
 
 # 3. Editing an entry's mod and running updates Tony's copy and Herdr.
 new_world "entry-edit-reaches-tony"
-mount
+run_sync
 echo "// edited in the entry" >> "$R/herdr/usage/mods/usage/main.js"
 bump "$R/herdr/usage/mods/usage/main.js"
-mount
+run_sync
 assert_status 0 "$RC"
 assert_has "to Herdr: mods/usage/main.js"
 assert_same_file "$R/herdr/usage/mods/usage/main.js" "$R/herdr/tony/mods/usage/main.js"
@@ -139,7 +139,7 @@ assert_has "refreshed Tony's copies: "
 
 # 4. The refresh adds, overwrites and removes files, and --dry-run only reports them.
 new_world "refresh-add-change-remove"
-mount
+run_sync
 entry="$R/herdr/github-workflows/mods/workflows"
 tony="$R/herdr/tony/mods/workflows"
 echo new > "$entry/added.js"
@@ -147,11 +147,11 @@ echo changed >> "$entry/main.js"
 rm "$entry/labels.js"
 before=$(cd "$tony" && find . -type f | sort | xargs cksum)
 # a two-way dry run sees Herdr's copy of labels.js coming back, so Tony keeps it
-mount --dry-run
+run_sync --dry-run
 assert_has "to repo (new): mods/workflows/labels.js"
 assert_lacks "Tony copy (removed)"
 assert_has "would refresh Tony's copies: 1 added, 1 changed, 0 removed"
-mount --push --dry-run
+run_sync --push --dry-run
 assert_status 0 "$RC"
 assert_has "Tony copy (new): herdr/tony/mods/workflows/added.js"
 assert_has "Tony copy (changed): herdr/tony/mods/workflows/main.js"
@@ -160,40 +160,40 @@ assert_has "would refresh Tony's copies: 1 added, 1 changed, 1 removed"
 after=$(cd "$tony" && find . -type f | sort | xargs cksum)
 assert_eq "$before" "$after" "dry run did not touch Tony's copy"
 # (a two-way run would pull labels.js back from Herdr, which still has it; --push leaves it)
-mount --push
+run_sync --push
 assert_status 0 "$RC"
 assert_same_tree "$entry" "$tony"
 assert_absent "$tony/labels.js"
 assert_exists "$tony/added.js"
-mount
+run_sync
 assert_exists "$entry/labels.js"
 assert_same_tree "$entry" "$tony"
 
 # 5. The refresh skips generated files.
 new_world "refresh-skips-generated-files"
-mount
+run_sync
 echo x > "$R/herdr/usage/mods/usage/gpui-kit.d.ts"
 echo x > "$R/herdr/usage/mods/usage/jsconfig.json"
 echo x > "$R/herdr/usage/mods/usage/.DS_Store"
-mount
+run_sync
 assert_absent "$R/herdr/tony/mods/usage/gpui-kit.d.ts"
 assert_absent "$R/herdr/tony/mods/usage/jsconfig.json"
 assert_absent "$R/herdr/tony/mods/usage/.DS_Store"
 assert_absent "$H/mods/usage/gpui-kit.d.ts"
-mount --check
+run_sync --check
 assert_status 0 "$RC"
 
 # 6. --check passes when clean, names a hand-edited, missing or extra Tony file, and writes nothing.
 new_world "check"
-mount
-mount --check
+run_sync
+run_sync --check
 assert_status 0 "$RC"
 assert_has "ok"
 echo "// hand edit" >> "$R/herdr/tony/mods/usage/main.js"
 rm "$R/herdr/tony/mods/status-bar/mod.json"
 echo extra > "$R/herdr/tony/mods/skills/stray.txt"
 before=$(cd "$R" && find . -type f | sort | xargs cksum)
-mount --check
+run_sync --check
 assert_status 1 "$RC"
 assert_has "herdr/tony/mods/usage/main.js"
 assert_has "herdr/tony/mods/status-bar/mod.json"
@@ -201,31 +201,31 @@ assert_has "herdr/tony/mods/skills/stray.txt"
 assert_lacks "herdr/tony/mods/workflows"
 after=$(cd "$R" && find . -type f | sort | xargs cksum)
 assert_eq "$before" "$after" "--check wrote nothing"
-mount
-mount --check
+run_sync
+run_sync --check
 assert_status 0 "$RC"
 
 # 7. --check also fails, naming the file, on an absolute home path in skillshare/config.yaml,
 #    and works without a Herdr config folder.
 new_world "check-absolute-paths"
-mount
+run_sync
 printf 'sources:\n  skills: %s/someone/.config/skillshare/skills\n' "$U" >> "$R/skillshare/config.yaml"
-mount --check
+run_sync --check
 assert_status 1 "$RC"
 assert_has "skillshare/config.yaml"
 assert_has "$U/someone"
 rm -rf "$H"
 printf 'x: /home/someone/skills\n' > "$R/skillshare/config.yaml"
-mount --check
+run_sync --check
 assert_status 1 "$RC"
 assert_has "skillshare/config.yaml"
 
 # 8. --pull brings a Herdr-side edit back into the entry folder, and Tony's copy follows from there.
 new_world "pull-goes-to-the-entry"
-mount
+run_sync
 echo "// edited in Herdr" >> "$H/mods/usage/main.js"
 bump "$H/mods/usage/main.js"
-mount --pull
+run_sync --pull
 assert_status 0 "$RC"
 assert_has "to repo: mods/usage/main.js"
 assert_same_file "$H/mods/usage/main.js" "$R/herdr/usage/mods/usage/main.js"
@@ -233,18 +233,18 @@ assert_same_file "$H/mods/usage/main.js" "$R/herdr/tony/mods/usage/main.js"
 assert_exists "$R/.sync-backup"
 # a new file in Herdr comes back into the owning entry, not into Tony
 echo new > "$H/mods/skills/note.txt"
-mount --pull
+run_sync --pull
 assert_has "to repo (new): mods/skills/note.txt"
 assert_exists "$R/herdr/skills/mods/skills/note.txt"
-mount --check
+run_sync --check
 assert_status 0 "$RC"
 
 # 9. A hand edit to Tony's copy is never carried into Herdr or the entry; it is overwritten.
 new_world "tony-edit-is-overwritten"
-mount
+run_sync
 echo "// hand edit" >> "$R/herdr/tony/mods/usage/main.js"
 bump "$R/herdr/tony/mods/usage/main.js"
-mount
+run_sync
 assert_status 0 "$RC"
 assert_lacks "hand edit"
 case $(cat "$H/mods/usage/main.js") in *"hand edit"*) fail "hand edit reached Herdr" ;; *) pass ;; esac
@@ -253,58 +253,58 @@ assert_same_file "$R/herdr/usage/mods/usage/main.js" "$R/herdr/tony/mods/usage/m
 
 # 10. tabs-icons lives only in Tony: it syncs both ways with herdr/tony/mods/tabs-icons.
 new_world "tabs-icons-two-way"
-mount
+run_sync
 echo "// from Herdr" >> "$H/mods/tabs-icons/note.txt"
 bump "$H/mods/tabs-icons/note.txt"
-mount --pull
+run_sync --pull
 assert_exists "$R/herdr/tony/mods/tabs-icons/note.txt"
-mount --check
+run_sync --check
 assert_status 0 "$RC"
 
 # 11. --push and --pull only go one way; newer wins by default; overwrites are backed up.
 new_world "directions"
-mount
+run_sync
 echo "// herdr side" > "$H/themes/only-in-herdr.json"
 echo "// edit" >> "$H/layouts/Tony.json"
 bump "$H/layouts/Tony.json"
-mount --push --dry-run
+run_sync --push --dry-run
 assert_status 0 "$RC"
 assert_has "to Herdr: layouts/Tony.json"
 assert_lacks "to repo"
-mount --push
+run_sync --push
 assert_same_file "$R/herdr/tony/layouts/Tony.json" "$H/layouts/Tony.json"
 assert_exists "$H/.workstation-backup"
 assert_has "replaced Herdr files were saved to"
 # only repo-tracked theme files are synced: a theme that exists only in Herdr stays there
-mount --pull
+run_sync --pull
 assert_absent "$R/personal/herdr-app/themes/only-in-herdr.json"
 # the two-way default: the newer side wins in either direction
 echo "// newer in Herdr" >> "$H/themes/win98.json"
 bump "$H/themes/win98.json"
-mount
+run_sync
 assert_has "to repo: themes/win98.json"
 echo "// newer in repo" >> "$R/personal/herdr-app/workflows/bug.yaml"
 bump "$R/personal/herdr-app/workflows/bug.yaml"
 age "$H/workflows/bug.yaml"
-mount
+run_sync
 assert_has "to Herdr: workflows/bug.yaml"
-mount --push --pull
+run_sync --push --pull
 assert_status 2 "$RC"
-mount --bogus
+run_sync --bogus
 assert_status 2 "$RC"
 
 # 12. Skillshare links are created, idempotent, and back up what is in the way.
 new_world "skillshare-links"
-mount --dry-run
+run_sync --dry-run
 assert_has "link: $S/config.yaml"
 assert_absent "$S/config.yaml"
-mount
+run_sync
 assert_status 0 "$RC"
 for name in config.yaml agents skills; do
   [ -L "$S/$name" ] && pass || fail "$name is not a link"
   assert_eq "$R/skillshare/$name" "$(readlink "$S/$name")" "$name link target"
 done
-mount
+run_sync
 assert_status 0 "$RC"
 assert_lacks "backed up"
 assert_lacks "link: "
@@ -314,10 +314,10 @@ new_world "skillshare-links-in-the-way"
 mkdir -p "$S/skills/theirs" "$S/agents"
 echo mine > "$S/config.yaml"
 echo agent > "$S/agents/a.md"
-mount --dry-run
+run_sync --dry-run
 assert_has "would back up: $S/config.yaml"
 [ -f "$S/config.yaml" ] && [ ! -L "$S/config.yaml" ] && pass || fail "dry run replaced the real config"
-mount
+run_sync
 assert_status 0 "$RC"
 assert_eq "$R/skillshare/config.yaml" "$(readlink "$S/config.yaml")" "config link"
 assert_eq "$R/skillshare/skills" "$(readlink "$S/skills")" "skills link"
@@ -330,7 +330,7 @@ assert_exists "$S"/agents.backup-*/a.md
 new_world "skillshare-links-wrong-target"
 mkdir -p "$S" "$T/elsewhere"
 ln -s "$T/elsewhere" "$S/skills"
-mount
+run_sync
 assert_eq "$R/skillshare/skills" "$(readlink "$S/skills")" "wrong link repointed"
 assert_exists "$T/elsewhere"
 
@@ -347,19 +347,19 @@ targets:
     skills:
       path: /elsewhere/skills
 EOF
-OUT=$(cd "$R" && HOME=$U/tester HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./mount.sh --dry-run 2>&1); RC=$?
+OUT=$(cd "$R" && HOME=$U/tester HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./sync.sh --dry-run 2>&1); RC=$?
 assert_status 0 "$RC"
 assert_has "would normalise paths: skillshare/config.yaml"
 case $(cat "$R/skillshare/config.yaml") in *"$U/tester"*) pass ;; *) fail "dry run rewrote the config" ;; esac
-OUT=$(cd "$R" && HOME=$U/tester HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./mount.sh 2>&1); RC=$?
+OUT=$(cd "$R" && HOME=$U/tester HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./sync.sh 2>&1); RC=$?
 assert_status 0 "$RC"
 assert_has "normalised paths: skillshare/config.yaml"
 assert_eq "  skills: ~/.config/skillshare/skills" "$(sed -n 2p "$R/skillshare/config.yaml")" "sources line"
 assert_eq "      path: ~/.claude/skills" "$(sed -n 6p "$R/skillshare/config.yaml")" "target line"
 assert_eq "      path: /elsewhere/skills" "$(sed -n 9p "$R/skillshare/config.yaml")" "other paths untouched"
-OUT=$(cd "$R" && HOME=$U/tester HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./mount.sh 2>&1); RC=$?
+OUT=$(cd "$R" && HOME=$U/tester HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./sync.sh 2>&1); RC=$?
 assert_lacks "normalised"
-mount --check
+run_sync --check
 assert_status 0 "$RC"
 
 # 14. The repo's own skillshare/config.yaml keeps Skillshare from re-expanding ~ when it saves.
@@ -370,45 +370,45 @@ grep -q '^preserve_tilde_on_save: true' "$real_repo/skillshare/config.yaml" && p
 # 15. Guards: missing Herdr folder, and a Herdr folder inside the repo.
 new_world "guards"
 rm -rf "$H"
-mount
+run_sync
 assert_status 1 "$RC"
 assert_has "no Herdr config folder"
 mkdir -p "$R/inside"
-OUT=$(cd "$R" && HERDR_APP_HOME="$R/inside" SKILLSHARE_HOME="$S" HOME="$HOME_DIR" sh ./mount.sh 2>&1); RC=$?
+OUT=$(cd "$R" && HERDR_APP_HOME="$R/inside" SKILLSHARE_HOME="$S" HOME="$HOME_DIR" sh ./sync.sh 2>&1); RC=$?
 assert_status 1 "$RC"
 
 # 16. A mod folder in herdr/tony/mods/ that no entry owns is reported by --check and removed by a run.
 new_world "tony-extra-mod-folder"
-mount
+run_sync
 mkdir -p "$R/herdr/tony/mods/stray/icons"
 echo x > "$R/herdr/tony/mods/stray/main.js"
 echo x > "$R/herdr/tony/mods/stray/icons/a.svg"
-mount --check
+run_sync --check
 assert_status 1 "$RC"
 assert_has "Tony copy extra: herdr/tony/mods/stray"
 assert_lacks "herdr/tony/mods/tabs-icons"
-mount --dry-run
+run_sync --dry-run
 assert_status 0 "$RC"
 assert_has "Tony copy (extra): herdr/tony/mods/stray"
 assert_has "1 extra mod folders removed"
 assert_exists "$R/herdr/tony/mods/stray/main.js"
-mount
+run_sync
 assert_status 0 "$RC"
 assert_has "Tony copy (extra): herdr/tony/mods/stray"
 assert_absent "$R/herdr/tony/mods/stray"
 assert_exists "$R/herdr/tony/mods/tabs-icons"
 assert_absent "$H/mods/stray"
-mount --check
+run_sync --check
 assert_status 0 "$RC"
 
 # 17. --dry-run accounts for the files the sync would pull from Herdr into an entry folder.
 new_world "dry-run-counts-pulled-files"
-mount
+run_sync
 echo "// edited in Herdr" >> "$H/mods/usage/main.js"
 bump "$H/mods/usage/main.js"
 echo new > "$H/mods/usage/note.txt"
 before=$(cd "$R" && find . -type f | sort | xargs cksum)
-mount --dry-run
+run_sync --dry-run
 assert_status 0 "$RC"
 assert_has "to repo: mods/usage/main.js"
 assert_has "Tony copy (changed): herdr/tony/mods/usage/main.js"
@@ -417,7 +417,7 @@ assert_has "would refresh Tony's copies: 1 added, 1 changed, 0 removed"
 after=$(cd "$R" && find . -type f | sort | xargs cksum)
 assert_eq "$before" "$after" "dry run left the repo untouched"
 # a real run does what the dry run said
-mount
+run_sync
 assert_has "refreshed Tony's copies: 1 added, 1 changed, 0 removed"
 assert_same_file "$H/mods/usage/main.js" "$R/herdr/tony/mods/usage/main.js"
 assert_exists "$R/herdr/tony/mods/usage/note.txt"

@@ -1,6 +1,6 @@
 // A Pull or Push that stopped on a rebase conflict: a conflict in .metadata.json alone is merged without
 // asking and the push finishes; other files are asked about; a Pull conflict does not open the agent.
-// Against real git repositories (scratch-repos.js), with the real mount.sh as the sync script.
+// Against real git repositories (scratch-repos.js), with the real sync.sh as the sync script.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";

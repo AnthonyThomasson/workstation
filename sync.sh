@@ -2,11 +2,11 @@
 # Keep this repo's Herdr setup (mods, the Tony layout, themes, workflows) and Skillshare config in
 # step with the installed folders.
 #
-#   ./mount.sh             two-way: the newer copy of each file wins, in either direction
-#   ./mount.sh --push      repo -> Herdr only (the repo wins)
-#   ./mount.sh --pull      Herdr -> repo only (Herdr wins)
-#   ./mount.sh --dry-run   show what would change, write nothing (combine with --push or --pull)
-#   ./mount.sh --check     write nothing; exit 1 and name each file when a Tony copy differs from
+#   ./sync.sh             two-way: the newer copy of each file wins, in either direction
+#   ./sync.sh --push      repo -> Herdr only (the repo wins)
+#   ./sync.sh --pull      Herdr -> repo only (Herdr wins)
+#   ./sync.sh --dry-run   show what would change, write nothing (combine with --push or --pull)
+#   ./sync.sh --check     write nothing; exit 1 and name each file when a Tony copy differs from
 #                          its entry folder (or no entry owns it), or skillshare/config.yaml has an
 #                          absolute home path
 #
@@ -74,7 +74,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 [ -d "$here/herdr" ] || { echo "no herdr folder next to this script: $here/herdr" >&2; exit 1; }
 
 tab=$(printf '\t')
-tmp=$(mktemp -d "${TMPDIR:-/tmp}/mount.XXXXXX")
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/sync.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 
 # skip REL: generated files, which are never synced or compared.
@@ -155,7 +155,7 @@ if [ "$check" -eq 1 ]; then
     done < "$tmp/abs"
   fi
   if [ "$bad" -eq 1 ]; then
-    echo "check failed: edit the entry folders under herdr/ and run ./mount.sh to refresh herdr/tony/mods; keep skillshare/config.yaml paths in ~/ form" >&2
+    echo "check failed: edit the entry folders under herdr/ and run ./sync.sh to refresh herdr/tony/mods; keep skillshare/config.yaml paths in ~/ form" >&2
     exit 1
   fi
   echo "ok: herdr/tony/mods matches the entry folders and skillshare/config.yaml has no absolute home paths"

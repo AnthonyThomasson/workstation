@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { createRunner } from "./jobs.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const MOUNT = join(here, "../../../../mount.sh");
+const MOUNT = join(here, "../../../../sync.sh");
 
 export const world = () => {
   const base = mkdtempSync(join(tmpdir(), "sync-conf-"));
@@ -31,7 +31,7 @@ export const world = () => {
 };
 
 // The config repo as the ops tests use it: a bare remote and two clones (a is the config repo whose Herdr
-// folder is HERDR_APP_HOME, b is "another machine"), the real mount.sh as the sync script. Nothing outside
+// folder is HERDR_APP_HOME, b is "another machine"), the real sync.sh as the sync script. Nothing outside
 // the scratch folder is touched.
 export const syncWorld = (name) => {
   const base = mkdtempSync(join(tmpdir(), `sync-${name}-`));
@@ -52,7 +52,7 @@ export const syncWorld = (name) => {
   execFileSync("git", ["init", "-q", "--bare", w.remote], { env });
   mkdirSync(w.a, { recursive: true });
   w.git(w.a, "init", "-q");
-  cpSync(MOUNT, join(w.a, "mount.sh"));
+  cpSync(MOUNT, join(w.a, "sync.sh"));
   const put = (root, rel, text) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), text); };
   put(w.a, "herdr/demo/mods/demo/main.js", "one\n");
   put(w.a, "herdr/demo/mods/demo/mod.json", "{}\n");
@@ -65,10 +65,10 @@ export const syncWorld = (name) => {
   w.git(w.a, "push", "-q", "-u", "origin", "main");
   execFileSync("git", ["clone", "-q", w.remote, w.b], { env });
   // Herdr starts out matching the repo, and Tony's copies exist.
-  execFileSync("sh", [join(w.a, "mount.sh")], { env, cwd: w.a });
+  execFileSync("sh", [join(w.a, "sync.sh")], { env, cwd: w.a });
   w.git(w.a, "add", "-A"); w.git(w.a, "commit", "-q", "-m", "tony copies"); w.git(w.a, "push", "-q");
   w.git(w.b, "pull", "-q");
-  w.cfg = { repo: w.a, script: "./mount.sh", agent: "claude" };
+  w.cfg = { repo: w.a, script: "./sync.sh", agent: "claude" };
   return w;
 };
 export const cleanWorld = (w) => rmSync(w.base, { recursive: true, force: true });
