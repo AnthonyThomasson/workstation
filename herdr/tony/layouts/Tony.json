@@ -134,7 +134,7 @@
               }
             },
             {
-              "id": "skillshare-toggle",
+              "id": "skills-toggle",
               "type": "block",
               "content": {
                 "mod": "skills",
@@ -226,7 +226,7 @@
                       }
                     },
                     {
-                      "id": "skillshare",
+                      "id": "skills",
                       "type": "block",
                       "content": {
                         "mod": "skills"
