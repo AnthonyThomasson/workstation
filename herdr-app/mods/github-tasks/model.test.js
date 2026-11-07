@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeItems, groupTickets, chooseProject, classifyError, age, ticketLine, signInFrom } from "./model.js";
+import { normalizeItems, groupTickets, chooseProject, classifyError, age, ticketLine, signInFrom, snapshot, labelDiff, changes, isDirty, checkTask } from "./model.js";
 
 test("reads gh's one-time code and page from its sign-in output", () => {
   const out = "\n! One-time code (AA8B-5FB7) copied to clipboard\nOpen this URL to continue in your web browser: https://github.com/login/device\n";
@@ -109,4 +109,45 @@ test("writes the line under a title, skipping what's missing", () => {
   const now = Date.parse("2026-11-06T12:00:00Z");
   assert.equal(ticketLine(ticket("a", "2026-11-03T12:00:00Z", { number: 12, status: "In progress" }), now), "#12 · In progress · 3d ago");
   assert.equal(ticketLine(ticket("b", "2026-11-03T12:00:00Z", { draft: true }), now), "Draft · 3d ago");
+});
+
+const WRITE_SCOPE_ERROR = "GraphQL: Your token has not been granted the required scopes to execute this query. The 'updateProjectV2ItemFieldValue' field requires one of the following scopes: ['project'], but your token has only been granted the: ['read:project', 'repo'] scopes.";
+
+test("tells a missing write scope from a missing read scope", () => {
+  assert.equal(classifyError(WRITE_SCOPE_ERROR), "no-write-scope");
+  assert.equal(classifyError("The 'projectsV2' field requires one of the following scopes: ['read:project']"), "no-scope");
+});
+
+test("a draft keeps the id its mutation needs", () => {
+  const [draft] = normalizeItems([{ id: "item", isArchived: false, status: null, content: { __typename: "DraftIssue", id: "DI_1", title: "Idea", createdAt: "2026-02-01T00:00:00Z" } }], REPO);
+  assert.equal(draft.contentId, "DI_1");
+});
+
+test("a snapshot sorts and de-duplicates labels and fills what's missing", () => {
+  assert.deepEqual(snapshot({ title: "T", labels: ["b", "a", "b"] }), { title: "T", body: "", labels: ["a", "b"], status: null });
+  assert.deepEqual(snapshot(undefined), { title: "", body: "", labels: [], status: null });
+});
+
+test("says which labels to add and remove", () => {
+  assert.deepEqual(labelDiff(["a", "b"], ["b", "c"]), { add: ["c"], remove: ["a"] });
+  assert.deepEqual(labelDiff([], []), { add: [], remove: [] });
+  assert.deepEqual(labelDiff(undefined, ["x"]), { add: ["x"], remove: [] });
+});
+
+test("changes names only what differs, and drafts have no labels", () => {
+  const before = { title: "A", body: "x", labels: ["bug"], status: "Todo" };
+  assert.deepEqual(changes(before, before), {});
+  assert.deepEqual(changes(before, { ...before, title: "B", status: "Done", labels: ["bug", "ui"] }), { title: "B", status: "Done", labels: { add: ["ui"], remove: [] } });
+  assert.deepEqual(changes(before, { ...before, body: "" }), { body: "" });
+  assert.deepEqual(changes(before, { ...before, labels: [] }, { draft: true }), {});
+  assert.equal(isDirty(before, { ...before, labels: ["bug"] }), false);
+  assert.equal(isDirty(before, { ...before, body: "y" }), true);
+});
+
+test("a save needs a title and a status the project has", () => {
+  const options = [{ id: "1", name: "Todo" }];
+  assert.equal(checkTask({ title: "  " }, options), "A task needs a title.");
+  assert.equal(checkTask({ title: "T", status: "Nope" }, options), 'The project has no "Nope" status.');
+  assert.equal(checkTask({ title: "T", status: "Todo" }, options), null);
+  assert.equal(checkTask({ title: "T", status: null }, options), null);
 });

@@ -1,0 +1,97 @@
+// What a workflow is: a GitHub label that triggers it, and how the orchestrator, the worker and the
+// reviewer each run (their prompt, agent, model and effort). Pure: no Herdr imports, so node --test runs it.
+
+export const VERSION = 1;
+export const ROLES = ["orchestrator", "worker", "reviewer"];
+export const ROLE_LABELS = { orchestrator: "Orchestrator", worker: "Worker", reviewer: "Reviewer" };
+// The agent kinds `herdr agent start --kind` accepts.
+export const AGENTS = ["claude", "codex", "gemini", "pi", "cursor", "devin", "agy", "cline", "omp", "mastracode", "opencode",
+  "copilot", "kimi", "kiro", "droid", "amp", "grok", "hermes", "kilo", "qodercli", "qwen", "letta", "maki", "muse"];
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+// How the work is kept apart from the main checkout: a branch in the folder the space is in, or a git
+// worktree of its own, so several runs can go at once without sharing files.
+export const STRATEGIES = ["branch", "worktree"];
+export const STRATEGY_LABELS = { branch: "Branch", worktree: "Worktree" };
+export const STRATEGY_HINTS = {
+  branch: "Work on a new branch in the space's folder. One run at a time.",
+  worktree: "Work in a separate git worktree on its own branch. Runs can go in parallel.",
+};
+
+const text = (v) => (typeof v === "string" ? v : "");
+
+export const blankRole = () => ({ prompt: "", agent: "claude", model: "", effort: "medium" });
+export const blank = () => ({
+  version: VERSION, id: "", name: "", global: false, strategy: "branch", trigger: { label: "" },
+  orchestrator: blankRole(), worker: blankRole(), reviewer: blankRole(),
+});
+
+// "Feature development!" -> "feature-development"; what a workflow's file is called.
+export const slug = (name) => text(name).toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/, "");
+
+function normalizeRole(raw) {
+  const r = raw && typeof raw === "object" ? raw : {};
+  const base = blankRole();
+  return {
+    prompt: text(r.prompt),
+    agent: text(r.agent) || base.agent, // an agent kind this list doesn't know is kept, so a newer file survives
+    model: text(r.model).trim(),
+    effort: text(r.effort) || base.effort,
+  };
+}
+
+// Whatever was read from a file, shaped as a workflow. Never throws; validate() says what is wrong.
+export function normalize(raw) {
+  const r = raw && typeof raw === "object" ? raw : {};
+  return {
+    version: VERSION,
+    id: text(r.id),
+    name: text(r.name).trim(),
+    global: r.global === true,
+    strategy: text(r.strategy) || "branch", // an older file has none, and worked on a branch
+    trigger: { label: text(r.trigger?.label).trim() },
+    orchestrator: normalizeRole(r.orchestrator),
+    worker: normalizeRole(r.worker),
+    reviewer: normalizeRole(r.reviewer),
+  };
+}
+
+// What is wrong with a workflow: [{ field, message }], empty when it can be saved.
+// takenIds: the ids of the other workflows, so a new name cannot land on one.
+export function validate(workflow, takenIds = []) {
+  const w = normalize(workflow), problems = [];
+  const add = (field, message) => problems.push({ field, message });
+  if (!w.name) add("name", "Give the workflow a name.");
+  else if (!slug(w.name)) add("name", "The name needs a letter or a number.");
+  else if (!w.id && takenIds.includes(slug(w.name))) add("name", "A workflow with that name already exists.");
+  if (!STRATEGIES.includes(w.strategy)) add("strategy", `The work strategy must be one of ${STRATEGIES.join(", ")}.`);
+  if (!w.trigger.label) add("trigger", "Set the GitHub label that triggers it.");
+  for (const role of ROLES) {
+    const r = w[role], name = ROLE_LABELS[role];
+    if (!r.prompt.trim()) add(`${role}.prompt`, `${name} needs a prompt.`);
+    if (!r.agent) add(`${role}.agent`, `${name} needs an agent.`);
+    if (!EFFORTS.includes(r.effort)) add(`${role}.effort`, `${name}'s effort must be one of ${EFFORTS.join(", ")}.`);
+  }
+  return problems;
+}
+
+// The comparable form of a workflow, to tell whether the editor holds unsaved changes.
+export const snapshot = (workflow) => JSON.stringify(normalize(workflow));
+export const isDirty = (base, current) => snapshot(base) !== snapshot(current);
+
+// The file's text: keys in a fixed order, two-space indent, a closing newline.
+export function serialize(workflow) {
+  const w = normalize(workflow);
+  const role = (r) => ({ prompt: r.prompt, agent: r.agent, model: r.model, effort: r.effort });
+  return `${JSON.stringify({
+    version: w.version, id: w.id, name: w.name, global: w.global, strategy: w.strategy, trigger: w.trigger,
+    orchestrator: role(w.orchestrator), worker: role(w.worker), reviewer: role(w.reviewer),
+  }, null, 2)}\n`;
+}
+
+// A file's text as a workflow. Throws a plain Error on text that is not a JSON object.
+export function parse(source) {
+  let data;
+  try { data = JSON.parse(source); } catch (e) { throw new Error(`not valid JSON (${e.message})`); }
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("not a workflow object");
+  return normalize(data);
+}

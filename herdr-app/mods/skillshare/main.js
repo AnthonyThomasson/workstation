@@ -11,7 +11,7 @@ import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
 import { exec, hc, run, spaces, agents, focused, machines, shared, setShared, theme, settings, layout, openOverlay, closeOverlay, nextCommand, readTextFile, props as blockProps } from "herdr";
 import {
   KINDS, SCOPES, DISCOVER, AUDIT,
-  parseJSON, lastLine, failure, flag, sourceLine, buildItems, hookArgs, rowSub, filterItems, groupItems, counts,
+  parseJSON, lastLine, failure, flag, buildItems, hookArgs, rowSub, filterItems, groupItems, counts,
   cloneUrl, skillChoices, newerVersion, ago, auditMessage, parseDiscover, parseAudit,
 } from "./model.js";
 import { createRunner } from "./jobs.js";
@@ -26,6 +26,8 @@ const shownHere = () => {
   const root = layout(), panel = find(root, PANEL), body = find(root, STACK);
   return Boolean(panel && !panel.hidden && body?.active === SHOWN);
 };
+// Shows this panel. A sync confirmed from the bottom bar starts it here, where its progress shows.
+const showPanel = () => { run("layout.select", { stack: STACK, child: SHOWN }); run("layout.show", { id: PANEL }); };
 const RECENT = "skillshare.recent.v1"; // install sources, newest first
 const HIDE_DISABLED = "skillshare.hideDisabled.v1"; // false lists disabled rows; unset or true hides them
 const IGNORED = "skillshare.doctorIgnored.v1"; // doctor warnings the person chose to hide: ["scope|name|message", ...]
@@ -118,13 +120,13 @@ function find(node, id) {
 
 function toggle() {
   const t = theme(), on = shownHere();
-  return h_flex().size_full().pr(10).items_center().bg(t.chrome).border_b(1).border_color(t.border)
-    .child(h_flex().id("toggle-skillshare").h(26).px(8).gap(5).flex_none().items_center().rounded(6)
+  return h_flex().size_full().pr(8).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border)
+    .child(h_flex().id("toggle-skillshare").h(26).w(100).justify_center().gap(5).flex_none().items_center().rounded(6)
       .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
       .hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
       .on_click(() => {
         if (on) run("layout.hide", { id: PANEL });
-        else { run("layout.select", { stack: STACK, child: SHOWN }); run("layout.show", { id: PANEL }); }
+        else showPanel();
       })
       .child(svg("mods/skillshare/icons/skillshare.svg").size(14))
       .child("Skillshare"));
@@ -337,8 +339,7 @@ export default class Skillshare extends View {
             .on_mouse_down("left", stop).on_click((_e, cx) => { this.view = k; if (k === "machines") this.machinesAt = 0; if (k === "doctor") this.doctorAt = 0; cx.notify(); }).child(label);
         })))
       .child(this.view === "machines" ? this.renderMachines(t) : this.view === "doctor" ? this.renderDoctor(t, ctx) : this.renderResources(t, ctx))
-      .children([this.renderStatus(t)].filter(Boolean))
-      .child(this.renderFooter(t, ctx));
+      .children([this.renderStatus(t)].filter(Boolean));
   }
 
   renderResources(t, ctx) {
@@ -678,25 +679,6 @@ export default class Skillshare extends View {
       props: { role: "conflict", on: c.on, repo: c.repo, files: c.files, previews: c.previews, push: c.push } });
   }
 
-  syncBoth() {
-    const ctx = this.ctx;
-    openOverlay({ mod: "skillshare", kind: "dialog", width: 460, height: 360, props: { role: "syncboth", on: ctx?.on ?? null, repo: this.git?.top ?? null, git: this.git } });
-  }
-
-  renderFooter(t, ctx) {
-    const line = sourceLine(this.git);
-    const color = line.warn ? t.blocked : t.muted;
-    return h_flex().h(40).flex_none().pl(8).pr(8).gap(8).items_center().border_t(1).border_color(t.border)
-      .child(h_flex().id("source").flex_1().min_w(0).h(26).px(6).gap(6).items_center().rounded(6).text_size(S().secondary).text_color(color)
-        .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
-        .on_click(() => openOverlay({ mod: "skillshare", kind: "dialog", width: 480, height: 520, props: { role: "source", on: ctx?.on ?? null, git: this.git } }))
-        .child(icon("git", 14, color)).child(div().min_w(0).truncate().child(line.text)))
-      .children([this.git?.repo && this.git.upstream
-        ? (this.busyAt(this.ctx?.on) ? disabledButton("both", "Sync both ways", t, { h: 26, px: 10, size: S().label })
-          : secondary("both", "Sync both ways", t, () => this.syncBoth(), { h: 26, px: 10, size: S().label, icon: "both" }))
-        : null].filter(Boolean));
-  }
-
   // ---- Dialogs ----
 
   initDialog(cx) {
@@ -772,9 +754,9 @@ export default class Skillshare extends View {
       const files = (g.files ?? []).slice(0, 40).map((f) => `${f.code.padEnd(2)} ${f.path}`).join("\n");
       const canPull = g.upstream && !dirty && behind > 0;
       const pullLabel = ahead && behind ? "Pull and merge" : behind ? `Pull ${plural(behind, "commit")}` : "Pull";
-      const pull = () => { request({ op: "pull", on: p.on, repo: g.top }); close(); };
+      const pull = () => { showPanel(); request({ op: "pull", on: p.on, repo: g.top }); close(); };
       const push = () => behind ? channel.say("warn", "Push rejected · origin has newer commits. Use Sync both ways.") || close() : pushNow();
-      const pushNow = () => { request({ op: "push", on: p.on, commit: dirty > 0, message: this.msg.value().trim() || "Update skills" }); close(); };
+      const pushNow = () => { showPanel(); request({ op: "push", on: p.on, commit: dirty > 0, message: this.msg.value().trim() || "Update skills" }); close(); };
       const both = () => { close(); openOverlay({ mod: "skillshare", kind: "dialog", width: 460, height: 360, props: { role: "syncboth", on: p.on, repo: g.top, git: g } }); };
       const small = { h: 30, px: 12, size: S().secondary };
       return dialogFrame(t, "source", this.handle, "Source repository",
@@ -795,7 +777,7 @@ export default class Skillshare extends View {
         [dialogButton("close", "Close", t, close)], close);
     }
     if (p.role === "syncboth") {
-      const go = () => { request({ op: "syncboth", on: p.on, repo: p.repo }); close(); };
+      const go = () => { showPanel(); request({ op: "syncboth", on: p.on, repo: p.repo }); close(); };
       const steps = ["Commit your local changes", "Pull and merge changes from the remote", "Push the result", "Sync every target"];
       return dialogFrame(t, "syncboth", this.handle, "Sync both ways?",
         [note(t, "This will:", t.foreground),

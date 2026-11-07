@@ -1,25 +1,21 @@
 // Tasks: the tickets on the GitHub Project linked to the selected space's repo. Open tickets first,
-// then a collapsed section per close reason, each newest first. Read only.
+// then a collapsed section per close reason, each newest first. Clicking one opens it in a tab of its
+// own to edit (editor.js), and saving pushes the change to GitHub.
 // Roles (props.role): the panel (default); "toggle", the tab-bar button that opens or closes the
-// layout's shared side panel on this panel, as Files, Changes and Skillshare do.
+// layout's shared side panel on this panel, as Files, Changes and Skillshare do; "editor", one ticket
+// in the center, opened by a click on a row.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, run, spaces, focused, shared, setShared, theme, settings, layout, nextCommand, readTextFile, props as blockProps } from "herdr";
-import { normalizeItems, groupTickets, chooseProject, ticketLine, signInFrom } from "./model.js";
+import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
+import { normalizeItems, groupTickets, chooseProject, ticketLine } from "./model.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, loadItems } from "./loader.js";
+import { S, icon, stop, note, iconButton, action, gh } from "./ui.js";
+import { Auth, REFRESH, LOGIN } from "./auth.js";
+import { TaskEditor, CHANGED } from "./editor.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
 const projectKey = (repo) => `github-tasks.project.${repo}`;
-// gh runs detached, so the panel can read its one-time code while it waits for the browser. Its
-// output goes to a new folder, which the script prints, and its exit code goes to code when it ends.
-const SIGN_IN = 'd=$(mktemp -d) || exit 1; ( GH_PROMPT_DISABLED=1 gh "$@" </dev/null >"$d/out" 2>"$d/err"; echo $? > "$d/code" ) >/dev/null 2>&1 &\necho "$d"';
-const SIGN_IN_SECONDS = 900; // GitHub's device codes last about 15 minutes
-// The permission Tasks reads Projects with, and the sign-in that grants it when gh isn't signed in yet.
-const GRANT = ["-h", "github.com", "-s", "read:project"];
-const REFRESH = ["auth", "refresh", ...GRANT];
-const LOGIN = ["auth", "login", "-h", "github.com", "-p", "https", "-s", "read:project", "-w"];
-
 function find(node, id) {
   if (node?.id === id) return node;
   for (const child of node?.children ?? []) { const f = find(child, id); if (f) return f; }
@@ -30,33 +26,15 @@ const shownHere = () => {
   return Boolean(panel && !panel.hidden && body?.active === SHOWN);
 };
 
-const gh = (args, where) => exec("gh", args, where)
-  .catch((e) => ({ code: 127, stdout: "", stderr: String(e?.message ?? e) }));
-
 // Work started from render: cx.notify() throws while a view renders, so it starts after.
 const later = (cx, fn) => cx.spawn(async (cx) => { await cx.sleep(0); return fn(cx); });
 
 const activeSpace = () => spaces().find((s) => s.active) ?? null;
 
-function S() {
-  const b = Number(settings().ui_font_size) || 13;
-  return { title: b + 1, body: b + 0.5, secondary: b - 0.5, label: b - 1 };
-}
-
-const icon = (name, size, color) => svg(`mods/github-tasks/icons/${name}.svg`).size(size).flex_none().text_color(color);
-const stop = (_e, cx) => cx.stop_propagation();
-const note = (t, text, color) => div().flex_none().text_size(S().secondary).text_color(color ?? t.muted).child(text);
-
-function iconButton(id, name, t, onClick, spin) {
-  const glyph = icon(name, 14, t.muted);
-  return h_flex().id(id).size(24).flex_none().justify_center().items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover))
-    .on_mouse_down("left", stop).on_click(onClick).child(spin ? glyph.spin(900) : glyph);
-}
-
 function toggle() {
   const t = theme(), on = shownHere();
   return h_flex().size_full().pr(8).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border)
-    .child(h_flex().id("toggle-github-tasks").h(26).px(8).gap(5).flex_none().items_center().rounded(6)
+    .child(h_flex().id("toggle-github-tasks").h(26).w(100).justify_center().gap(5).flex_none().items_center().rounded(6)
       .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
       .hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
       .on_click(() => {
@@ -67,19 +45,12 @@ function toggle() {
       .child("Tasks"));
 }
 
-// A solid button, or a quiet outline one.
-function action(id, label, t, onClick, quiet = false) {
-  return h_flex().id(id).h(28).px(12).flex_none().items_center().rounded(6).cursor_pointer().text_size(S().secondary)
-    .when(!quiet, (el) => el.bg(t.solid).text_color(t.solid_foreground).font_semibold())
-    .when(quiet, (el) => el.border_1().border_color(t.border).text_color(t.foreground))
-    .hover((s) => s.opacity(0.88)).on_mouse_down("left", stop).on_click(onClick).child(label);
-}
-
 // What a failure says, and the gh command that fixes it when Tasks can run it.
 function explain(error, folder) {
   const place = folder.split("/").filter(Boolean).pop() || "This space's folder";
   switch (error.kind) {
     case "no-scope": return { text: "Tasks needs permission to read GitHub Projects.", signIn: REFRESH };
+    case "no-write-scope": return { text: "Saving needs permission to edit GitHub Projects.", signIn: REFRESH };
     case "no-auth": return { text: "gh isn't signed in to GitHub yet.", signIn: LOGIN };
     case "not-a-repo": return { text: `${place} isn't a GitHub repo.`, quiet: true };
     default: return { text: `GitHub didn't answer: ${error.message}` };
@@ -90,9 +61,11 @@ export default class GitHubTasks extends View {
   init(_props, cx) {
     this.role = blockProps()?.role ?? "panel";
     if (this.role === "toggle") return;
+    if (this.role === "editor") { this.editor = new TaskEditor(blockProps(), cx); return; }
     this.handle = cx.focus_handle();
     this.expanded = new Set(); // closed sections opened this session
-    this.auth = null; // a sign-in in progress, or the last one's failure
+    this.auth = new Auth();
+    this.changedAt = shared(CHANGED) ?? null; // a save in an editor tab refreshes the list
     this.lastCwd = new Map();
     this.reset(null);
     this.wasHidden = true;
@@ -180,47 +153,20 @@ export default class GitHubTasks extends View {
     this.refresh(cx);
   }
 
-  // Signs gh in with the permission Tasks reads Projects with, in the background, then refreshes.
+  // Signs gh in with the permission Tasks needs, in the background, then refreshes.
   signIn(cx, args) {
     const ctx = this.ctx;
-    if (!ctx || this.auth?.phase === "starting" || this.auth?.dir) return;
-    const on = ctx.on, pending = { phase: "starting", code: null, url: null, dir: null };
-    this.auth = pending;
-    cx.notify();
-    cx.spawn(async (cx) => {
-      const started = await exec("sh", ["-c", SIGN_IN, "github-tasks-sign-in", ...args], { on })
-        .catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
-      const dir = started.stdout.trim();
-      if (this.auth !== pending) return;
-      if (started.code !== 0 || !dir) { this.auth = { phase: "failed", message: started.stderr.trim().split("\n")[0] || "Could not start gh." }; return cx.notify(); }
-      this.auth = { ...pending, phase: "waiting", dir };
-      cx.notify();
-      const mine = () => this.auth?.dir === dir;
-      for (let i = 0; i < SIGN_IN_SECONDS; i++) {
-        await cx.sleep(1000);
-        if (!mine()) return;
-        const err = (await readTextFile(`${dir}/err`, { on }).catch(() => null)) ?? "";
-        const done = ((await readTextFile(`${dir}/code`, { on }).catch(() => null)) ?? "").trim();
-        const { code, url } = signInFrom(err);
-        if (code !== this.auth.code || url !== this.auth.url) { this.auth = { ...this.auth, code, url }; cx.notify(); }
-        if (!done) continue;
-        exec("sh", ["-c", 'rm -rf "$1"', "github-tasks-sign-in", dir], { on }).catch(() => {});
-        if (done === "0") {
-          this.auth = null;
-          this.refresh(cx);
-        } else {
-          const lines = err.trim().split("\n").filter(Boolean);
-          this.auth = { phase: "failed", message: lines[lines.length - 1] ?? "Sign-in didn't finish." };
-        }
-        return cx.notify();
-      }
-      if (mine()) { this.auth = { phase: "failed", message: "Sign-in timed out. Try again." }; cx.notify(); }
-    });
+    if (ctx) this.auth.start(cx, args, ctx.on, (cx) => this.refresh(cx));
   }
 
   render(cx) {
     if (this.role === "toggle") return toggle();
+    if (this.role === "editor") return this.editor.render(cx);
     const t = theme();
+
+    // An editor tab saved something: the list is stale.
+    const changed = shared(CHANGED) ?? null;
+    if (changed !== this.changedAt) { this.changedAt = changed; later(cx, (cx) => this.refresh(cx)); }
 
     // Follow the selected space, and ask GitHub only while the panel shows.
     // Another space starts over. Another folder in the same space keeps the list until its repo is
@@ -291,25 +237,8 @@ export default class GitHubTasks extends View {
       .child(h_flex().gap(7).items_start().text_size(S().secondary).text_color(quiet ? t.muted : t.ansi1)
         .when(!quiet, (el) => el.child(icon("alert", 14, t.ansi1)))
         .child(div().flex_1().min_w(0).child(text)))
-      .when(Boolean(signIn) && !this.auth, (el) => el.child(action("github-sign-in", "Sign in to GitHub", t, (_e, cx) => this.signIn(cx, signIn))))
-      .when(Boolean(signIn) && Boolean(this.auth), (el) => el.child(this.renderSignIn(t, signIn)));
-  }
-
-  // The sign-in in progress: gh's code to enter on GitHub, or what went wrong.
-  renderSignIn(t, args) {
-    const a = this.auth;
-    if (a.phase === "failed") return v_flex().gap(8)
-      .child(div().text_size(S().secondary).text_color(t.ansi1).child(a.message))
-      .child(action("github-sign-in-retry", "Try again", t, (_e, cx) => this.signIn(cx, args)));
-    if (!a.code) return note(t, "Starting sign-in with GitHub…");
-    return v_flex().gap(8)
-      .child(note(t, "Enter this code on GitHub, then approve gh:"))
-      .child(div().id("github-sign-in-code").px(10).py(8).rounded(6).border_1().border_color(t.border).bg(t.chrome)
-        .font_family(settings().font_family || "Menlo").text_size(S().body).font_semibold().text_color(t.foreground).child(a.code))
-      .child(h_flex().gap(6)
-        .child(action("github-sign-in-open", "Open GitHub", t, (_e, cx) => cx.open_url(a.url ?? "https://github.com/login/device")))
-        .child(action("github-sign-in-copy", "Copy code", t, (_e, cx) => cx.write_to_clipboard(a.code), true)))
-      .child(note(t, "Waiting for you to approve in the browser…"));
+      .when(Boolean(signIn) && !this.auth.state, (el) => el.child(action("github-sign-in", "Sign in to GitHub", t, (_e, cx) => this.signIn(cx, signIn))))
+      .when(Boolean(signIn) && Boolean(this.auth.state), (el) => el.child(this.auth.render(t, (_e, cx) => this.signIn(cx, signIn))));
   }
 
   sectionTitle(t, label) {
@@ -328,13 +257,26 @@ export default class GitHubTasks extends View {
       .child(`${section.label} · ${section.tickets.length}`);
   }
 
+  // A click opens the ticket in a tab to edit. Its folder and machine go along, so the editor asks
+  // GitHub from the same place the panel does.
+  openTicket(ticket) {
+    const ctx = this.ctx, project = this.project;
+    if (!ctx || !project) return;
+    const name = ticket.draft ? ticket.title : `#${ticket.number} ${ticket.title}`;
+    run("tab.new", {
+      name,
+      mod: "github-tasks",
+      props: { role: "editor", ticket, repo: this.repo, project: { id: project.id, title: project.title }, where: { cwd: ctx.folder, on: ctx.on } },
+    });
+  }
+
   row(t, ticket, now, color) {
-    const clickable = Boolean(ticket.url);
     return h_flex().id(`ticket-${ticket.key}`).flex_none().mx(8).mb(2).px(6).py(6).gap(10).items_start().rounded(8)
-      .when(clickable, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => cx.open_url(ticket.url)))
+      .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click(() => this.openTicket(ticket))
       .child(div().mt(6).w(8).h(8).flex_none().rounded_full().when(ticket.draft, (el) => el.border(1.5).border_color(color)).when(!ticket.draft, (el) => el.bg(color)))
       .child(v_flex().flex_1().min_w(0).gap(1)
         .child(div().text_size(S().body).font_medium().child(ticket.title))
-        .child(div().truncate().text_size(S().secondary).text_color(t.muted).child(ticketLine(ticket, now))));
+        .child(div().truncate().text_size(S().secondary).text_color(t.muted).child(ticketLine(ticket, now))))
+      .when(Boolean(ticket.url), (el) => el.child(iconButton(`open-${ticket.key}`, "external", t, (_e, cx) => cx.open_url(ticket.url))));
   }
 }

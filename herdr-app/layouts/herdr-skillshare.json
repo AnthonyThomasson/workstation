@@ -131,7 +131,7 @@
                 }
               },
               "size": {
-                "px": 90
+                "px": 108
               }
             },
             {
@@ -144,7 +144,20 @@
                 }
               },
               "size": {
-                "px": 118
+                "px": 108
+              }
+            },
+            {
+              "id": "workflows-toggle",
+              "type": "block",
+              "content": {
+                "mod": "workflows",
+                "props": {
+                  "role": "toggle"
+                }
+              },
+              "size": {
+                "px": 108
               }
             }
           ]
@@ -226,6 +239,13 @@
                       "content": {
                         "mod": "github-tasks"
                       }
+                    },
+                    {
+                      "id": "workflows",
+                      "type": "block",
+                      "content": {
+                        "mod": "workflows"
+                      }
                     }
                   ]
                 }
@@ -240,7 +260,7 @@
             "px": 28
           },
           "content": {
-            "mod": "workspace-status"
+            "mod": "status-bar"
           }
         }
       ]
