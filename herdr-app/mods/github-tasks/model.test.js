@@ -151,3 +151,44 @@ test("a save needs a title and a status the project has", () => {
   assert.equal(checkTask({ title: "T", status: "Todo" }, options), null);
   assert.equal(checkTask({ title: "T", status: null }, options), null);
 });
+
+import { normalizeSettings, groupByStage, groomPrompt, DEFAULT_STATUSES } from "./model.js";
+
+test("grooming statuses default to To Do and Up Next", () => {
+  assert.deepEqual(normalizeSettings(undefined), DEFAULT_STATUSES);
+  assert.deepEqual(normalizeSettings({ backlog: " Ideas ", groomed: "" }), { backlog: "Ideas", groomed: "Up Next" });
+});
+
+test("groups open tickets by stage, newest first, dropping other statuses", () => {
+  const open = [
+    ticket("a", "2026-01-01T00:00:00Z", { status: "To Do" }),
+    ticket("b", "2026-03-01T00:00:00Z", { status: "to do" }),
+    ticket("c", "2026-02-01T00:00:00Z", { status: "Up Next" }),
+    ticket("d", "2026-02-01T00:00:00Z", { status: "In Progress" }),
+    ticket("e", "2026-02-01T00:00:00Z", { status: "In review" }),
+    ticket("f", "2026-02-01T00:00:00Z", { status: null }),
+  ];
+  const g = groupByStage(open);
+  assert.deepEqual(g.backlog.map((t) => t.key), ["b", "a"]);
+  assert.deepEqual(g.groomed.map((t) => t.key), ["c"]);
+  assert.deepEqual(g.inProgress.map((t) => t.key), ["d"]);
+  assert.deepEqual(groupByStage(open, { backlog: "In review", groomed: "To Do" }).groomed.map((t) => t.key), ["b", "a"]);
+});
+
+test("the grooming prompt names the repo, project and both statuses", () => {
+  const p = groomPrompt({ repo: "me/app", project: { title: "Roadmap", url: "https://x/p" }, backlog: "Ideas", groomed: "Ready" });
+  for (const s of ["me/app", "Roadmap", "https://x/p", '"Ideas"', '"Ready"']) assert.ok(p.includes(s), s);
+});
+
+test("status names match ignoring case, spaces and punctuation", () => {
+  const g = groupByStage([ticket("a", "2026-01-01T00:00:00Z", { status: "Todo" }), ticket("b", "2026-01-01T00:00:00Z", { status: "Up next" })]);
+  assert.deepEqual(g.backlog.map((t) => t.key), ["a"]);
+  assert.deepEqual(g.groomed.map((t) => t.key), ["b"]);
+});
+
+test("the grooming prompt has the agent ask the person how to clean up and prioritize before changing anything", () => {
+  const p = groomPrompt({ repo: "me/app", project: { title: "Roadmap", url: "https://x/p" }, backlog: "Todo", groomed: "Up Next" });
+  assert.match(p, /ask the person how they want to go about cleaning/);
+  assert.match(p, /prioritiz/);
+  assert.match(p, /Don't change anything yet/);
+});

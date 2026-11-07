@@ -7,8 +7,9 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
-import { normalizeItems, groupTickets, chooseProject, ticketLine } from "./model.js";
-import { GitHubError, MAX_ITEMS, findRepo, findProjects, loadItems, createDraft } from "./loader.js";
+import { normalizeItems, groupTickets, groupByStage, normalizeSettings, sameStatus, chooseProject, ticketLine } from "./model.js";
+import { GitHubError, MAX_ITEMS, findRepo, findProjects, loadItems, createDraft, loadStatusField } from "./loader.js";
+import { installedAgents, startGrooming } from "./groom.js";
 import { S, icon, stop, note, iconButton, action, gh } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { TaskEditor, CHANGED } from "./editor.js";
@@ -16,6 +17,10 @@ import { TaskEditor, CHANGED } from "./editor.js";
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
 const projectKey = (repo) => `github-tasks.project.${repo}`;
+const statusesKey = (repo) => `github-tasks.statuses.${repo}`; // which statuses are the backlog and the groomed
+const AGENT_KEY = "github-tasks.groomAgent";
+// The dim layer behind a dialog: the theme's background, half see-through where it is a hex color.
+const scrim = (t) => (/^#[0-9a-f]{6}$/i.test(t.background ?? "") ? `${t.background}b3` : t.background);
 function find(node, id) {
   if (node?.id === id) return node;
   for (const child of node?.children ?? []) { const f = find(child, id); if (f) return f; }
@@ -67,6 +72,12 @@ export default class GitHubTasks extends View {
     this.changedAt = shared(CHANGED) ?? null; // a save in an editor tab refreshes the list
     this.lastCwd = new Map();
     this.reset(null);
+    this.backlogOpen = false; // the Backlog section is collapsed until opened
+    this.dialog = null; // null | "settings" | "agent"
+    this.statusOptions = null; // the project's Status field options, read when the settings dialog opens
+    this.agents = []; // installed agents Start Grooming can use
+    this.grooming = false;
+    installedAgents().then((list) => { this.agents = list; cx.notify(); });
     this.wasHidden = true;
     // No GitHub calls while hidden; showing the panel again refreshes (see render).
     cx.timer.every(POLL, (cx) => { if (shownHere()) this.refresh(cx); });
@@ -184,10 +195,13 @@ export default class GitHubTasks extends View {
       .child(h_flex().h(42).flex_none().pl(14).pr(8).gap(4).items_center().border_b(1).border_color(t.border)
         .child(div().flex_1().text_size(S().title).font_semibold().child("Tasks"))
         .when(Boolean(this.project), (el) => el.child(iconButton("new-task", this.creating ? "ring" : "plus", t, (_e, cx) => this.newTask(cx), this.creating)))
+        .when(Boolean(this.project), (el) => el.child(iconButton("settings", "settings", t, (_e, cx) => this.openSettings(cx))))
         .when(Boolean(ctx), (el) => el.child(iconButton("refresh", this.loading ? "ring" : "sync", t, (_e, cx) => this.refresh(cx), this.loading)))
         .child(iconButton("close", "close", t, () => run("layout.hide", { id: PANEL }))))
       .when(Boolean(this.repo), (el) => el.child(this.renderContext(t)))
-      .child(this.renderBody(t, ctx));
+      .when(Boolean(this.project), (el) => el.child(this.renderGroom(t)))
+      .child(this.renderBody(t, ctx))
+      .when(Boolean(this.dialog), (el) => el.child(this.dialog === "agent" ? this.renderAgentDialog(t) : this.renderSettingsDialog(t)));
   }
 
   // Where the list comes from: the repo, its project, and a choice if several are linked.
@@ -215,13 +229,23 @@ export default class GitHubTasks extends View {
     if (!this.loaded) return v_flex().flex_1().min_h(0).p(16).gap(10).children([0, 1, 2, 3, 4].map((i) => div().h(44).flex_none().rounded(8).bg(t.chrome).opacity(1 - i * 0.15)));
     if (!this.project) return message(note(t, `No project linked to ${this.repo}.`));
 
-    const { open } = this.groups, now = Date.now();
+    const now = Date.now(), cfg = this.statuses();
+    const { inProgress, groomed, backlog } = groupByStage(this.groups.open, cfg);
     const rows = [];
     if (this.error) rows.push(div().px(14).py(8).child(this.renderProblem(t, ctx)));
     if (this.truncated) rows.push(div().px(14).pt(10).child(note(t, `Showing the first ${MAX_ITEMS.toLocaleString()} project items, so some tickets may be missing.`, t.blocked)));
-    rows.push(this.sectionTitle(t, `Open · ${open.length}`));
-    if (open.length) rows.push(...open.map((ticket) => this.row(t, ticket, now, ticket.draft ? t.muted : t.ansi2)));
-    else rows.push(div().px(14).py(4).child(note(t, `No open tickets for ${this.repo} on this project.`)));
+    const section = (title, list, color) => {
+      rows.push(this.sectionTitle(t, `${title} · ${list.length}`));
+      if (list.length) rows.push(...list.map((ticket) => this.row(t, ticket, now, ticket.draft ? t.muted : color)));
+      else rows.push(div().px(14).py(4).child(note(t, `Nothing in ${title}.`)));
+    };
+    if (inProgress.length) section("In Progress", inProgress, t.ansi3);
+    section(cfg.groomed, groomed, t.ansi2);
+    rows.push(this.backlogTitle(t, cfg.backlog, backlog.length));
+    if (this.backlogOpen) {
+      if (backlog.length) rows.push(...backlog.map((ticket) => this.row(t, ticket, now, ticket.draft ? t.muted : t.ansi4)));
+      else rows.push(div().px(14).py(4).child(note(t, `Nothing in ${cfg.backlog}.`)));
+    }
     return div().id("tickets").flex_1().min_h(0).overflow_y_scrollbar().child(v_flex().pb(16).children(rows));
   }
 
@@ -233,6 +257,123 @@ export default class GitHubTasks extends View {
         .child(div().flex_1().min_w(0).child(text)))
       .when(Boolean(signIn) && !this.auth.state, (el) => el.child(action("github-sign-in", "Sign in to GitHub", t, (_e, cx) => this.signIn(cx, signIn))))
       .when(Boolean(signIn) && Boolean(this.auth.state), (el) => el.child(this.auth.render(t, (_e, cx) => this.signIn(cx, signIn))));
+  }
+
+  statuses() { return normalizeSettings(this.repo ? shared(statusesKey(this.repo)) : null); }
+
+  // The Backlog header: pressing it opens or collapses the tickets under it.
+  backlogTitle(t, status, count) {
+    const label = sameStatus(status, "To Do") ? "Backlog" : `Backlog (${status})`;
+    return h_flex().id("backlog-title").flex_none().min_h(28).mx(8).px(6).pt(10).pb(4).gap(4).items_center().cursor_pointer()
+      .text_size(S().label).font_semibold().text_color(t.muted).hover((s) => s.text_color(t.foreground))
+      .on_mouse_down("left", stop).on_click((_e, cx) => { this.backlogOpen = !this.backlogOpen; cx.notify(); })
+      .child(icon(this.backlogOpen ? "chevron-down" : "chevron-right", 12, t.muted))
+      .child(`${label} · ${count}`);
+  }
+
+  // Start Grooming and the agent it opens.
+  renderGroom(t) {
+    const agent = this.agent(), busy = this.grooming;
+    return h_flex().flex_none().px(14).py(10).gap(8).items_center().border_b(1).border_color(t.border)
+      .child(action("start-grooming", busy ? "Starting…" : "Start Grooming", t, (_e, cx) => this.groom(cx), false, busy || !agent))
+      .child(h_flex().id("groom-agent").h(28).px(8).gap(6).min_w(0).items_center().rounded(6).border_1().border_color(t.border).cursor_pointer()
+        .hover((s) => s.bg(t.hover)).text_size(S().secondary).on_mouse_down("left", stop).on_click((_e, cx) => { this.dialog = "agent"; cx.notify(); })
+        .child(div().min_w(0).truncate().child(agent?.name ?? "No agent"))
+        .child(icon("chevron-down", 12, t.muted)));
+  }
+
+  // The chosen agent: the saved one if it is installed, else Claude, else the first installed.
+  agent() {
+    const saved = shared(AGENT_KEY);
+    return this.agents.find((a) => a.key === saved) ?? this.agents.find((a) => a.key === "claude") ?? this.agents[0] ?? null;
+  }
+
+  groom(cx) {
+    const ctx = this.ctx, project = this.project, agent = this.agent();
+    if (!ctx || !project || !agent || this.grooming) return;
+    this.grooming = true;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        // The prompt names the statuses as the project spells them ("Todo", not the default "To Do").
+        const where = { cwd: ctx.folder, on: ctx.on }, cfg = this.statuses();
+        const options = (await loadStatusField(gh, project.id, where).catch(() => null))?.options ?? [];
+        const real = (name) => options.find((o) => sameStatus(o.name, name))?.name ?? name;
+        await startGrooming({ agent, repo: this.repo, project, settings: { backlog: real(cfg.backlog), groomed: real(cfg.groomed) }, where });
+        this.error = null;
+      } catch (e) {
+        this.error = { kind: "other", message: String(e?.message ?? e) };
+      } finally {
+        this.grooming = false;
+        cx.notify();
+      }
+    });
+  }
+
+  // The settings dialog reads the project's statuses once, when it opens.
+  openSettings(cx) {
+    const project = this.project, ctx = this.ctx;
+    if (!project || !ctx) return;
+    this.dialog = "settings";
+    this.statusOptions = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try { this.statusOptions = (await loadStatusField(gh, project.id, { cwd: ctx.folder, on: ctx.on }))?.options ?? []; } catch { this.statusOptions = []; }
+      cx.notify();
+    });
+  }
+
+  setStatus(kind, name, cx) {
+    setShared(statusesKey(this.repo), { ...this.statuses(), [kind]: name });
+    cx.notify();
+  }
+
+  closeDialog(cx) { this.dialog = null; cx.notify(); }
+
+  dialogFrame(t, id, title, body) {
+    return div().id(`${id}-backdrop`).absolute().inset_0().flex().items_center().justify_center().bg(scrim(t))
+      .on_mouse_down("left", (_e, cx) => { this.closeDialog(cx); cx.stop_propagation(); })
+      .child(v_flex().id(id).w(340).max_h(460).flex_none().p(16).gap(12).rounded(12).border_1().border_color(t.border)
+        .bg(t.popover).shadow_lg().text_color(t.foreground).text_size(S().body).on_mouse_down("left", stop)
+        .child(h_flex().flex_none().items_center().gap(8)
+          .child(div().flex_1().min_w(0).text_size(S().title).font_semibold().child(title))
+          .child(iconButton(`${id}-close`, "close", t, (_e, cx) => this.closeDialog(cx))))
+        .child(body));
+  }
+
+  renderAgentDialog(t) {
+    const current = this.agent()?.key;
+    const rows = this.agents.map((a) => h_flex().id(`groom-pick-${a.key}`).h(32).flex_none().px(8).gap(8).items_center().rounded(6).cursor_pointer()
+      .hover((s) => s.bg(t.hover)).when(a.key === current, (el) => el.bg(t.selected)).on_mouse_down("left", stop)
+      .on_click((_e, cx) => { setShared(AGENT_KEY, a.key); this.dialog = null; cx.notify(); })
+      .child(div().w(14).h(14).flex_none().child(a.key === current ? icon("check", 14, t.foreground) : div()))
+      .child(div().flex_1().min_w(0).truncate().child(a.name)));
+    return this.dialogFrame(t, "groom-agent-dialog", "Grooming agent",
+      div().id("groom-agent-options").max_h(320).overflow_y_scrollbar()
+        .child(v_flex().gap(2).children(rows.length ? rows : [div().px(8).py(8).child(note(t, "No installed agents were found."))])));
+  }
+
+  renderSettingsDialog(t) {
+    const cfg = this.statuses(), options = this.statusOptions;
+    const group = (kind, title, hint) => v_flex().flex_none().gap(4)
+      .child(div().text_size(S().secondary).font_semibold().child(title))
+      .child(note(t, hint))
+      .child(v_flex().gap(2).children((options ?? []).map((o) => {
+        const on = sameStatus(o.name, cfg[kind]);
+        return h_flex().id(`status-${kind}-${o.id ?? o.name}`).h(30).flex_none().px(8).gap(8).items_center().rounded(6).cursor_pointer()
+          .hover((s) => s.bg(t.hover)).when(on, (el) => el.bg(t.selected)).on_mouse_down("left", stop)
+          .on_click((_e, cx) => this.setStatus(kind, o.name, cx))
+          .child(div().w(14).h(14).flex_none().child(on ? icon("check", 14, t.foreground) : div()))
+          .child(div().flex_1().min_w(0).truncate().child(o.name));
+      })))
+      .when(options && !options.some((o) => sameStatus(o.name, cfg[kind])), (el) => el.child(note(t, `The project has no "${cfg[kind]}" status.`, t.blocked)));
+    const body = options === null ? note(t, "Loading statuses…")
+      : !options.length ? note(t, "This project has no Status field.")
+      : div().id("status-settings-body").max_h(360).overflow_y_scrollbar()
+        .child(v_flex().gap(14)
+          .child(group("backlog", "Backlog status", "Tickets here are the ones Start Grooming works through."))
+          .child(group("groomed", "Groomed status", "Ready tickets, listed under In Progress.")));
+    return this.dialogFrame(t, "status-settings", "Task settings", body);
   }
 
   sectionTitle(t, label) {
