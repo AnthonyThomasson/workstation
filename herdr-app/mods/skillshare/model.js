@@ -70,8 +70,8 @@ export function parseSnapshot(text) {
   return out;
 }
 
-// sh -c PROJECT <name> <folder>: prints the folder when skillshare treats it as a project.
-export const PROJECT = '[ -f "$1/.skillshare/config.yaml" ] || [ -f "$1/skillshare/config.yaml" ] && printf "%s" "$1"';
+// sh -c PROJECT <name> <folder>: prints the folder only when it has a real per-project config (.skillshare/config.yaml). A bare skillshare/config.yaml is the global config in global format, so it is not a project; those folders use -g.
+export const PROJECT = '[ -f "$1/.skillshare/config.yaml" ] && printf "%s" "$1"';
 
 // sh -c DISCOVER <name> <git url> [branch]: "@dir <temp folder>" (the clone is kept in <temp>/r for the
 // audit step; the caller removes it), then the skill folders, one per line ("." for a skill at
