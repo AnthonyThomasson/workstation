@@ -1,48 +1,48 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/runkids/skillshare/main/schemas/config.schema.json
 
 sources:
-  skills: /Users/athomasson/.config/skillshare/skills
-  agents: /Users/athomasson/.config/skillshare/agents
+  skills: ~/.config/skillshare/skills
+  agents: ~/.config/skillshare/agents
 
 mode: merge
 
 targets:
   antigravity:
     skills:
-      path: /Users/athomasson/.gemini/config/skills
+      path: ~/.gemini/config/skills
   antigravity-cli:
     skills:
-      path: /Users/athomasson/.gemini/antigravity-cli/skills
+      path: ~/.gemini/antigravity-cli/skills
   claude:
     skills:
-      path: /Users/athomasson/.claude/skills
+      path: ~/.claude/skills
   copilot:
     skills:
-      path: /Users/athomasson/.copilot/skills
+      path: ~/.copilot/skills
   cursor:
     skills:
-      path: /Users/athomasson/.cursor/skills
+      path: ~/.cursor/skills
   devin:
     skills:
-      path: /Users/athomasson/.config/devin/skills
+      path: ~/.config/devin/skills
   gemini:
     skills:
-      path: /Users/athomasson/.gemini/skills
+      path: ~/.gemini/skills
   hermes:
     skills:
-      path: /Users/athomasson/.hermes/skills
+      path: ~/.hermes/skills
   kimi-code:
     skills:
-      path: /Users/athomasson/.kimi-code/skills
+      path: ~/.kimi-code/skills
   opencode:
     skills:
-      path: /Users/athomasson/.config/opencode/skills
+      path: ~/.config/opencode/skills
   universal:
     skills:
-      path: /Users/athomasson/.agents/skills
+      path: ~/.agents/skills
   windsurf:
     skills:
-      path: /Users/athomasson/.codeium/windsurf/skills
+      path: ~/.codeium/windsurf/skills
 
 ignore:
   - .DS_Store
