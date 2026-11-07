@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findRepo, findProjects, loadItems, loadTask, loadStatusField, loadRepoLabels, saveTask, GitHubError, PAGE_SIZE, MAX_ITEMS } from "./loader.js";
+import { findRepo, findProjects, createProject, loadItems, loadTask, loadStatusField, loadRepoLabels, saveTask, GitHubError, PAGE_SIZE, MAX_ITEMS } from "./loader.js";
 
 const ok = (data) => ({ code: 0, stdout: JSON.stringify({ data }), stderr: "" });
 const page = (count, endCursor, hasNextPage) => ok({
@@ -178,4 +178,30 @@ test("refuses an empty title or an unknown status before sending anything", asyn
   await assert.rejects(saveTask(gh, { repo: "me/app", ticket: issue, project, statusField: field, before: base, after: { ...base, title: " " } }), /title/);
   await assert.rejects(saveTask(gh, { repo: "me/app", ticket: issue, project, statusField: field, before: base, after: { ...base, status: "Nope" } }), /Nope/);
   assert.equal(calls.length, 0);
+});
+
+// ---- making a project for a repo ----
+
+test("makes a project titled with the repo's name, owned by the repo's owner and linked to the repo", async () => {
+  const { gh, calls } = recorder((args) => (args.some((a) => a.includes("createProjectV2"))
+    ? ok({ createProjectV2: { projectV2: { id: "P9", title: "app", url: "https://github.com/users/me/projects/9", closed: false } } })
+    : ok({ repository: { id: "R1", owner: { id: "O1" } } })));
+  const made = await createProject(gh, "me/app", { cwd: "/x" });
+  assert.deepEqual(made, { id: "P9", title: "app", url: "https://github.com/users/me/projects/9", closed: false });
+  assert.deepEqual(input(calls, 0), { owner: "me", name: "app" });
+  assert.deepEqual(input(calls, 1), { owner: "O1", repo: "R1", title: "app" });
+  assert.deepEqual(calls[1].where, { cwd: "/x" });
+});
+
+test("a project can't be made without the project scope, and that is named", async () => {
+  const { gh } = recorder((args) => (args.some((a) => a.includes("createProjectV2"))
+    ? { code: 1, stdout: "", stderr: "The 'createProjectV2' field requires one of the following scopes: ['project']" }
+    : ok({ repository: { id: "R1", owner: { id: "O1" } } })));
+  await assert.rejects(createProject(gh, "me/app"), (e) => e.kind === "no-write-scope");
+});
+
+test("a repo GitHub doesn't know makes no project", async () => {
+  const { gh, calls } = recorder(ok({ repository: null }));
+  await assert.rejects(createProject(gh, "me/app"), /no repo called me\/app/);
+  assert.equal(calls.length, 1);
 });

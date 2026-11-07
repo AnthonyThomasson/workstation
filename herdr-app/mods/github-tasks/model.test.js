@@ -152,7 +152,7 @@ test("a save needs a title and a status the project has", () => {
   assert.equal(checkTask({ title: "T", status: null }, options), null);
 });
 
-import { normalizeSettings, groupByStage, groomPrompt, groomArgv, normalizeGroomer, DEFAULT_STATUSES } from "./model.js";
+import { normalizeSettings, groupByStage, groomPrompt, setupPrompt, groomArgv, normalizeGroomer, DEFAULT_STATUSES } from "./model.js";
 
 test("grooming statuses default to To Do and Up Next", () => {
   assert.deepEqual(normalizeSettings(undefined), DEFAULT_STATUSES);
@@ -199,4 +199,17 @@ test("the grooming agent's command carries the chosen model and effort", () => {
   assert.deepEqual(groomArgv("codex", ["codex"], { model: "gpt-x", effort: "low" }), ["codex", "-m", "gpt-x", "-c", "model_reasoning_effort=low"]);
   assert.deepEqual(groomArgv("kimi", ["kimi"], { model: "k" }), ["kimi", "--model", "k"]);
   assert.deepEqual(normalizeGroomer({ agent: " codex ", effort: "bogus" }), { agent: "codex", model: "", effort: "medium" });
+});
+
+test("the setup prompt names the repo and the new project, and points at the installed Herdr modules", () => {
+  const p = setupPrompt({ repo: "me/app", project: { title: "app", url: "https://x/p" } });
+  for (const s of ["me/app", '"app"', "https://x/p", "~/.config/herdr-app/mods", "$HERDR_APP_HOME/mods"]) assert.ok(p.includes(s), s);
+});
+
+test("the setup prompt has the agent search the modules and ask the person questions before changing anything", () => {
+  const p = setupPrompt({ repo: "me/app", project: { title: "app", url: "https://x/p" } });
+  assert.match(p, /Search through the installed modules/);
+  assert.match(p, /Ask one question at a time/);
+  assert.match(p, /Don't change anything yet/);
+  assert.match(p, /wait for the person to agree before you change anything/);
 });

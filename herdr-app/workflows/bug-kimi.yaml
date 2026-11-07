@@ -1,0 +1,32 @@
+version: 1
+id: bug-kimi
+name: Bug - Kimi
+strategy: worktree
+
+trigger:
+  labels: []
+  match: any
+
+orchestrator:
+  agent: claude
+  command: ""
+  model: opus
+  effort: high
+  prompt: ""
+  planning: "Diagnose with the project's fix skill if it has one, else `mattpocock-skills:diagnosing-bugs`. Reproduce the bug first; planning ends only with a failing test that reproduces it. Agree the fix with the user before changing code."
+  retro: "Look back on the run: what slowed it, what to write down for next time. Then ask whether to finish (merge, push, close the ticket)."
+
+worker:
+  agent: custom
+  command: claudep --model kimi-k3.1-pro
+  model: kimi-k3.1-pro
+  effort: high
+  prompt: This bug workflow runs reproduce, fix and green with the user in the orchestrator's session, since the fix gate needs them mid-phase. Report that and stop, changing nothing.
+  testing: ""
+
+reviewer:
+  agent: claude
+  command: ""
+  model: haiku
+  effort: low
+  prompt: A bug has no audit. Report that and stop, changing nothing.

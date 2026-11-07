@@ -8,8 +8,8 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
 import { normalizeItems, groupTickets, groupByStage, normalizeSettings, normalizeGroomer, sameStatus, statusesKey, GROOMER_KEY, chooseProject, ticketLine } from "./model.js";
-import { GitHubError, MAX_ITEMS, findRepo, findProjects, loadItems, createDraft, loadStatusField } from "./loader.js";
-import { installedAgents, startGrooming } from "./groom.js";
+import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, createDraft, loadStatusField } from "./loader.js";
+import { installedAgents, startGrooming, startProjectSetup } from "./groom.js";
 import { S, icon, stop, note, iconButton, action, gh } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { TaskEditor, CHANGED } from "./editor.js";
@@ -87,6 +87,7 @@ export default class GitHubTasks extends View {
     this.loading = false;
     this.forgetRepo();
     this.error = null;
+    this.setupError = null;
   }
 
   forgetRepo() {
@@ -222,12 +223,13 @@ export default class GitHubTasks extends View {
     if (!ctx) return message(note(t, "Open a space to see its tickets."));
     if (!this.loaded && this.error) return v_flex().flex_1().min_h(0).p(16).gap(10).child(this.renderProblem(t, ctx));
     if (!this.loaded) return v_flex().flex_1().min_h(0).p(16).gap(10).children([0, 1, 2, 3, 4].map((i) => div().h(44).flex_none().rounded(8).bg(t.chrome).opacity(1 - i * 0.15)));
-    if (!this.project) return message(note(t, `No project linked to ${this.repo}.`));
+    if (!this.project) return message(this.renderNoProject(t, ctx));
 
     const now = Date.now(), cfg = this.statuses();
     const { inProgress, groomed, backlog } = groupByStage(this.groups.open, cfg);
     const rows = [];
     if (this.error) rows.push(div().px(14).py(8).child(this.renderProblem(t, ctx)));
+    if (this.setupError) rows.push(div().px(14).py(8).child(note(t, this.setupError, t.blocked)));
     if (this.truncated) rows.push(div().px(14).pt(10).child(note(t, `Showing the first ${MAX_ITEMS.toLocaleString()} project items, so some tickets may be missing.`, t.blocked)));
     const section = (title, list, color) => {
       rows.push(this.sectionTitle(t, `${title} · ${list.length}`));
@@ -242,6 +244,14 @@ export default class GitHubTasks extends View {
       else rows.push(div().px(14).py(4).child(note(t, `Nothing in ${cfg.backlog}.`)));
     }
     return div().id("tickets").flex_1().min_h(0).overflow_y_scrollbar().child(v_flex().pb(16).children(rows));
+  }
+
+  // The repo has no project: say so, and offer to make one linked to it.
+  renderNoProject(t, ctx) {
+    return v_flex().gap(10)
+      .when(Boolean(this.error), (el) => el.child(this.renderProblem(t, ctx)))
+      .child(note(t, `No project linked to ${this.repo}.`))
+      .child(action("create-project", this.makingProject ? "Creating…" : "Create Project", t, (_e, cx) => this.makeProject(cx), false, this.makingProject));
   }
 
   renderProblem(t, ctx) {
@@ -297,6 +307,37 @@ export default class GitHubTasks extends View {
         this.error = { kind: "other", message: String(e?.message ?? e) };
       } finally {
         this.grooming = false;
+        cx.notify();
+      }
+    });
+  }
+
+  // The Create Project button, shown when the repo has no project: makes one linked to the repo, selects
+  // it and lists its tickets, then opens the default agent to set it up with the Herdr modules.
+  makeProject(cx) {
+    const ctx = this.ctx, repo = this.repo, agent = this.agent();
+    if (!ctx || !repo || this.makingProject) return;
+    this.makingProject = true;
+    this.setupError = null;
+    cx.notify();
+    const where = { cwd: ctx.folder, on: ctx.on }, groomer = normalizeGroomer(shared(GROOMER_KEY));
+    cx.spawn(async (cx) => {
+      try {
+        const project = await createProject(gh, repo, where);
+        this.error = null;
+        setShared(projectKey(repo), project.id);
+        this.token++;
+        this.loading = false;
+        const at = this.token;
+        this.refresh(cx);
+        // The project exists by now, so a failure to open the agent is shown apart from the list's errors.
+        await startProjectSetup({ agent, repo, project, groomer, where }).catch((e) => {
+          if (at === this.token) this.setupError = `The project was made, but its setup didn't open: ${e?.message ?? e}`;
+        });
+      } catch (e) {
+        this.error = e instanceof GitHubError ? e : { kind: "other", message: String(e?.message ?? e) };
+      } finally {
+        this.makingProject = false;
         cx.notify();
       }
     });

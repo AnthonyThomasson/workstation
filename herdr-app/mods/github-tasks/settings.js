@@ -66,7 +66,7 @@ export class TaskSettings {
     return v_flex().flex_none().gap(10)
       .child(v_flex().gap(2)
         .child(div().text_size(S().title).font_semibold().child("Grooming agent"))
-        .child(note(t, "What Start Grooming opens. The model and effort are passed to the agent when it starts.")))
+        .child(note(t, "What Start Grooming and Set Up Project open. The model and effort are passed to the agent when it starts.")))
       .child(v_flex().gap(4).child(heading("Agent"))
         .child(h_flex().flex_wrap().gap(4).children(this.agents.length
           ? this.agents.map((a) => chip(`groom-agent-${a.key}`, a.name, a.key === agent?.key, (_e, cx) => { this.saveGroomer({ agent: a.key }); cx.notify(); }))

@@ -82,6 +82,30 @@ export async function findProjects(gh, repo, where) {
   return (data.repository?.projectsV2?.nodes ?? []).filter((p) => p && !p.closed);
 }
 
+const REPO_OWNER_QUERY = `query($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) { id owner { id } }
+}`;
+
+const CREATE_PROJECT_MUTATION = `mutation($owner: ID!, $repo: ID!, $title: String!) {
+  createProjectV2(input: { ownerId: $owner, repositoryId: $repo, title: $title }) {
+    projectV2 { id title url closed }
+  }
+}`;
+
+// Makes a project for the repo, titled with the repo's name and linked to it, owned by the repo's
+// owner. Returns it as findProjects does.
+export async function createProject(gh, repo, where) {
+  const [owner, name] = repo.split("/");
+  const data = await graphql(gh, REPO_OWNER_QUERY, { owner, name }, where);
+  const found = data.repository;
+  if (!found?.id || !found.owner?.id) throw new GitHubError(`GitHub has no repo called ${repo}.`);
+  const fields = ["-f", `owner=${found.owner.id}`, "-f", `repo=${found.id}`, "-f", `title=${name}`];
+  const r = await gh(["api", "graphql", "-f", `query=${CREATE_PROJECT_MUTATION}`, ...fields], where);
+  const project = r.code === 0 ? parse(r.stdout)?.data?.createProjectV2?.projectV2 : null;
+  if (!project?.id) throw new GitHubError(r.stderr || r.stdout);
+  return project;
+}
+
 // A project's items, a page per call because exec has a time limit. keepGoing is asked before each
 // further page, so a load nobody wants any more stops. truncated: the project has more than MAX_ITEMS.
 export async function loadItems(gh, projectId, where, keepGoing = () => true) {
