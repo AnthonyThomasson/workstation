@@ -48,6 +48,9 @@ export const syncWorld = (name) => {
   const runner = createRunner({ exec: sh, readText: (path) => { try { return readFileSync(path, "utf8"); } catch { return null; } }, pollMs: 20 });
   w.io = { sh, job: (script, args) => runner.job(args, { script, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) }) };
   mkdirSync(w.home, { recursive: true }); mkdirSync(w.herdr, { recursive: true });
+  // A stand-in for the running Herdr's CLI, so tests never reach the real one: every mod loads, status has no errors.
+  mkdirSync(join(w.home, ".local/bin"), { recursive: true });
+  writeFileSync(join(w.home, ".local/bin/herdr-app"), '#!/bin/sh\ncase "$1" in status) echo \'{ "errors": [] }\' ;; *) echo "check passed" ;; esac\n', { mode: 0o755 });
   writeFileSync(env.GIT_CONFIG_GLOBAL, "[init]\n\tdefaultBranch = main\n[pull]\n\trebase = true\n");
   execFileSync("git", ["init", "-q", "--bare", w.remote], { env });
   mkdirSync(w.a, { recursive: true });

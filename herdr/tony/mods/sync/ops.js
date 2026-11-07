@@ -1,10 +1,10 @@
-// What the sync mod runs in the repo: three shell scripts (check, pull, push) and the functions that
+// What the sync mod runs in the repo: three shell scripts (check, sync, push) and the functions that
 // run them through io.sh(script, args) and read what they print (model.js). No Herdr imports, so the
 // tests (ops.test.js) run them against real git repositories.
 //
 //   args: $1 repo path, $2 sync script (default ./sync.sh, relative to the repo), $3 per script.
-//   Every script ends with "@result\t<ok|conflict|error>" and "@msg\t<text>" (pull and push) or "@end" (check).
-import { parseCheck, parseOutcome } from "./model.js";
+//   Every script ends with "@result\t<ok|error>" and "@msg\t<text>" (sync and push) or "@end" (check).
+import { parseCheck, parseOutcome, parseTargets, PUSH_BRANCH } from "./model.js";
 
 export const PATHS = 'PATH="$HOME/.local/bin:$HOME/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH';
 
@@ -41,8 +41,6 @@ status_lines() {
     length($0) < 4 { next }
     { xy = substr($0, 1, 2); if (xy ~ /[RC]/) skip = 1; printf "%s\\t%s\\n", xy, substr($0, 4) }'
 }
-# The unmerged files, one per line (-z, so spaces and non-ASCII names come out as they are).
-unmerged() { git diff --name-only -z --diff-filter=U 2>/dev/null | tr '\\0' '\\n'; }
 # The sync script's two-way dry run: which files it would copy which way. Prints "@herdr <path>" for each file it
 # would copy to the repo (Herdr changed it) and "@newer <path>" for each it would copy to Herdr (the repo is newer).
 two_way() {
@@ -51,19 +49,6 @@ two_way() {
        /^to Herdr( \\(new\\))?: /{ sub(/^to Herdr( \\(new\\))?: /, ""); printf "@newer\\t%s\\n", $0 }' "$tmp/dry"
 }
 fail() { printf '@msg\\t%s\\n@result\\terror\\n' "$1"; exit 0; }
-# The files both sides changed, then undo the half-done rebase so nothing is left behind.
-# Needs $mb (merge base), $up and $tip (our tip before the rebase). $1 is pull or push: what it says was not done.
-conflict_report() {
-  printf '@result\\tconflict\\n'
-  unmerged | while IFS= read -r f; do
-    r=$(git log --format=%s "$mb".."$up" -- "$f" 2>/dev/null | paste -sd ';' - || true)
-    l=$(git log --format=%s "$mb".."$tip" -- "$f" 2>/dev/null | paste -sd ';' - || true)
-    printf '@conflict\\t%s\\t%s\\t%s\\n' "$f" "$r" "$l"
-  done
-  git rebase --abort >/dev/null 2>&1 || true
-  if [ "$1" = pull ]; then printf '@msg\\tBoth sides changed the same files. The pull was undone; the repo and Herdr are as they were.\\n'
-  else printf '@msg\\tBoth sides changed the same files. Nothing was pushed.\\n'; fi
-}
 `;
 
 // The repo's state and what the sync script would copy either way (its two-way dry run). $3 = 1: git fetch first.
@@ -88,57 +73,14 @@ fi
 printf '@end\\n'
 `;
 
-// Pull the remote's commits, then make Herdr match the repo (the repo wins; the script backs up what it
-// overwrites). Linking skillshare's targets again is a separate step (targets-ops.js), done by main.js.
-// A pull that stops (a clash with an uncommitted edit, a failed git command) leaves the repo as it was.
-export const PULL = `${PRELUDE}
-[ "$script_missing" = 0 ] || fail "The sync script $script was not found in the repo"
-[ -z "$inprog" ] || fail "A rebase or merge is already in progress in the repo"
-[ -n "$up" ] || fail "This branch has no remote branch to pull from"
-git fetch --quiet >"$tmp/out" 2>&1 || fail "Could not reach the remote: $(tail -n 1 "$tmp/out")"
-n=$(git rev-list --count HEAD.."$up")
-mb=$(git merge-base HEAD "$up" 2>/dev/null || true)
-tip=$(git rev-parse HEAD)
-if [ "$n" -gt 0 ]; then
-  stash0=$(git rev-parse -q --verify refs/stash || true)
-  if ! git pull --rebase --autostash --quiet >"$tmp/out" 2>&1; then
-    # Only a rebase that stopped on conflicting files is a conflict; anything else is an error.
-    if [ -n "$(unmerged)" ]; then conflict_report pull; exit 0; fi
-    git rebase --abort >/dev/null 2>&1 || true
-    fail "git pull failed: $(tail -n 1 "$tmp/out")"
-  fi
-  stash1=$(git rev-parse -q --verify refs/stash || true)
-  if [ -n "$(unmerged)" ] || [ "$stash0" != "$stash1" ]; then
-    # The rebase finished but putting the uncommitted edits back clashed with the pulled commits. The edits are in
-    # the stash entry git kept. Go back to where we were, bring the edits back cleanly, drop the entry.
-    unmerged > "$tmp/clash"
-    git reset -q --hard "$tip" >/dev/null 2>&1
-    if git stash apply --index --quiet >/dev/null 2>&1 || git stash apply --quiet >/dev/null 2>&1; then
-      git stash drop -q >/dev/null 2>&1
-      printf '@msg\\tPull stopped: an uncommitted edit clashes with the remote (%s). Nothing changed.\\n@result\\terror\\n' "$(paste -sd ',' "$tmp/clash" | sed 's/,/, /g')"
-    else
-      printf '@msg\\tPull stopped: an uncommitted edit clashes with the remote, and git could not put it back. It is saved in the stash (git stash list).\\n@result\\terror\\n'
-    fi
-    exit 0
-  fi
-fi
-"$sp" --push >"$tmp/script-out" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/script-out")"
-copied=$(grep '^copied:' "$tmp/script-out" | tail -n 1 || true)
-# Herdr files the script replaced (backed up) and where the backups went, for the notification.
-replaced=$(grep -c '^to Herdr: ' "$tmp/script-out" || true)
-backup=$(sed -n 's/^replaced Herdr files were saved to //p' "$tmp/script-out" | tail -n 1)
-printf '@pulled\\t%s\\n@copied\\t%s\\n@replaced\\t%s\\n@backup\\t%s\\n' "$n" "$copied" "\${replaced:-0}" "$backup"
-if [ "$n" -gt 0 ]; then printf '@msg\\tPulled %s commit(s) and updated Herdr\\n@result\\tok\\n' "$n"
-else printf '@msg\\tUpdated Herdr from the repo\\n@result\\tok\\n'; fi
-`;
-
 // Copy Herdr's changes into the repo, commit everything ($3 is the message), put our commits on top of
-// the remote's and push to the upstream branch. A conflict undoes the rebase and pushes nothing. Push
+// the remote's and push to the upstream branch. If the rebase onto the remote cannot be done, it is undone and nothing is pushed. Push
 // refuses while the repo has files newer than Herdr's copies: the copy would revert them.
 export const PUSH = `${PRELUDE}
 msg=$3
 [ "$script_missing" = 0 ] || fail "The sync script $script was not found in the repo"
 [ -z "$inprog" ] || fail "A rebase or merge is already in progress in the repo"
+[ "$branch" = ${PUSH_BRANCH} ] || fail "Push is only allowed from ${PUSH_BRANCH} (this is \${branch:-a detached HEAD})"
 [ -n "$up" ] || fail "This branch has no remote branch to push to"
 two_way > "$tmp/two" || fail "The sync script failed: $(tail -n 1 "$tmp/dry")"
 if grep -q '^@newer' "$tmp/two"; then
@@ -158,18 +100,8 @@ if [ -d "$tmp/pre" ]; then
     cmp -s "$tmp/pre/$f" "$f" || printf '%s\\n' "$f"
   done > "$tmp/clash"
   if [ -s "$tmp/clash" ]; then
-    stamp=$(date +%Y%m%d-%H%M%S)
-    saved=".sync-backup/conflict-$stamp"
-    printf '@result\\tconflict\\n'
-    while IFS= read -r f; do
-      mkdir -p "$saved/herdr/$(dirname "$f")"
-      cp -p "$f" "$saved/herdr/$f"
-      cp -p "$tmp/pre/$f" "$f"
-      printf '@conflict\\t%s\\t\\t\\n' "$f"
-    done < "$tmp/clash"
-    printf '@saved\\t%s\\n@kind\\tcopy\\n' "$saved"
-    printf '@msg\\tHerdr and the repo both changed the same files. The repo versions were kept and Herdr versions saved; nothing was committed or pushed.\\n'
-    exit 0
+    while IFS= read -r f; do cp -p "$tmp/pre/$f" "$f"; done < "$tmp/clash"
+    fail "Nothing was pushed: Herdr and the repo both changed $(paste -sd ',' "$tmp/clash" | sed 's/,/, /g'). The repo's versions were kept."
   fi
 fi
 git add -A -- . ':(exclude).sync-backup'
@@ -182,14 +114,8 @@ mb=$(git merge-base HEAD "$up" 2>/dev/null || true)
 tip=$(git rev-parse HEAD)
 if [ "$n" -gt 0 ]; then
   if ! git pull --rebase --quiet >"$tmp/out" 2>&1; then
-    # Only a rebase that stopped on conflicting files is a conflict; anything else is an error.
-    if [ -n "$(unmerged)" ]; then
-      conflict_report push
-      printf '@kind\\trebase\\n'
-      exit 0
-    fi
     git rebase --abort >/dev/null 2>&1 || true
-    fail "git pull failed: $(tail -n 1 "$tmp/out")"
+    fail "Nothing was pushed: the remote has newer commits that do not apply cleanly ($(tail -n 1 "$tmp/out"))"
   fi
   "$sp" --push >"$tmp/script-out" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/script-out")"
 fi
@@ -201,20 +127,78 @@ printf '@pushed\\t%s\\n@pulled\\t%s\\n' "$ahead" "$n"
 printf '@msg\\tPushed %s commit(s) to %s\\n@result\\tok\\n' "$ahead" "$up"
 `;
 
-// After the person chose a side for each conflicting file (conflicts.js) and the merge was committed:
-// make Herdr match the repo (the sync script with --push; the repo wins and the script backs up what it
-// replaces) and, with $3 = 1, push the merge to the upstream branch.
-export const FINISH = `${PRELUDE}
+// Sync: Herdr always follows the repo. Fast-forward the repo to its remote when it is behind (uncommitted edits are
+// kept), run the sync script with --push --prune (the repo wins; the script backs up each Herdr file it replaces or removes), then ask
+// the running Herdr whether it loaded the result: every mod the repo owns is loaded once with herdr-app check, and
+// herdr-app status must list no errors. Herdr picks up changed files by itself. Nothing is committed or pushed.
+export const HERDR_SYNC = `${PRELUDE}
 [ "$script_missing" = 0 ] || fail "The sync script $script was not found in the repo"
-[ -z "$inprog" ] || fail "A rebase or merge is still in progress in the repo"
-"$sp" --push >"$tmp/script-out" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/script-out")"
-if [ "$3" = 1 ]; then
-  [ -n "$up" ] || fail "This branch has no remote branch to push to"
-  remote=\${up%%/*}; rbranch=\${up#*/}
-  git push --quiet "$remote" "HEAD:$rbranch" >"$tmp/out" 2>&1 || fail "Push was rejected: $(tail -n 1 "$tmp/out")"
-  printf '@msg\\tMerged, updated Herdr and pushed\\n@result\\tok\\n'
-else printf '@msg\\tMerged and updated Herdr\\n@result\\tok\\n'; fi
+[ -z "$inprog" ] || fail "A rebase or merge is in progress in the repo"
+if [ -n "$up" ]; then
+  git fetch --quiet >"$tmp/out" 2>&1 || fail "Could not reach the remote: $(tail -n 1 "$tmp/out")"
+  if [ "$(git rev-list --count HEAD.."$up")" -gt 0 ]; then
+    git pull --ff-only --autostash --quiet >"$tmp/out" 2>&1 || fail "Could not bring the repo up to date: $(tail -n 1 "$tmp/out")"
+  fi
+fi
+"$sp" --push --prune >"$tmp/script-out" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/script-out")"
+copied=$(grep '^copied:' "$tmp/script-out" | tail -n 1 || true)
+replaced=$(grep -c '^to Herdr: ' "$tmp/script-out" || true)
+backup=$(sed -n 's/^replaced Herdr files were saved to //p' "$tmp/script-out" | tail -n 1)
+printf '@copied\\t%s\\n@replaced\\t%s\\n@backup\\t%s\\n' "$copied" "\${replaced:-0}" "$backup"
+home=\${HERDR_APP_HOME:-$HOME/.config/herdr-app}
+if ! command -v herdr-app >/dev/null 2>&1; then
+  printf '@msg\\tSynced; herdr-app was not found, so the running Herdr was not checked\\n@result\\tok\\n'; exit 0
+fi
+bad=""; n=0; seen=""
+for d in herdr/*/mods/*/; do
+  m=$(basename "$d")
+  [ -d "$home/mods/$m" ] || continue
+  case " $seen " in *" $m "*) continue ;; esac
+  seen="$seen $m"; n=$((n+1))
+  (cd "$home" && herdr-app check "mods/$m" >"$tmp/check" 2>&1) || bad="$bad $m"
+done
+status=$(herdr-app status 2>&1 || true)
+[ -z "$bad" ] || fail "Synced, but Herdr could not load:$bad"
+if printf '%s' "$status" | grep -q '"errors": \\[\\]'; then
+  printf '@msg\\tSynced; the running Herdr loaded %s mods with no errors\\n@result\\tok\\n' "$n"
+elif printf '%s' "$status" | grep -q '"errors"'; then
+  fail "Synced, but the running Herdr reports errors (herdr-app status)"
+else
+  printf '@msg\\tSynced; the running Herdr is not answering, so it was not checked\\n@result\\tok\\n'
+fi
 `;
+
+// The worktrees and local branches of the repo ($1), for the picker.
+export const LIST = `${PATHS}
+cd "$1" 2>/dev/null && git rev-parse --git-dir >/dev/null 2>&1 || exit 0
+git worktree list --porcelain 2>/dev/null | awk '
+  /^worktree /{ if (p != "") printf "@worktree\\t%s\\t%s\\n", p, b; p = substr($0, 10); b = "" }
+  /^branch /{ b = $2; sub(/^refs\\/heads\\//, "", b) }
+  END { if (p != "") printf "@worktree\\t%s\\t%s\\n", p, b }'
+git for-each-ref refs/heads --format='%(refname:short)' | while IFS= read -r b; do
+  w=$(git worktree list --porcelain | awk -v want="refs/heads/$b" '/^worktree /{ p = substr($0, 10) } $1 == "branch" && $2 == want { print p; exit }')
+  printf '@branch\\t%s\\t%s\\n' "$b" "$w"
+done
+`;
+
+// Check out branch $3 in the repo $1. Uncommitted edits come along when they do not clash; otherwise git says no.
+export const SWITCH = `${PATHS}
+cd "$1" 2>/dev/null || { printf '@msg\\tNot a folder: %s\\n@result\\terror\\n' "$1"; exit 0; }
+if out=$(git switch "$2" 2>&1); then printf '@msg\\tSwitched to %s\\n@result\\tok\\n' "$2"
+else printf '@msg\\t%s\\n@result\\terror\\n' "$(printf '%s' "$out" | tail -n 1)"; fi
+`;
+
+export async function listTargets(io, repo) {
+  return parseTargets((await settle(io, LIST, [repo])).stdout);
+}
+
+export async function switchBranch(io, repo, branch) {
+  return parseOutcome((await settle(io, SWITCH, [repo, branch])).text);
+}
+
+export async function syncHerdr(io, cfg) {
+  return parseOutcome((await settle(io, HERDR_SYNC, [cfg.repo, cfg.script], { long: true })).text);
+}
 
 // io.sh(script, args): one short exec (Herdr stops an exec after 30 s). io.job(script, args): the same
 // script detached and polled (jobs.js); used for everything that can touch the network.
@@ -230,16 +214,7 @@ export async function checkRepo(io, cfg, { fetch = false } = {}) {
   return r.code !== 0 && !r.stdout.trim() ? { ...state, error: r.stderr.trim().split("\n").pop() || "Could not run git" } : state;
 }
 
-// Pull and push return an outcome: { result: "ok" | "conflict" | "error", message, files, extra }.
-export async function pull(io, cfg) {
-  return parseOutcome((await settle(io, PULL, [cfg.repo, cfg.script], { long: true })).text);
-}
-
+// Sync and push return an outcome: { result: "ok" | "error", message, extra }.
 export async function push(io, cfg, message) {
   return parseOutcome((await settle(io, PUSH, [cfg.repo, cfg.script, message], { long: true })).text);
-}
-
-// After a conflict was resolved by choosing sides: Herdr matches the repo, and with push the merge goes up.
-export async function finishMerge(io, cfg, { push: andPush = false } = {}) {
-  return parseOutcome((await settle(io, FINISH, [cfg.repo, cfg.script, andPush ? "1" : "0"], { long: true })).text);
 }

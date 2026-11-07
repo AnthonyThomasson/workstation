@@ -5,6 +5,8 @@
 #   ./sync.sh             two-way: the newer copy of each file wins, in either direction
 #   ./sync.sh --push      repo -> Herdr only (the repo wins)
 #   ./sync.sh --pull      Herdr -> repo only (Herdr wins)
+#   ./sync.sh --push --prune  repo -> Herdr, and files in a repo-owned mod folder in Herdr that the repo does
+#                          not have are moved to the backup folder (only with --push)
 #   ./sync.sh --dry-run   show what would change, write nothing (combine with --push or --pull)
 #   ./sync.sh --check     write nothing; exit 1 and name each file when a Tony copy differs from
 #                          its entry folder (or no entry owns it), or skillshare/config.yaml has an
@@ -35,7 +37,7 @@
 # keeps whatever it already had, so each real run also rewrites "$HOME/" to "~/" in
 # skillshare/config.yaml. Set SKILLSHARE_HOME to use a folder other than ~/.config/skillshare.
 #
-# Nothing is deleted from Herdr or the repo's entry folders. A file you remove on one side comes back
+# Nothing is deleted from the repo's entry folders, and Herdr loses files only with --push --prune (see above). A file you remove on one side comes back
 # from the other on the next run, so delete it on both. A file this run overwrites is first saved at
 # the same relative path in <config>/.workstation-backup/<timestamp>/ (Herdr's copy) or
 # <repo>/.sync-backup/<timestamp>/ (the repo's). A symlink left in the config folder by an older
@@ -54,17 +56,20 @@ dry_run=0
 push=1
 pull=1
 check=0
+prune=0
 for arg in "$@"; do
   case "$arg" in
     -n|--dry-run) dry_run=1 ;;
     --push) pull=0 ;;
     --pull) push=0 ;;
     --check) check=1 ;;
+    --prune) prune=1 ;;
     -h|--help) echo "$usage"; exit 0 ;;
     *) echo "$usage" >&2; exit 2 ;;
   esac
 done
 [ "$push" -eq 1 ] || [ "$pull" -eq 1 ] || { echo "--push and --pull together are the default two-way sync: leave both off" >&2; exit 2; }
+[ "$prune" -eq 0 ] || { [ "$push" -eq 1 ] && [ "$pull" -eq 0 ]; } || { echo "--prune goes with --push" >&2; exit 2; }
 if [ "$check" -eq 1 ] && { [ "$dry_run" -eq 1 ] || [ "$push" -eq 0 ] || [ "$pull" -eq 0 ]; }; then
   echo "--check stands alone" >&2
   exit 2
@@ -216,6 +221,7 @@ while IFS= read -r rel; do
 done < "$roots"
 
 to_herdr=0
+pruned=0
 to_repo=0
 same=0
 
@@ -247,7 +253,14 @@ while IFS="$tab" read -r rrel hrel; do
   if [ ! -e "$b" ]; then
     if [ "$push" -eq 1 ]; then copy "to Herdr (new)" "$a" "$b" "$herdr_backup/$hrel" "$hrel"; to_herdr=$((to_herdr + 1)); fi
   elif [ ! -e "$a" ]; then
-    if [ "$pull" -eq 1 ]; then copy "to repo (new)" "$b" "$a" "$repo_backup/$rrel" "$hrel"; to_repo=$((to_repo + 1)); fi
+    if [ "$prune" -eq 1 ]; then
+      case "$hrel" in
+        mods/*)
+          echo "removed from Herdr: $hrel"
+          if [ "$dry_run" -eq 0 ]; then mkdir -p "$(dirname "$herdr_backup/$hrel")"; mv "$b" "$herdr_backup/$hrel"; fi
+          pruned=$((pruned + 1)) ;;
+      esac
+    elif [ "$pull" -eq 1 ]; then copy "to repo (new)" "$b" "$a" "$repo_backup/$rrel" "$hrel"; to_repo=$((to_repo + 1)); fi
   elif cmp -s "$a" "$b"; then
     same=$((same + 1))
   elif [ "$push" -eq 1 ] && { [ "$pull" -eq 0 ] || [ "$a" -nt "$b" ]; }; then
@@ -261,7 +274,7 @@ done < "$pairs"
 
 verb="copied"
 [ "$dry_run" -eq 0 ] || verb="would copy"
-echo "$verb: $to_herdr to Herdr, $to_repo to the repo; $same already the same"
+echo "$verb: $to_herdr to Herdr, $to_repo to the repo; $same already the same$([ "$pruned" -eq 0 ] || echo "; $pruned removed from Herdr")"
 if [ "$dry_run" -eq 0 ]; then
   [ ! -d "$herdr_backup" ] || echo "replaced Herdr files were saved to $herdr_backup"
   [ ! -d "$repo_backup" ] || echo "replaced repo files were saved to $repo_backup"

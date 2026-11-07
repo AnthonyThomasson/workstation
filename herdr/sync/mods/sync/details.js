@@ -1,33 +1,16 @@
-// The Details panel (props.role "details"): the side panel the tab-bar icon opens, one section per concern. Each
-// section is a function that gets the view's context and returns an element, so a section can grow without
-// touching the others.
-//   ctx: { t, key, on, cfg, state, conflict, busy, kind, targets, open, toggle(rowKey, cx), request(op), msg, auto, repoOpen, toggleRepo(name, cx),
-//          settings, openSettings(cx) }
-// Each section lives in its own file: repo-ui.js, targets-ui.js, source-ui.js, machines-ui.js, conflicts-ui.js, settings-ui.js. The view (main.js) adds
-// what each needs to ctx: source, srcMsg, confirmBoth(message), machines, busyFor(key), confirmUpgrade(card, to), stopped, choices, agentName, pick, pickAll.
+// The Details panel (props.role "details"): the side panel the tab-bar icon opens: Repo (branch or worktree, Sync, Push)
+// and Settings. See repo-ui.js and settings-ui.js for what each section needs in ctx.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { S, icon, stop } from "./ui.js";
 import { renderRepo } from "./repo-ui.js";
-import { renderTargets } from "./targets-ui.js";
-import { renderSource } from "./source-ui.js";
-import { renderMachines } from "./machines-ui.js";
-import { renderConflicts } from "./conflicts-ui.js";
 import { renderSettings } from "./settings-ui.js";
 
-// `show(ctx)`: a section with nothing to say is left out, heading and all. The Source section is only for a source that
-// is its own repo: inside the config repo the main Pull and Push cover it, and with no source there is nothing to show.
-export const SECTIONS = [
-  { id: "repo", title: "Repo", render: renderRepo },
-  { id: "targets", title: "Targets", render: renderTargets },
-  { id: "source", title: "Source", render: renderSource, show: (ctx) => !(ctx.source?.same || ctx.source?.none) },
-  { id: "machines", title: "Machines", render: renderMachines },
-  { id: "conflicts", title: "Conflicts", render: renderConflicts },
-];
+export const SECTIONS = [{ id: "repo", title: "Repo", render: renderRepo }];
 // Settings has its own heading row (it collapses). With no repo path yet it is the only section, open; after that it is last.
 const SETTINGS = { id: "settings", title: null, render: renderSettings };
 
-export const sectionsFor = (ctx) => (ctx.cfg.repo ? [...SECTIONS.filter((s) => !s.show || s.show(ctx)), SETTINGS] : [SETTINGS]);
+export const sectionsFor = (ctx) => (ctx.cfg.repo ? [...SECTIONS, SETTINGS] : [SETTINGS]);
 
 export function renderDetails(ctx) {
   const { t } = ctx;

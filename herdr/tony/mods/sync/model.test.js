@@ -2,14 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULTS, normalizeSettings, settingsFor, parseCheck, parseOutcome, changedFiles, badge, viewState,
-  commitMessage, conflictBrief, resolved, plural, shortError, ago, pushBlocked, withSaved,
-  pullReplaces, replacesText, pullReplacedNote, fetchBlocksCheck, FETCH_GUARD_MS,
+  commitMessage, plural, shortError, ago, pushBlocked, canPush, parseTargets,
+  fetchBlocksCheck, FETCH_GUARD_MS,
 } from "./model.js";
 
-test("settings default to ./sync.sh and Claude Code, with no repo", () => {
-  assert.deepEqual(normalizeSettings(undefined), { repo: "", script: "./sync.sh", agent: "claude" });
-  assert.deepEqual(normalizeSettings({ repo: "  ~/cfg ", script: " ", agent: "" }), { repo: "~/cfg", script: "./sync.sh", agent: "claude" });
-  assert.deepEqual(normalizeSettings({ repo: "/r", script: "sh sync.sh", agent: "codex" }), { repo: "/r", script: "sh sync.sh", agent: "codex" });
+test("settings default to ./sync.sh, with no repo and no picked worktree", () => {
+  assert.deepEqual(normalizeSettings(undefined), { repo: "", script: "./sync.sh", dir: "" });
+  assert.deepEqual(normalizeSettings({ repo: "  ~/cfg ", script: " " }), { repo: "~/cfg", script: "./sync.sh", dir: "" });
+  assert.deepEqual(normalizeSettings({ repo: "/r", script: "sh sync.sh", dir: " /r-wt " }), { repo: "/r", script: "sh sync.sh", dir: "/r-wt" });
   assert.equal(DEFAULTS.script, "./sync.sh");
 });
 
@@ -21,9 +21,9 @@ test("a saved ./mount.sh or mount.sh is the old default and becomes ./sync.sh", 
 });
 
 test("settings are kept per machine, this computer under the empty key", () => {
-  const all = { "": { repo: "/a" }, vps: { repo: "/b", agent: "codex" } };
+  const all = { "": { repo: "/a" }, vps: { repo: "/b" } };
   assert.equal(settingsFor(all, "").repo, "/a");
-  assert.deepEqual(settingsFor(all, "vps"), { repo: "/b", script: "./sync.sh", agent: "codex" });
+  assert.deepEqual(settingsFor(all, "vps"), { repo: "/b", script: "./sync.sh", dir: "" });
   assert.equal(settingsFor(all, "other").repo, "");
   assert.equal(settingsFor(null, "").repo, "");
 });
@@ -102,20 +102,6 @@ test("the button's state", () => {
   assert.equal(viewState({ settings: { repo: "/r" }, state: { ...ok, error: "x" } }), "error");
   assert.equal(viewState({ settings: { repo: "/r" }, state: ok }), "ok");
   assert.equal(viewState({ settings: { repo: "/r" }, state: ok, busy: "Pulling" }), "busy");
-  assert.equal(viewState({ settings: { repo: "/r" }, state: ok, conflict: { files: [] } }), "conflict");
-  assert.equal(viewState({ settings: { repo: "/r" }, state: ok, conflict: { files: [] }, busy: "Pushing" }), "busy");
-});
-
-test("a conflict is resolved once nothing is half done and the remote is contained", () => {
-  assert.equal(resolved({ inProgress: null, unmerged: [], behind: [] }), true);
-  assert.equal(resolved({ inProgress: "rebase", unmerged: [], behind: [] }), false);
-  assert.equal(resolved({ inProgress: null, unmerged: ["a"], behind: [] }), false);
-  assert.equal(resolved({ inProgress: null, unmerged: [], behind: [{}] }), false);
-  assert.equal(resolved(null), false);
-  // A copy conflict stays until its files are no longer uncommitted.
-  const copy = { kind: "copy", files: [{ path: "a.js" }] };
-  assert.equal(resolved({ inProgress: null, unmerged: [], behind: [], uncommitted: [{ path: "a.js" }] }, copy), false);
-  assert.equal(resolved({ inProgress: null, unmerged: [], behind: [], uncommitted: [{ path: "b.js" }] }, copy), true);
 });
 
 test("how long ago", () => {
@@ -133,32 +119,10 @@ test("the default commit message names the count and the machine", () => {
 });
 
 test("the script's last words become an outcome", () => {
-  assert.deepEqual(parseOutcome("noise\n@result\tok\n@msg\tPushed 2 files"), { result: "ok", message: "Pushed 2 files", files: [], extra: {} });
-  const c = parseOutcome("@result\tconflict\n@conflict\tREADME.md\tEdit readme\tReword readme\n@conflict\ta/b.js\t\tx\n@saved\t.sync-backup/conflict-1");
-  assert.equal(c.result, "conflict");
-  assert.deepEqual(c.files, [{ path: "README.md", remote: "Edit readme", local: "Reword readme" }, { path: "a/b.js", remote: "", local: "x" }]);
-  assert.equal(c.extra.saved, ".sync-backup/conflict-1");
+  assert.deepEqual(parseOutcome("noise\n@result\tok\n@msg\tPushed 2 files"), { result: "ok", message: "Pushed 2 files", extra: {} });
+  assert.equal(parseOutcome("@result\tok\n@pushed\t2").extra.pushed, "2");
   assert.equal(parseOutcome("boom").result, "error");
   assert.equal(parseOutcome("boom\nlast words").message, "last words");
-});
-
-test("the brief for the conflict agent names every file and both sides", () => {
-  const brief = conflictBrief({
-    repo: "/work/cfg", script: "./sync.sh", kind: "rebase",
-    files: [{ path: "README.md", remote: "Edit readme; Fix typo", local: "Reword readme" }, { path: "mods/x.js", remote: "", local: "Change x" }],
-  });
-  assert.match(brief, /\/work\/cfg/);
-  assert.match(brief, /README\.md/);
-  assert.match(brief, /Edit readme; Fix typo/);
-  assert.match(brief, /Reword readme/);
-  assert.match(brief, /mods\/x\.js/);
-  assert.match(brief, /git pull --rebase/);
-  assert.match(brief, /\.\/sync\.sh --push/);
-  const copy = conflictBrief({ repo: "/r", script: "./sync.sh", kind: "copy", files: [{ path: "herdr/a.js", remote: "", local: "", saved: ".sync-backup/conflict-1/herdr/herdr/a.js" }] });
-  assert.match(copy, /uncommitted/);
-  assert.match(copy, /\.sync-backup\/conflict-1/);
-  assert.doesNotMatch(copy, /Nothing was copied/, "the files that did not clash were copied");
-  assert.match(copy, /repo's version was kept/);
 });
 
 test("repo files newer than Herdr are kept apart from Herdr changes, block Push and are not in ↑", () => {
@@ -171,43 +135,11 @@ test("repo files newer than Herdr are kept apart from Herdr changes, block Push 
   assert.equal(pushBlocked(null), false);
 });
 
-test("a copy conflict names where Herdr's version of each file was saved", () => {
-  const files = withSaved([{ path: "herdr/a.js" }, { path: "b c.js" }], ".sync-backup/conflict-1");
-  assert.equal(files[0].saved, ".sync-backup/conflict-1/herdr/herdr/a.js");
-  assert.equal(files[1].saved, ".sync-backup/conflict-1/herdr/b c.js");
-  assert.deepEqual(withSaved([{ path: "x" }], null), [{ path: "x" }]);
-  assert.match(conflictBrief({ repo: "/r", script: "./sync.sh", kind: "copy", files }), /Herdr's version is saved at \.sync-backup\/conflict-1\/herdr\/herdr\/a\.js/);
-});
-
 test("small helpers", () => {
   assert.equal(plural(1, "commit"), "1 commit");
   assert.equal(plural(3, "commit"), "3 commits");
   assert.equal(shortError("a\nb\n  \n"), "b");
   assert.equal(shortError(""), "");
-});
-
-test("the brief for a conflict in the skillshare source says how to finish it there", () => {
-  const b = conflictBrief({ repo: "/s", script: "./sync.sh", kind: "rebase", target: "source", files: [{ path: "skills/x/SKILL.md", remote: "B", local: "A" }] });
-  assert.match(b, /skillshare source at \/s/);
-  assert.match(b, /skills\/x\/SKILL\.md/);
-  assert.match(b, /skillshare sync --all -g/);
-  assert.ok(!/sync\.sh/.test(b));
-});
-
-test("Pull says what it will replace: the Herdr changes, none when there is no repo", () => {
-  assert.deepEqual(pullReplaces({ repo: true, herdr: ["mods/a.js", "mods/b.js"] }), ["mods/a.js", "mods/b.js"]);
-  assert.deepEqual(pullReplaces({ repo: true }), []);
-  assert.deepEqual(pullReplaces({ repo: false }), []);
-  assert.deepEqual(pullReplaces(null), []);
-  assert.equal(replacesText(1), "Replaces 1 Herdr change (backed up)");
-  assert.equal(replacesText(3), "Replaces 3 Herdr changes (backed up)");
-});
-
-test("the Pull notification mentions replaced Herdr files and backups only when there were some", () => {
-  assert.equal(pullReplacedNote({}), "");
-  assert.equal(pullReplacedNote({ replaced: "0", backup: "/x" }), "");
-  assert.equal(pullReplacedNote({ replaced: "1", backup: "/h/.workstation-backup/1" }), "Replaced 1 Herdr file; backups are in /h/.workstation-backup/1.");
-  assert.equal(pullReplacedNote({ replaced: "2" }), "Replaced 2 Herdr files (backed up).");
 });
 
 test("a fetch in flight blocks plain checks for about 60 s, then stops blocking", () => {
@@ -217,4 +149,18 @@ test("a fetch in flight blocks plain checks for about 60 s, then stops blocking"
   assert.equal(fetchBlocksCheck(t0, t0 + 20000), true);
   assert.equal(fetchBlocksCheck(t0, t0 + FETCH_GUARD_MS - 1), true);
   assert.equal(fetchBlocksCheck(t0, t0 + FETCH_GUARD_MS), false, "a hung fetch no longer freezes the badge");
+});
+
+test("Push is only for main", () => {
+  assert.equal(canPush({ branch: "main" }), true);
+  assert.equal(canPush({ branch: "workflow/x" }), false);
+  assert.equal(canPush({ branch: null }), false);
+  assert.equal(canPush(null), false);
+});
+
+test("the worktree and branch lists", () => {
+  const t = parseTargets("@worktree\t/r\tmain\n@worktree\t/r-wt\tfeature/x\n@branch\tmain\t/r\n@branch\told\t\n");
+  assert.deepEqual(t.worktrees, [{ path: "/r", branch: "main" }, { path: "/r-wt", branch: "feature/x" }]);
+  assert.deepEqual(t.branches, [{ name: "main", path: "/r" }, { name: "old", path: "" }]);
+  assert.deepEqual(parseTargets(""), { worktrees: [], branches: [] });
 });
