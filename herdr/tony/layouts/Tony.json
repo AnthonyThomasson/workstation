@@ -121,13 +121,16 @@
               }
             },
             {
-              "id": "sync",
+              "id": "sync-toggle",
               "type": "block",
               "content": {
-                "mod": "sync"
+                "mod": "sync",
+                "props": {
+                  "role": "button"
+                }
               },
               "size": {
-                "px": 112
+                "px": 42
               }
             },
             {
@@ -254,6 +257,16 @@
                       "type": "block",
                       "content": {
                         "mod": "workflows"
+                      }
+                    },
+                    {
+                      "id": "sync",
+                      "type": "block",
+                      "content": {
+                        "mod": "sync",
+                        "props": {
+                          "role": "details"
+                        }
                       }
                     }
                   ]

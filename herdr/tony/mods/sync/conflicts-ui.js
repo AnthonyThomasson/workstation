@@ -36,7 +36,7 @@ function picker(ctx) {
       const d = stopped.previews?.[f];
       return v_flex().flex_none().gap(8)
         .child(div().font_family(mono()).font_semibold().text_size(S().secondary).child(f))
-        .child(h_flex().gap(8).items_start().child(side(ctx, f, fi, "local", "This computer", d?.local, d?.differ)).child(side(ctx, f, fi, "remote", "Remote", d?.remote, d?.differ)));
+        .child(v_flex().gap(8).child(side(ctx, f, fi, "local", "This computer", d?.local, d?.differ)).child(side(ctx, f, fi, "remote", "Remote", d?.remote, d?.differ)));
     }))
     .when(files.length > (stopped.shown ?? files.length), (el) => el.child(note(t, "Some files have no preview here; you still choose a side for each.")))
     .child(h_flex().gap(8).items_center()

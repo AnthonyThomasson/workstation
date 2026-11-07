@@ -12,7 +12,7 @@ export function renderSource(ctx) {
   const { t, source: s, busy } = ctx;
   if (!s) return note(t, "Reading the skillshare source…");
   if (s.none) return note(t, "skillshare has no source folder on this machine.");
-  if (s.same) return note(t, "The skillshare source is inside the config repo, so Push and Pull in the popover cover it.");
+  if (s.same) return note(t, "The skillshare source is inside the config repo, so Push and Pull under Repo cover it.");
   if (s.error) return warnBox(t, s.error);
   if (s.repo === false) return note(t, `${s.path} is not in a git repository, so there is nothing to commit, push or pull.`);
   const g = sourceGuidance(s), files = s.uncommitted ?? [];

@@ -138,7 +138,7 @@ export function ago(at, now = Date.now()) {
   return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.floor(m / 60)} h ago`;
 }
 
-// What the button and popover show: unset (no repo chosen), loading, norepo, error, conflict, busy, ok.
+// What the button and the panel show: unset (no repo chosen), loading, norepo, error, conflict, busy, ok.
 export function viewState({ settings, state, conflict, busy }) {
   if (!settings?.repo) return "unset";
   if (busy) return "busy";
