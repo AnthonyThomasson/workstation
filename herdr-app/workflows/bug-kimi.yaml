@@ -4,7 +4,8 @@ name: Bug - Kimi
 strategy: worktree
 
 trigger:
-  labels: []
+  labels:
+    - bug
   match: any
 
 orchestrator:
