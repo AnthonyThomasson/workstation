@@ -7,7 +7,7 @@
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
-import { normalizeItems, groupTickets, groupByStage, normalizeSettings, sameStatus, statusesKey, chooseProject, ticketLine } from "./model.js";
+import { normalizeItems, groupTickets, groupByStage, normalizeSettings, normalizeGroomer, sameStatus, statusesKey, GROOMER_KEY, chooseProject, ticketLine } from "./model.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, loadItems, createDraft, loadStatusField } from "./loader.js";
 import { installedAgents, startGrooming } from "./groom.js";
 import { S, icon, stop, note, iconButton, action, gh } from "./ui.js";
@@ -18,9 +18,7 @@ import { TaskSettings } from "./settings.js";
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
 const projectKey = (repo) => `github-tasks.project.${repo}`;
-const AGENT_KEY = "github-tasks.groomAgent";
-// The dim layer behind a dialog: the theme's background, half see-through where it is a hex color.
-const scrim = (t) => (/^#[0-9a-f]{6}$/i.test(t.background ?? "") ? `${t.background}b3` : t.background);
+const AGENT_KEY = "github-tasks.groomAgent"; // the agent saved before the settings page held it
 function find(node, id) {
   if (node?.id === id) return node;
   for (const child of node?.children ?? []) { const f = find(child, id); if (f) return f; }
@@ -74,7 +72,6 @@ export default class GitHubTasks extends View {
     this.lastCwd = new Map();
     this.reset(null);
     this.backlogOpen = false; // the Backlog section is collapsed until opened
-    this.dialog = null; // null | "agent"
     this.agents = []; // installed agents Start Grooming can use
     this.grooming = false;
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
@@ -200,8 +197,7 @@ export default class GitHubTasks extends View {
         .child(iconButton("close", "close", t, () => run("layout.hide", { id: PANEL }))))
       .when(Boolean(this.repo), (el) => el.child(this.renderContext(t)))
       .when(Boolean(this.project), (el) => el.child(this.renderGroom(t)))
-      .child(this.renderBody(t, ctx))
-      .when(Boolean(this.dialog), (el) => el.child(this.renderAgentDialog(t)));
+      .child(this.renderBody(t, ctx));
   }
 
   // Where the list comes from: the repo, its project, and a choice if several are linked.
@@ -276,16 +272,12 @@ export default class GitHubTasks extends View {
     const agent = this.agent(), busy = this.grooming;
     return h_flex().flex_none().px(14).py(10).gap(8).items_center().border_b(1).border_color(t.border)
       .child(action("start-grooming", busy ? "Starting…" : "Start Grooming", t, (_e, cx) => this.groom(cx), false, busy || !agent))
-      .child(action("new-task", this.creating ? "Adding…" : "New Task", t, (_e, cx) => this.newTask(cx), true, this.creating))
-      .child(h_flex().id("groom-agent").h(28).px(8).gap(6).min_w(0).items_center().rounded(6).border_1().border_color(t.border).cursor_pointer()
-        .hover((s) => s.bg(t.hover)).text_size(S().secondary).on_mouse_down("left", stop).on_click((_e, cx) => { this.dialog = "agent"; cx.notify(); })
-        .child(div().min_w(0).truncate().child(agent?.name ?? "No agent"))
-        .child(icon("chevron-down", 12, t.muted)));
+      .child(action("new-task", this.creating ? "Adding…" : "New Task", t, (_e, cx) => this.newTask(cx), true, this.creating));
   }
 
   // The chosen agent: the saved one if it is installed, else Claude, else the first installed.
   agent() {
-    const saved = shared(AGENT_KEY);
+    const saved = normalizeGroomer(shared(GROOMER_KEY)).agent ?? shared(AGENT_KEY);
     return this.agents.find((a) => a.key === saved) ?? this.agents.find((a) => a.key === "claude") ?? this.agents[0] ?? null;
   }
 
@@ -300,7 +292,7 @@ export default class GitHubTasks extends View {
         const where = { cwd: ctx.folder, on: ctx.on }, cfg = this.statuses();
         const options = (await loadStatusField(gh, project.id, where).catch(() => null))?.options ?? [];
         const real = (name) => options.find((o) => sameStatus(o.name, name))?.name ?? name;
-        await startGrooming({ agent, repo: this.repo, project, settings: { backlog: real(cfg.backlog), groomed: real(cfg.groomed) }, where });
+        await startGrooming({ agent, repo: this.repo, project, settings: { backlog: real(cfg.backlog), groomed: real(cfg.groomed) }, groomer: normalizeGroomer(shared(GROOMER_KEY)), where });
         this.error = null;
       } catch (e) {
         this.error = { kind: "other", message: String(e?.message ?? e) };
@@ -319,31 +311,6 @@ export default class GitHubTasks extends View {
       name: "Task settings", mod: "github-tasks",
       props: { role: "settings", repo: this.repo, project: { id: project.id, title: project.title, url: project.url }, where: { cwd: ctx.folder, on: ctx.on } },
     });
-  }
-
-  closeDialog(cx) { this.dialog = null; cx.notify(); }
-
-  dialogFrame(t, id, title, body) {
-    return div().id(`${id}-backdrop`).absolute().inset_0().flex().items_center().justify_center().bg(scrim(t))
-      .on_mouse_down("left", (_e, cx) => { this.closeDialog(cx); cx.stop_propagation(); })
-      .child(v_flex().id(id).w(340).max_h(460).flex_none().p(16).gap(12).rounded(12).border_1().border_color(t.border)
-        .bg(t.popover).shadow_lg().text_color(t.foreground).text_size(S().body).on_mouse_down("left", stop)
-        .child(h_flex().flex_none().items_center().gap(8)
-          .child(div().flex_1().min_w(0).text_size(S().title).font_semibold().child(title))
-          .child(iconButton(`${id}-close`, "close", t, (_e, cx) => this.closeDialog(cx))))
-        .child(body));
-  }
-
-  renderAgentDialog(t) {
-    const current = this.agent()?.key;
-    const rows = this.agents.map((a) => h_flex().id(`groom-pick-${a.key}`).h(32).flex_none().px(8).gap(8).items_center().rounded(6).cursor_pointer()
-      .hover((s) => s.bg(t.hover)).when(a.key === current, (el) => el.bg(t.selected)).on_mouse_down("left", stop)
-      .on_click((_e, cx) => { setShared(AGENT_KEY, a.key); this.dialog = null; cx.notify(); })
-      .child(div().w(14).h(14).flex_none().child(a.key === current ? icon("check", 14, t.foreground) : div()))
-      .child(div().flex_1().min_w(0).truncate().child(a.name)));
-    return this.dialogFrame(t, "groom-agent-dialog", "Grooming agent",
-      div().id("groom-agent-options").max_h(320).overflow_y_scrollbar()
-        .child(v_flex().gap(2).children(rows.length ? rows : [div().px(8).py(8).child(note(t, "No installed agents were found."))])));
   }
 
   sectionTitle(t, label) {

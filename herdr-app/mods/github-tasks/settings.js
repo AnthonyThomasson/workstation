@@ -2,9 +2,10 @@
 // "backlog" and "groomed", and the exact prompt Start Grooming gives the grooming agent, as it would be sent now.
 // Not a View of its own: main.js builds one in init and draws it from render.
 import { div } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
+import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { shared, setShared, theme } from "herdr";
-import { normalizeSettings, sameStatus, groomPrompt, statusesKey } from "./model.js";
+import { normalizeSettings, normalizeGroomer, sameStatus, groomPrompt, statusesKey, GROOMER_KEY, EFFORTS, CLAUDE_MODELS } from "./model.js";
+import { installedAgents } from "./groom.js";
 import { loadStatusField } from "./loader.js";
 import { S, icon, stop, note, gh } from "./ui.js";
 
@@ -14,6 +15,10 @@ export class TaskSettings {
     this.project = props?.project ?? null;
     this.where = props?.where ?? {};
     this.options = null; // the project's Status field options; null while loading
+    this.agents = []; // installed agents Start Grooming can use
+    installedAgents().then((list) => { this.agents = list; cx.notify(); });
+    this.model = InputState.new({ value: this.groomer().model, placeholder: "Agent's default" });
+    this.model.on("change", (_e, cx) => { this.saveGroomer({ model: this.model.value().trim() }); cx.notify(); });
     cx.spawn(async (cx) => {
       try { this.options = (await loadStatusField(gh, this.project.id, this.where))?.options ?? []; } catch { this.options = []; }
       cx.notify();
@@ -21,6 +26,15 @@ export class TaskSettings {
   }
 
   cfg() { return normalizeSettings(shared(statusesKey(this.repo))); }
+
+  groomer() { return normalizeGroomer(shared(GROOMER_KEY)); }
+  saveGroomer(patch) { setShared(GROOMER_KEY, { ...this.groomer(), ...patch }); }
+
+  // The chosen agent: the saved one if it is installed, else Claude, else the first installed (as the panel picks it).
+  agent() {
+    const saved = this.groomer().agent ?? shared("github-tasks.groomAgent");
+    return this.agents.find((a) => a.key === saved) ?? this.agents.find((a) => a.key === "claude") ?? this.agents[0] ?? null;
+  }
 
   set(kind, name, cx) {
     setShared(statusesKey(this.repo), { ...this.cfg(), [kind]: name });
@@ -38,8 +52,32 @@ export class TaskSettings {
         .child(note(t, `${this.repo}${this.project?.title ? ` · ${this.project.title}` : ""}`)))
       .child(div().id("task-settings-body").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(20).py(16).gap(20)
+          .child(this.agentSection(t))
           .child(this.statuses(t, cfg, this.options, cx))
           .child(this.promptSection(t, prompt))));
+  }
+
+  agentSection(t) {
+    const g = this.groomer(), agent = this.agent();
+    const chip = (id, label, on, onClick) => h_flex().id(id).h(28).px(10).items_center().rounded(6).cursor_pointer()
+      .border_1().border_color(t.border).bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted)
+      .hover((s) => s.bg(on ? t.selected : t.hover)).on_mouse_down("left", stop).on_click(onClick).child(label);
+    const heading = (text) => div().text_size(S().secondary).font_semibold().child(text);
+    return v_flex().flex_none().gap(10)
+      .child(v_flex().gap(2)
+        .child(div().text_size(S().title).font_semibold().child("Grooming agent"))
+        .child(note(t, "What Start Grooming opens. The model and effort are passed to the agent when it starts.")))
+      .child(v_flex().gap(4).child(heading("Agent"))
+        .child(h_flex().flex_wrap().gap(4).children(this.agents.length
+          ? this.agents.map((a) => chip(`groom-agent-${a.key}`, a.name, a.key === agent?.key, (_e, cx) => { this.saveGroomer({ agent: a.key }); cx.notify(); }))
+          : [note(t, "No installed agents were found.")])))
+      .child(v_flex().gap(4).child(heading("Model"))
+        .child(div().id("groom-model-field").h(34).flex_none().px(10).flex().items_center().rounded(8).border_1().border_color(t.input).on_mouse_down("left", stop)
+          .child(Input.new(this.model).h_full().w_full().text_size(S().body).text_color(t.foreground)))
+        .when(agent?.key === "claude", (el) => el.child(h_flex().flex_wrap().gap(4).children(CLAUDE_MODELS.map((m) =>
+          chip(`groom-model-${m.id}`, m.name, g.model === m.id, (_e, cx) => { this.model.set_value(m.id); this.saveGroomer({ model: m.id }); cx.notify(); }))))))
+      .child(v_flex().gap(4).child(heading("Effort"))
+        .child(h_flex().flex_wrap().gap(4).children(EFFORTS.map((e) => chip(`groom-effort-${e}`, e, g.effort === e, (_e, cx) => { this.saveGroomer({ effort: e }); cx.notify(); })))));
   }
 
   statuses(t, cfg, options, cx) {

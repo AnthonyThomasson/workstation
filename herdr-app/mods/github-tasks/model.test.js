@@ -152,7 +152,7 @@ test("a save needs a title and a status the project has", () => {
   assert.equal(checkTask({ title: "T", status: null }, options), null);
 });
 
-import { normalizeSettings, groupByStage, groomPrompt, DEFAULT_STATUSES } from "./model.js";
+import { normalizeSettings, groupByStage, groomPrompt, groomArgv, normalizeGroomer, DEFAULT_STATUSES } from "./model.js";
 
 test("grooming statuses default to To Do and Up Next", () => {
   assert.deepEqual(normalizeSettings(undefined), DEFAULT_STATUSES);
@@ -191,4 +191,12 @@ test("the grooming prompt has the agent ask the person how to clean up and prior
   assert.match(p, /grill the person/);
   for (const s of ["Audit the codebase", "Clean up old tickets", "Prepare tickets for new work"]) assert.ok(p.includes(s), s);
   assert.match(p, /Don't change anything yet/);
+});
+
+test("the grooming agent's command carries the chosen model and effort", () => {
+  assert.deepEqual(groomArgv("claude", ["claude"], { model: "opus", effort: "high" }), ["claude", "--model", "opus", "--effort", "high"]);
+  assert.deepEqual(groomArgv("claude", ["claude"], {}), ["claude", "--effort", "medium"]);
+  assert.deepEqual(groomArgv("codex", ["codex"], { model: "gpt-x", effort: "low" }), ["codex", "-m", "gpt-x", "-c", "model_reasoning_effort=low"]);
+  assert.deepEqual(groomArgv("kimi", ["kimi"], { model: "k" }), ["kimi", "--model", "k"]);
+  assert.deepEqual(normalizeGroomer({ agent: " codex ", effort: "bogus" }), { agent: "codex", model: "", effort: "medium" });
 });

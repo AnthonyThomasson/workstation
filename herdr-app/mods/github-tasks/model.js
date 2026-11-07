@@ -132,6 +132,36 @@ export function checkTask(after, statusOptions = []) {
 // ---- Grooming ---------------------------------------------------------------------------------------
 // Which project statuses mean "backlog" (to be groomed) and "groomed" (ready to pick up).
 export const statusesKey = (repo) => `github-tasks.statuses.${repo}`; // where a repo's status choices are kept
+export const GROOMER_KEY = "github-tasks.groomer"; // { agent, model, effort }: what Start Grooming opens
+export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+export const CLAUDE_MODELS = [
+  { id: "opus", name: "Opus 5.5" },
+  { id: "opus[1m]", name: "Opus 5.5 · 1M" },
+  { id: "claude-fable-5-1", name: "Fable 5.1" },
+  { id: "sonnet", name: "Sonnet 5.5" },
+  { id: "haiku", name: "Haiku 5.5" },
+];
+
+// The saved grooming agent choice: { agent (key or null for "pick the default"), model ("" = the agent's own), effort }.
+export function normalizeGroomer(raw) {
+  const text = (v) => (typeof v === "string" ? v.trim() : "");
+  return { agent: text(raw?.agent) || null, model: text(raw?.model), effort: EFFORTS.includes(raw?.effort) ? raw.effort : "medium" };
+}
+
+// The command that opens the grooming agent: its own command plus the model and effort the person chose.
+// Only Claude and Codex take an effort; any other agent just gets --model when one is set.
+export function groomArgv(agent, base, { model, effort }) {
+  const argv = [...(base?.length ? base : [agent])];
+  if (agent === "claude") {
+    if (model) argv.push("--model", model);
+    argv.push("--effort", effort || "medium");
+  } else if (agent === "codex") {
+    if (model) argv.push("-m", model);
+    if (effort) argv.push("-c", `model_reasoning_effort=${effort}`);
+  } else if (model) argv.push("--model", model);
+  return argv;
+}
+
 export const DEFAULT_STATUSES = { backlog: "To Do", groomed: "Up Next" };
 
 export function normalizeSettings(raw) {
