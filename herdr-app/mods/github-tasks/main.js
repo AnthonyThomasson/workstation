@@ -194,7 +194,6 @@ export default class GitHubTasks extends View {
       .bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(S().body)
       .child(h_flex().h(42).flex_none().pl(14).pr(8).gap(4).items_center().border_b(1).border_color(t.border)
         .child(div().flex_1().text_size(S().title).font_semibold().child("Tasks"))
-        .when(Boolean(this.project), (el) => el.child(iconButton("new-task", this.creating ? "ring" : "plus", t, (_e, cx) => this.newTask(cx), this.creating)))
         .when(Boolean(this.project), (el) => el.child(iconButton("settings", "settings", t, (_e, cx) => this.openSettings(cx))))
         .when(Boolean(ctx), (el) => el.child(iconButton("refresh", this.loading ? "ring" : "sync", t, (_e, cx) => this.refresh(cx), this.loading)))
         .child(iconButton("close", "close", t, () => run("layout.hide", { id: PANEL }))))
@@ -276,6 +275,7 @@ export default class GitHubTasks extends View {
     const agent = this.agent(), busy = this.grooming;
     return h_flex().flex_none().px(14).py(10).gap(8).items_center().border_b(1).border_color(t.border)
       .child(action("start-grooming", busy ? "Starting…" : "Start Grooming", t, (_e, cx) => this.groom(cx), false, busy || !agent))
+      .child(action("new-task", this.creating ? "Adding…" : "New Task", t, (_e, cx) => this.newTask(cx), true, this.creating))
       .child(h_flex().id("groom-agent").h(28).px(8).gap(6).min_w(0).items_center().rounded(6).border_1().border_color(t.border).cursor_pointer()
         .hover((s) => s.bg(t.hover)).text_size(S().secondary).on_mouse_down("left", stop).on_click((_e, cx) => { this.dialog = "agent"; cx.notify(); })
         .child(div().min_w(0).truncate().child(agent?.name ?? "No agent"))
