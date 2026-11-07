@@ -1,6 +1,8 @@
 // What a workflow is: the GitHub labels that trigger it, and how the orchestrator, the worker and the
 // reviewer each run (their prompt, agent, model and effort). Pure: no Herdr imports, so node --test runs it.
 
+import { parse as parseYaml, stringify as stringifyYaml } from "./yaml.js";
+
 export const VERSION = 1;
 export const ROLES = ["orchestrator", "worker", "reviewer"];
 export const ROLE_LABELS = { orchestrator: "Orchestrator", worker: "Worker", reviewer: "Reviewer" };
@@ -38,6 +40,13 @@ export const ORCHESTRATOR_PROMPTS = [
   { key: "planning", label: "Planning prompt", hint: "how the orchestrator plans the work before handing it to the worker" },
   { key: "retro", label: "Retro prompt", hint: "how the orchestrator looks back on the run once it is done" },
 ];
+// The worker has one extra prompt: how to test its changes. Optional too; the base worker prompt already
+// requires testing, and this says how, for this workflow.
+export const WORKER_PROMPTS = [
+  { key: "testing", label: "Testing rules", hint: "rules for how the worker tests its changes: commands to run, what must pass, what to cover. The worker must always test, and is told to follow these" },
+];
+// The extra prompts each role has, besides its own.
+export const ROLE_PROMPTS = { orchestrator: ORCHESTRATOR_PROMPTS, worker: WORKER_PROMPTS, reviewer: [] };
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 // How the work is kept apart from the main checkout: a branch in the folder the space is in, or a git
 // worktree of its own, so several runs can go at once without sharing files.
@@ -52,9 +61,10 @@ const text = (v) => (typeof v === "string" ? v : "");
 
 export const blankRole = () => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium" });
 export const blankOrchestrator = () => ({ ...blankRole(), planning: "", retro: "" });
+export const blankWorker = () => ({ ...blankRole(), testing: "" });
 export const blank = () => ({
   version: VERSION, id: "", name: "", strategy: "branch", trigger: { labels: [], match: "any" },
-  orchestrator: blankOrchestrator(), worker: blankRole(), reviewer: blankRole(),
+  orchestrator: blankOrchestrator(), worker: blankWorker(), reviewer: blankRole(),
 });
 
 // "Feature development!" -> "feature-development"; what a workflow's file is called.
@@ -103,7 +113,7 @@ export function normalize(raw) {
     strategy: text(r.strategy) || "branch", // an older file has none, and worked on a branch
     trigger: normalizeTrigger(r.trigger),
     orchestrator: normalizeOrchestrator(r.orchestrator),
-    worker: normalizeRole(r.worker),
+    worker: normalizeRole(r.worker, WORKER_PROMPTS.map((p) => p.key)),
     reviewer: normalizeRole(r.reviewer),
   };
 }
@@ -120,7 +130,6 @@ export function validate(workflow, takenIds = []) {
   if (!MATCHES.includes(w.trigger.match)) add("match", `The trigger must match ${MATCHES.join(" or ")} of its labels.`);
   for (const role of ROLES) {
     const r = w[role], name = ROLE_LABELS[role];
-    if (!r.prompt.trim()) add(`${role}.prompt`, `${name} needs a prompt.`);
     if (!r.agent) add(`${role}.agent`, `${name} needs an agent.`);
     if (r.agent === CUSTOM && !r.command) add(`${role}.command`, `${name} needs the command that opens its agent.`);
     if (!EFFORTS.includes(r.effort)) add(`${role}.effort`, `${name}'s effort must be one of ${EFFORTS.join(", ")}.`);
@@ -132,20 +141,32 @@ export function validate(workflow, takenIds = []) {
 export const snapshot = (workflow) => JSON.stringify(normalize(workflow));
 export const isDirty = (base, current) => snapshot(base) !== snapshot(current);
 
-// The file's text: keys in a fixed order, two-space indent, a closing newline.
+// The file's text, as YAML: keys in a fixed order, the settings before the long prompts so the file reads
+// top down, and a closing newline.
 export function serialize(workflow) {
   const w = normalize(workflow);
-  const role = (r) => ({ prompt: r.prompt, agent: r.agent, command: r.command, model: r.model, effort: r.effort });
-  return `${JSON.stringify({
+  const role = (r, extras = []) => ({
+    agent: r.agent, command: r.command, model: r.model, effort: r.effort, prompt: r.prompt,
+    ...Object.fromEntries(extras.map((key) => [key, r[key]])),
+  });
+  return stringifyYaml({
     version: w.version, id: w.id, name: w.name, strategy: w.strategy, trigger: { labels: w.trigger.labels, match: w.trigger.match },
-    orchestrator: { ...role(w.orchestrator), planning: w.orchestrator.planning, retro: w.orchestrator.retro }, worker: role(w.worker), reviewer: role(w.reviewer),
-  }, null, 2)}\n`;
+    orchestrator: role(w.orchestrator, ORCHESTRATOR_PROMPTS.map((p) => p.key)),
+    worker: role(w.worker, WORKER_PROMPTS.map((p) => p.key)),
+    reviewer: role(w.reviewer),
+  });
 }
 
-// A file's text as a workflow. Throws a plain Error on text that is not a JSON object.
+// A file's text as a workflow. Workflows used to be saved as JSON, and those files still read. Throws a plain
+// Error on text that is not a map.
 export function parse(source) {
+  return normalize(parseFile(source));
+}
+
+export function parseFile(source) {
   let data;
-  try { data = JSON.parse(source); } catch (e) { throw new Error(`not valid JSON (${e.message})`); }
+  const asJson = /^\s*\{/.test(source);
+  try { data = asJson ? JSON.parse(source) : parseYaml(source); } catch (e) { throw new Error(`not valid ${asJson ? "JSON" : "YAML"} (${e.message})`); }
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("not a workflow object");
-  return normalize(data);
+  return data;
 }

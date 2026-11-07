@@ -24,12 +24,12 @@ async function workstationRepo() {
 }
 
 async function readDir(dir, scope) {
-  const files = (await sh('ls -1 "$1" 2>/dev/null', dir)).stdout.split("\n").filter((f) => f.endsWith(".json")).sort();
+  const files = (await sh('ls -1 "$1" 2>/dev/null', dir)).stdout.split("\n").filter((f) => f.endsWith(".yaml") || f.endsWith(".json")).sort();
   const items = [], errors = [];
-  for (const file of files) {
-    const id = file.slice(0, -5);
+  for (const id of new Set(files.map((f) => f.slice(0, f.lastIndexOf("."))))) {
+    const file = files.includes(`${id}.yaml`) ? `${id}.yaml` : `${id}.json`; // a YAML file wins over an old JSON one
     try {
-      const source = await readTextFile(`${dir}/${id}.json`);
+      const source = await readTextFile(`${dir}/${file}`);
       if (source != null) items.push(parseWorkflow(source, { id, scope }));
     } catch (e) {
       errors.push(`${file}: ${e?.message ?? e}`);

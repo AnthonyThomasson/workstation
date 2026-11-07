@@ -1,4 +1,5 @@
 import test from "node:test";
+import { parse as parseYaml } from "./yaml.js";
 import assert from "node:assert/strict";
 import { makeStore, StoreError } from "./store.js";
 import { blank, ROLES } from "./model.js";
@@ -40,14 +41,14 @@ test("a new workflow is written under its slug in the folder of the scope it is 
     const saved = await store.save(wf("Feature Work"), scope);
     assert.equal(saved.workflow.id, "feature-work");
     assert.equal(saved.scope, scope);
-    assert.deepEqual([...d.fs.keys()], [`${dir}/feature-work.json`]);
+    assert.deepEqual([...d.fs.keys()], [`${dir}/feature-work.yaml`]);
   }
 });
 
 test("the file holds the workflow and not where it is kept", async () => {
   const { d, store } = setup();
   await store.save(wf("Plain"), "global");
-  const file = JSON.parse(d.fs.get(`${GLOBAL}/plain.json`));
+  const file = parseYaml(d.fs.get(`${GLOBAL}/plain.yaml`));
   assert.equal("global" in file, false);
   assert.equal("scope" in file, false);
   assert.deepEqual(file.trigger, { labels: ["workflow:x"], match: "any" });
@@ -115,11 +116,11 @@ test("moving a workflow to another scope writes the new file and removes the old
   let previous = await store.load("global", "mover");
   const moved = await store.save(previous.workflow, "repo", previous);
   assert.equal(moved.scope, "repo");
-  assert.deepEqual([...d.fs.keys()], [`${REPO}/mover.json`]);
+  assert.deepEqual([...d.fs.keys()], [`${REPO}/mover.yaml`]);
 
   previous = await store.load("repo", "mover");
   await store.save(previous.workflow, "global", previous);
-  assert.deepEqual([...d.fs.keys()], [`${GLOBAL}/mover.json`]);
+  assert.deepEqual([...d.fs.keys()], [`${GLOBAL}/mover.yaml`]);
   assert.equal((await store.list()).length, 1);
 });
 
@@ -139,9 +140,9 @@ test("a file changed on disk since it was read is a conflict, and is not overwri
   const { d, store } = setup();
   await store.save(wf("Shared"), "global");
   const previous = await store.load("global", "shared");
-  d.fs.set(`${GLOBAL}/shared.json`, previous.text.replace("do it", "someone else's edit"));
+  d.fs.set(`${GLOBAL}/shared.yaml`, previous.text.replace("do it", "someone else's edit"));
   await assert.rejects(store.save({ ...previous.workflow, name: "Mine" }, "global", previous), (e) => e instanceof StoreError && e.kind === "conflict");
-  assert.match(d.fs.get(`${GLOBAL}/shared.json`), /someone else's edit/);
+  assert.match(d.fs.get(`${GLOBAL}/shared.yaml`), /someone else's edit/);
 });
 
 test("a new workflow cannot take another's name, in any scope", async () => {
@@ -153,7 +154,7 @@ test("a new workflow cannot take another's name, in any scope", async () => {
 
 test("an invalid workflow is refused with its problems and writes nothing", async () => {
   const { d, store } = setup();
-  await assert.rejects(store.save(blank(), "global"), (e) => e.kind === "invalid" && e.problems.length === 4);
+  await assert.rejects(store.save(blank(), "global"), (e) => e.kind === "invalid" && e.problems.length === 1);
   assert.equal(d.fs.size, 0);
   assert.equal(d.calls.length, 0);
 });
@@ -168,7 +169,7 @@ test("remove deletes the file from its scope, and only that scope", async () => 
   await store.save(wf("Gone"), "repo");
   await store.save(wf("Kept"), "global");
   await store.remove("repo", "gone");
-  assert.deepEqual([...d.fs.keys()], [`${GLOBAL}/kept.json`]);
+  assert.deepEqual([...d.fs.keys()], [`${GLOBAL}/kept.yaml`]);
   await assert.rejects(store.remove("repo", "gone"), (e) => e.kind === "missing");
   await assert.rejects(store.remove("repo", "kept"), (e) => e.kind === "missing");
 });
@@ -182,7 +183,7 @@ test("the strategy, a custom agent's command and the trigger labels are saved an
   assert.equal(back.strategy, "worktree");
   assert.deepEqual(back.trigger, { labels: ["a", "b"], match: "all" });
   assert.equal(back.worker.command, "my-agent --go");
-  assert.equal(JSON.parse(d.fs.get(`${REPO}/everything.json`)).worker.command, "my-agent --go");
+  assert.equal(parseYaml(d.fs.get(`${REPO}/everything.yaml`)).worker.command, "my-agent --go");
 });
 
 test("a custom agent without a command is refused and writes nothing", async () => {
@@ -200,4 +201,22 @@ test("files saved before scopes and before several labels still load", async () 
   assert.deepEqual(found.workflow.trigger, { labels: ["x"], match: "any" });
   assert.equal(found.workflow.strategy, "branch");
   assert.equal("global" in found.workflow, false);
+});
+
+test("a workflow saved as JSON is rewritten as YAML, and the JSON file goes", async () => {
+  const old = JSON.stringify({ id: "old", name: "Old", worker: { prompt: "p" } });
+  const { d, store } = setup(ALL, { [`${GLOBAL}/old.json`]: old });
+  const found = await store.load("global", "old");
+  assert.equal(found.legacy, true);
+  assert.deepEqual((await store.list()).map((i) => i.id), ["old"]);
+  const saved = await store.save({ ...found.workflow, orchestrator: { ...found.workflow.orchestrator, prompt: "o" }, reviewer: { ...found.workflow.reviewer, prompt: "r" } }, "global", found);
+  assert.deepEqual([...d.fs.keys()], [`${GLOBAL}/old.yaml`]);
+  assert.equal(saved.legacy, false);
+  assert.equal(parseYaml(d.fs.get(`${GLOBAL}/old.yaml`)).name, "Old");
+});
+
+test("removing a workflow that is still JSON removes that file", async () => {
+  const { d, store } = setup(ALL, { [`${GLOBAL}/old.json`]: JSON.stringify({ name: "Old" }) });
+  await store.remove("global", "old");
+  assert.equal(d.fs.size, 0);
 });

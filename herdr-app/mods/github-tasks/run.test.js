@@ -93,6 +93,15 @@ test("the workflow's own prompts go in, and empty ones leave no heading", () => 
   assert.ok(reviewerPrompt({ workflow: workflow({ reviewer: role({ prompt: "BE HARSH" }) }), ...place }).includes("BE HARSH"));
 });
 
+test("workers must test, and the workflow's testing prompt goes in", () => {
+  const base = workerPrompt({ workflow: workflow(), ...place });
+  assert.match(base, /You must test the changes you make/);
+  assert.ok(!base.includes("Testing rules"));
+  const full = workerPrompt({ workflow: workflow({ worker: role({ testing: "RUN NPM TEST" }) }), ...place });
+  assert.ok(full.includes("## Testing rules") && full.includes("RUN NPM TEST"));
+  assert.match(full, /its own testing rules, under "Testing rules" below\. Follow them/);
+});
+
 test("a file from before planning and retro prompts still works", () => {
   assert.ok(orchestratorPrompt({ workflow: { name: "Old" }, ...place }).includes("Old"));
 });

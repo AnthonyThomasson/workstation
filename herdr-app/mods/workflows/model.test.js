@@ -1,4 +1,5 @@
 import test from "node:test";
+import { parse as parseYaml } from "./yaml.js";
 import assert from "node:assert/strict";
 import { blank, normalize, validate, slug, snapshot, isDirty, serialize, parse, uniqueLabels, ROLES, EFFORTS, AGENTS, STRATEGIES, CUSTOM, AGENT_LABELS, MATCHES, SCOPES, SCOPE_LABELS, SCOPE_HINTS, isFallback } from "./model.js";
 
@@ -21,7 +22,7 @@ test("slug makes a file name from a name", () => {
 test("a blank workflow has every role with a default agent and effort", () => {
   const w = blank();
   const role0 = { prompt: "", agent: "claude", command: "", model: "", effort: "medium" };
-  for (const role of ROLES) assert.deepEqual(w[role], role === "orchestrator" ? { ...role0, planning: "", retro: "" } : role0);
+  for (const role of ROLES) assert.deepEqual(w[role], role === "orchestrator" ? { ...role0, planning: "", retro: "" } : role === "worker" ? { ...role0, testing: "" } : role0);
   assert.deepEqual(w.trigger, { labels: [], match: "any" });
   assert.equal("global" in w, false); // where it is kept is the folder's business
   assert.equal(w.strategy, "branch");
@@ -69,7 +70,7 @@ test("a workflow with no trigger labels is valid, and is the fallback", () => {
   assert.deepEqual(validate(w), []);
   assert.equal(isFallback(w), true);
   assert.equal(isFallback(valid()), false);
-  assert.deepEqual(JSON.parse(serialize(w)).trigger, { labels: [], match: "any" });
+  assert.deepEqual(parseYaml(serialize(w)).trigger, { labels: [], match: "any" });
   assert.equal(isFallback(parse(serialize(w))), true);
 });
 
@@ -79,17 +80,17 @@ test("a complete workflow has no problems", () => {
 
 test("validate names each missing piece", () => {
   const fields = validate(blank()).map((p) => p.field);
-  assert.deepEqual(fields, ["name", "orchestrator.prompt", "worker.prompt", "reviewer.prompt"]);
+  assert.deepEqual(fields, ["name"]); // empty prompts are fine
 });
 
-test("validate rejects a whitespace prompt, an empty agent and an unknown effort", () => {
+test("validate accepts empty prompts, and rejects an unknown effort", () => {
   const w = valid();
   w.worker.prompt = "   ";
   w.reviewer.agent = "";
   w.orchestrator.effort = "extreme";
   const fields = validate(w).map((p) => p.field);
   // an empty agent normalizes to the default, so only the prompt and the effort are wrong
-  assert.deepEqual(fields.sort(), ["orchestrator.effort", "worker.prompt"]);
+  assert.deepEqual(fields.sort(), ["orchestrator.effort"]);
 });
 
 test("a name needs a letter or a number, and a new one cannot take another's id", () => {
@@ -123,17 +124,18 @@ test("the orchestrator's planning and retro prompts are optional and survive a r
 test("serialize and parse round-trip, in a fixed key order", () => {
   const w = valid({ id: "feature-work", strategy: "worktree" });
   const text = serialize(w);
-  assert.ok(text.endsWith("}\n"));
-  assert.deepEqual(Object.keys(JSON.parse(text)), ["version", "id", "name", "strategy", "trigger", "orchestrator", "worker", "reviewer"]);
-  assert.deepEqual(Object.keys(JSON.parse(text).orchestrator), ["prompt", "agent", "command", "model", "effort", "planning", "retro"]);
-  assert.deepEqual(Object.keys(JSON.parse(text).worker), ["prompt", "agent", "command", "model", "effort"]);
+  assert.ok(text.endsWith("\n") && !text.startsWith("{"));
+  assert.deepEqual(Object.keys(parseYaml(text)), ["version", "id", "name", "strategy", "trigger", "orchestrator", "worker", "reviewer"]);
+  assert.deepEqual(Object.keys(parseYaml(text).orchestrator), ["agent", "command", "model", "effort", "prompt", "planning", "retro"]);
+  assert.deepEqual(Object.keys(parseYaml(text).worker), ["agent", "command", "model", "effort", "prompt", "testing"]);
   assert.deepEqual(parse(text), normalize(w));
 });
 
 test("parse rejects what is not a workflow", () => {
   assert.throws(() => parse("{nope"), /not valid JSON/);
-  assert.throws(() => parse("[]"), /not a workflow object/);
-  assert.throws(() => parse("null"), /not a workflow object/);
+  assert.throws(() => parse("- a"), /not a workflow object/);
+  assert.throws(() => parse("nope"), /not valid YAML/);
+  assert.throws(() => parse(""), /not a workflow object/);
 });
 
 test("a custom agent carries the command that opens it", () => {
@@ -222,9 +224,9 @@ test("a file from before triggers had several labels reads as one label", () => 
 
 test("a trigger is saved as labels and match only, so an old file is rewritten in the new shape", () => {
   const w = valid({ id: "x", trigger: { labels: ["a", "b"], match: "all" } });
-  const saved = JSON.parse(serialize(w));
+  const saved = parseYaml(serialize(w));
   assert.deepEqual(saved.trigger, { labels: ["a", "b"], match: "all" });
-  const migrated = JSON.parse(serialize(parse(JSON.stringify({ id: "x", name: "X", trigger: { label: "a" } }))));
+  const migrated = parseYaml(serialize(parse(JSON.stringify({ id: "x", name: "X", trigger: { label: "a" } }))));
   assert.deepEqual(migrated.trigger, { labels: ["a"], match: "any" });
   assert.deepEqual(parse(serialize(w)).trigger, w.trigger);
 });
@@ -249,5 +251,5 @@ test("the scopes are global and repo, each with a name and a hint", () => {
 test("a file from before scopes, with a global flag, reads and is saved without it", () => {
   const old = parse(JSON.stringify({ id: "x", name: "X", global: true, trigger: { labels: ["a"] } }));
   assert.equal("global" in old, false);
-  assert.equal("global" in JSON.parse(serialize(old)), false);
+  assert.equal("global" in parseYaml(serialize(old)), false);
 });

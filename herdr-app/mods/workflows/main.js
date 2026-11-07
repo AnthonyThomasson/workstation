@@ -1,5 +1,5 @@
 // Workflows: how work gets done. Each one names the GitHub labels that trigger it and how its
-// orchestrator, worker and reviewer run (prompt, agent, model, effort), kept as a JSON file. The panel
+// orchestrator, worker and reviewer run (prompt, agent, model, effort), kept as a YAML file. The panel
 // lists them by name and starts new ones; a click opens one in a tab of its own to edit (editor.js).
 // Two places hold them (model.js SCOPES): global, in the workstation repo, which Skillshare's push and
 // pull carry to other machines; and a repo's .herdr folder, committed with that project. A repo's are listed

@@ -14,7 +14,9 @@ export class StoreError extends Error {
   constructor(kind, message) { super(message); this.kind = kind; } // "conflict" | "invalid" | "missing" | "unavailable" | "other"
 }
 
-const fileOf = (dir, id) => `${dir}/${id}.json`;
+// Workflows are YAML files. Ones saved as JSON before that still load, and are rewritten as YAML when saved.
+const fileOf = (dir, id) => `${dir}/${id}.yaml`;
+const legacyOf = (dir, id) => `${dir}/${id}.json`;
 
 export function makeStore({ io, dirs }) {
   const available = SCOPES.filter((scope) => Boolean(dirs[scope]));
@@ -30,10 +32,11 @@ export function makeStore({ io, dirs }) {
     const items = [];
     for (const scope of available) {
       const dir = dirs[scope];
-      for (const file of (await io.list(dir)).filter((f) => f.endsWith(".json")).sort()) {
-        const id = file.slice(0, -5);
+      const files = (await io.list(dir)).filter((f) => f.endsWith(".yaml") || f.endsWith(".json")).sort();
+      const ids = [...new Set(files.map((f) => f.slice(0, f.lastIndexOf("."))))];
+      for (const id of ids) {
         try {
-          const text = await io.read(fileOf(dir, id));
+          const text = (await io.read(fileOf(dir, id))) ?? (await io.read(legacyOf(dir, id)));
           if (text == null) continue;
           items.push({ id, name: parse(text).name || id, scope });
         } catch (e) {
@@ -44,10 +47,13 @@ export function makeStore({ io, dirs }) {
     return items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.scope.localeCompare(b.scope));
   }
 
-  // One workflow and the text it was read as: { workflow, text, scope }, or null when there is none.
+  // One workflow and the text it was read as: { workflow, text, scope, legacy }, or null when there is none.
+  // legacy: it was read from an old JSON file.
   async function load(scope, id) {
-    const text = await io.read(fileOf(folder(scope), id));
-    return text == null ? null : { workflow: { ...parse(text), id }, text, scope };
+    const dir = folder(scope);
+    let text = await io.read(fileOf(dir, id)), legacy = false;
+    if (text == null) { text = await io.read(legacyOf(dir, id)); legacy = text != null; }
+    return text == null ? null : { workflow: { ...parse(text), id }, text, scope, legacy };
   }
 
   // A write that fails because the file changed since it was read is a conflict; anything else is not.
@@ -75,17 +81,19 @@ export function makeStore({ io, dirs }) {
     await io.mkdir(dir);
     // Same place as before: replace what was read. A new file, or a move: nothing may be there yet.
     const sameFile = previous && previous.scope === scope;
-    if (!sameFile && (await io.read(path)) != null) {
+    if (!sameFile && ((await io.read(path)) != null || (await io.read(legacyOf(dir, id))) != null)) {
       throw new StoreError("invalid", `A workflow with the id "${id}" already exists in ${SCOPE_LABELS[scope].toLowerCase()}.`);
     }
-    await write(path, text, sameFile ? previous.text : null);
-    if (previous && !sameFile) await io.remove(fileOf(folder(previous.scope), id));
-    return { workflow: { ...parse(text), id }, text, scope };
+    // An old JSON file has no YAML beside it yet: write that new, then take the JSON away.
+    await write(path, text, sameFile && !previous.legacy ? previous.text : null);
+    if (previous && (!sameFile || previous.legacy)) await io.remove(previous.legacy ? legacyOf(folder(previous.scope), id) : fileOf(folder(previous.scope), id));
+    return { workflow: { ...parse(text), id }, text, scope, legacy: false };
   }
 
   async function remove(scope, id) {
-    if (!(await load(scope, id))) throw new StoreError("missing", "That workflow is already gone.");
-    await io.remove(fileOf(folder(scope), id));
+    const found = await load(scope, id);
+    if (!found) throw new StoreError("missing", "That workflow is already gone.");
+    await io.remove((found.legacy ? legacyOf : fileOf)(folder(scope), id));
   }
 
   return { list, load, save, remove, available };

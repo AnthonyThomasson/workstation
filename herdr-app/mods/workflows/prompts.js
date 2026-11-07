@@ -59,8 +59,10 @@ export function workerPrompt({ workflow, ticket, repo, runDir, workDir, branch }
     "- Don't start other agents.",
     "- When you have a problem or a question, ask the orchestrator with `hc send`, then end your turn and wait for its answer. Don't decide it yourself, and don't ask the person.",
     `- Your job was sized to fit within about ${TOKEN_LIMIT} tokens. If it is turning out much bigger than the brief suggests, stop at a commit and tell the orchestrator what is done and what is left, so it can divide the rest.`,
-    "- Run the project's checks on what you changed.",
-    "- When you are finished, `hc send` the orchestrator what you did, your commits, and how you checked it. Say plainly if something failed or was left undone.", "",
+    "- You must test the changes you make. Run the project's checks on what you changed, and exercise the change itself: run the code or the app and see it work, and add or update tests for new behavior. Fix what fails. Never report work as done without having tested it.",
+    ...(workflow.worker?.testing?.trim() ? ["- This workflow has its own testing rules, under \"Testing rules\" below. Follow them: they say how your changes must be tested here, and they come before your own idea of what is enough."] : []),
+    "- When you are finished, `hc send` the orchestrator what you did, your commits, and how you tested it, with the results. Say plainly if something failed, was not tested, or was left undone.", "",
+    ...section("Testing rules", workflow.worker?.testing),
     ...section("This workflow's instructions", workflow.worker?.prompt),
   ].join("\n");
 }

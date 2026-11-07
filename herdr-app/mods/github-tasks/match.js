@@ -1,6 +1,8 @@
-// Which workflows a ticket starts, with no Herdr in it. A workflow is a JSON file kept by the Workflows
+// Which workflows a ticket starts, with no Herdr in it. A workflow is a YAML file kept by the Workflows
 // mod (see mods/workflows/model.js): the labels that trigger it, and how its roles run. What is needed to
 // match is read here, along with the strategy and the roles, which start.js runs it with.
+
+import { parse as parseYaml } from "./yaml.js";
 
 const text = (v) => (typeof v === "string" ? v : "");
 const key = (label) => text(label).trim().toLowerCase(); // GitHub's label names match without regard to case
@@ -14,18 +16,19 @@ function labelsOf(list) {
   return out;
 }
 
-// A role as it is run. A file without planning or retro prompts has them empty.
+// A role as it is run. A file without planning, retro or testing prompts has them empty.
 function roleOf(raw) {
   const r = raw && typeof raw === "object" ? raw : {};
-  return { prompt: text(r.prompt), agent: text(r.agent) || "claude", command: text(r.command).trim(), model: text(r.model).trim(), effort: text(r.effort) || "medium", planning: text(r.planning), retro: text(r.retro) };
+  return { prompt: text(r.prompt), agent: text(r.agent) || "claude", command: text(r.command).trim(), model: text(r.model).trim(), effort: text(r.effort) || "medium", planning: text(r.planning), retro: text(r.retro), testing: text(r.testing) };
 }
 
 // A workflow file's text as { id, name, scope, strategy, trigger: { labels, match }, orchestrator, worker, reviewer }.
-// Throws a plain Error on text that is not a JSON object. A file from before triggers had several labels holds
+// Throws a plain Error on text that is not a map (YAML, or the JSON older files hold). A file from before triggers had several labels holds
 // one, as `label`.
 export function parseWorkflow(source, { id, scope }) {
   let data;
-  try { data = JSON.parse(source); } catch (e) { throw new Error(`not valid JSON (${e.message})`); }
+  const asJson = /^\s*\{/.test(source); // workflows used to be saved as JSON
+  try { data = asJson ? JSON.parse(source) : parseYaml(source); } catch (e) { throw new Error(`not valid ${asJson ? "JSON" : "YAML"} (${e.message})`); }
   if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("not a workflow object");
   const trigger = data.trigger && typeof data.trigger === "object" ? data.trigger : {};
   const labels = labelsOf(trigger.labels);

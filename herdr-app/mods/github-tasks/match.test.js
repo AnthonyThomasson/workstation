@@ -37,11 +37,17 @@ test("an older file with a single label still triggers", () => {
 });
 
 test("a file that is not a workflow object is refused", () => {
-  assert.throws(() => parseWorkflow("nope", { id: "x", scope: "global" }), /not valid JSON/);
-  assert.throws(() => parseWorkflow("[]", { id: "x", scope: "global" }), /not a workflow object/);
+  assert.throws(() => parseWorkflow("nope", { id: "x", scope: "global" }), /not valid YAML/);
+  assert.throws(() => parseWorkflow("- a", { id: "x", scope: "global" }), /not a workflow object/);
 });
 
 test("skillshare's skills folder is read from its config", () => {
   assert.equal(skillshareSource("sources:\n  skills: ~/skills # here\nother: 1\n", "/h"), "/h/skills");
   assert.equal(skillshareSource("", "/h"), "/h/.config/skillshare/skills");
+});
+
+test("a YAML workflow file reads, and so does an old JSON one", () => {
+  const y = parseWorkflow("name: Features\ntrigger:\n  labels:\n    - feature\n  match: all\nworker:\n  testing: |\n    run it\n", { id: "f", scope: "global" });
+  assert.deepEqual(y.trigger, { labels: ["feature"], match: "all" });
+  assert.equal(y.worker.testing, "run it\n");
 });
