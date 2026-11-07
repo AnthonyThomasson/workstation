@@ -185,7 +185,8 @@ export class TaskEditor {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        await startRun(workflow, ticket, this.repo, this.where, cx);
+        const statusField = this.project ? await loadStatusField(gh, this.project.id, this.where).catch(() => null) : null; // without it the ticket's status just isn't moved
+        await startRun(workflow, ticket, this.repo, this.where, cx, { project: this.project, statusField });
         this.start = null;
       } catch (e) {
         this.start = { ...this.start, phase: "error", error: String(e?.message ?? e) };

@@ -131,7 +131,7 @@ export default class Workflows extends View {
   render(cx) {
     if (this.role === "toggle") return toggle();
     if (this.role === "editor") return this.editor.render(cx);
-    if (this.role === "run" || this.role === "settings") return this.page.render();
+    if (this.role === "run" || this.role === "settings") return this.page.render(cx);
     const t = theme();
     // Another space, or another folder in it, may be in another repo: its workflows come and the last one's go.
     const ctx = this.context(), key = ctx ? `${ctx.on ?? ""}|${ctx.cwd ?? ""}` : "";

@@ -15,7 +15,7 @@ orchestrator:
   effort: high
   prompt: ""
   planning: "Diagnose with the project's fix skill if it has one, else `mattpocock-skills:diagnosing-bugs`. Reproduce the bug first; planning ends only with a failing test that reproduces it. Agree the fix with the user before changing code."
-  retro: "Look back on the run: what slowed it, what to write down for next time. Then ask whether to finish (merge, push, close the ticket)."
+  retro: "Look back on the run: what slowed it, what to write down for next time. Then tell the person the run page has the buttons to finish (Finish for a worktree, Create PR for a branch); do not merge or push yourself."
 
 worker:
   agent: claude

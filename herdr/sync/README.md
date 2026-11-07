@@ -2,12 +2,12 @@
 
 Keeps Herdr's config folder (`~/.config/herdr-app`) and your config repo in step, from one icon in the tab bar. It works with any config repo: nothing about a particular repo is written into the mod.
 
-The button is a plain circular-arrow icon (dimmed until a repo is set, spinning while sync works, red on a conflict or an error). When something is waiting, small yellow counts sit at its top-right corner:
+The button is a plain circular-arrow icon (dimmed until a repo is set, spinning while sync works, red on a conflict or an error). When something is waiting, a small yellow arrow sits at its top-right corner:
 
-- `↓N` commits the repo is behind its remote
-- `↑M` files changed in Herdr's config that are not in the repo yet (the files the sync script's two-way dry run would copy to the repo), plus anything uncommitted in the repo (skills included)
+- Pull (down arrow): commits the repo is behind its remote
+- Push (up arrow): files changed in Herdr's config that are not in the repo yet (the files the sync script's two-way dry run would copy to the repo), plus anything uncommitted in the repo (skills included)
 
-No counts mean both are zero. The button follows the shown space's machine and uses that machine's settings.
+No arrows mean both are zero, and no numbers are shown. The button follows the shown space's machine and uses that machine's settings.
 
 ## The panel
 

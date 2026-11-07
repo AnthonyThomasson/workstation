@@ -14,7 +14,7 @@ orchestrator:
   effort: high
   prompt: ""
   planning: "Read the repo's AGENTS.md / CLAUDE.md and explore the code the ticket touches. Grill the user with `mattpocock-skills:grilling` until nothing material is open, then present the plan for acceptance. With a visual part, show the user a mock-up first."
-  retro: "Look back on the run: what slowed it, what to write down for next time. Then ask whether to finish (merge, push, close the ticket)."
+  retro: "Look back on the run: what slowed it, what to write down for next time. Then tell the person the run page has the buttons to finish (Finish for a worktree, Create PR for a branch); do not merge or push yourself."
 
 worker:
   agent: claude
