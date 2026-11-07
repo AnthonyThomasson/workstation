@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentArgv, branchName, orchestratorPrompt, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt, worktreePath } from "./run.js";
+import { agentArgv, branchName, orchestratorPrompt, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt, worktreePath } from "./run.js";
 
 const ticket = { number: 12, title: "Fix the login!", body: "It breaks.", labels: ["bug"], status: "Todo", url: "https://github.test/12" };
 const role = (extra = {}) => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium", ...extra });
@@ -170,4 +170,19 @@ test("spawn says so when the brief didn't go in", () => {
 test("a name can't overflow a terminal's 32 characters", () => {
   const r = runSpawn(["worker", "a".repeat(60), "y"]);
   assert.equal(r.stdout.trim().length, 32);
+});
+
+test("a reopened run pane gets the full props saved when the run started", () => {
+  const saved = { role: "run", id: "3-x", orchestrator: "old-term", title: "#3 T", workflow: "Story", branch: "workflow/3-t", folder: "/w", strategy: "worktree", repoRoot: "/src/app", ticket: { number: 3, key: null }, projectId: "P", statusField: { id: "F" } };
+  const props = reopenProps(JSON.stringify(saved), { role: "run", id: "3-x", workflow: "" }, "new-term");
+  assert.equal(props.strategy, "worktree");
+  assert.equal(props.repoRoot, "/src/app");
+  assert.deepEqual(props.statusField, { id: "F" });
+  assert.equal(props.workflow, "Story");
+  assert.equal(props.orchestrator, "new-term");
+});
+
+test("a reopened run pane falls back to the partial props when nothing usable was saved", () => {
+  const fallback = { role: "run", id: "3-x", workflow: "" };
+  for (const bad of [null, "", "not json", "[]", JSON.stringify({ role: "other" })]) assert.deepEqual(reopenProps(bad, fallback, "t"), fallback);
 });

@@ -1,8 +1,8 @@
 // Starts a workflow on a ticket: gets the folder ready, writes what the agents read, and opens a tab with the
 // orchestrator's terminal on the left and the Workflows mod's list of its agents on the right. From there the
 // orchestrator runs the ticket itself (run.js says how).
-import { exec, hc, home, knownAgents, notify, panes, run, spaces, terminals, writeTextFile } from "herdr";
-import { agentArgv, branchName, FOLDER_LABEL, orchestratorPrompt, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
+import { exec, hc, home, knownAgents, notify, panes, readTextFile, run, spaces, terminals, writeTextFile } from "herdr";
+import { agentArgv, branchName, FOLDER_LABEL, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
 
 const ROLES = ["orchestrator", "worker", "reviewer"];
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
@@ -25,13 +25,13 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
   try {
     const pane = panes().find((p) => p.terminal === running.address)?.pane;
     if (!pane) return;
-    await app("pane.split", {
-      pane, direction: "right", mod: "workflows",
-      props: {
-        role: "run", id, orchestrator: running.address, title: ticketName(ticket), workflow: "", branch: branchName(ticket), folder: folder ?? "",
-        ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null }, projectId: project?.id ?? null,
-      },
-    });
+    const partial = {
+      role: "run", id, orchestrator: running.address, title: ticketName(ticket), workflow: "", branch: branchName(ticket), folder: folder ?? "",
+      ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null }, projectId: project?.id ?? null,
+    };
+    // Start saved the full props (strategy, repoRoot, statusField, workflow name) beside the run's other files.
+    const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
+    await app("pane.split", { pane, direction: "right", mod: "workflows", props: reopenProps(saved, partial, running.address) });
     run("pane.focus", { pane });
   } catch { /* the tab is showing; only the list of agents is missing */ }
 }
@@ -165,14 +165,13 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   const pane = await paneOf(made, cx);
   try {
     if (!pane) throw new Error("its pane didn't appear");
-    await app("pane.split", {
-      pane, direction: "right", mod: "workflows",
-      props: {
-        role: "run", id, orchestrator: made.terminal, title: ticketName(ticket), workflow: workflow.name, branch, folder: workDir,
-        strategy: workflow.strategy, repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null },
-        projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
-      },
-    });
+    const props = {
+      role: "run", id, orchestrator: made.terminal, title: ticketName(ticket), workflow: workflow.name, branch, folder: workDir,
+      strategy: workflow.strategy, repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null },
+      projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
+    };
+    await writeTextFile(`${runDir}/pane.json`, JSON.stringify(props), null).catch(() => {}); // View reopens the pane from this
+    await app("pane.split", { pane, direction: "right", mod: "workflows", props });
     run("pane.focus", { pane }); // the person answers the orchestrator there
   } catch (e) {
     problems.push(`The list of its agents didn't open (${e?.message ?? e}).`);

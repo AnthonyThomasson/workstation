@@ -192,3 +192,11 @@ fi
 echo "$term"
 `;
 }
+
+// The props to reopen a run's pane with: the full set saved when the run started (`saved`, the file's text), with
+// the orchestrator's current terminal. Without a usable save, `fallback`, which lacks strategy, repoRoot and the rest.
+export function reopenProps(saved, fallback, orchestrator) {
+  let props = null;
+  try { props = JSON.parse(saved); } catch { /* nothing saved */ }
+  return props && props.role === "run" ? { ...props, orchestrator } : fallback;
+}
