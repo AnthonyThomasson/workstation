@@ -165,6 +165,7 @@ export default class Skillshare extends View {
     this.ctx = null; this.project = null; this.raw = {}; this.items = []; this.git = null; this.loading = false; this.loadedAt = 0;
     this.checks = {}; this.checkedAt = 0; this.nextRequest = channel.listen(); this.shownNotice = null;
     this.lastAgent = null; this.machines = {}; this.machinesAt = 0; this.version = null; this.token = 0;
+    this.doctor = null; this.doctorAt = 0; this.doctorLoading = false; this.doctorError = null;
     this.filter = InputState.new({ placeholder: "Filter by name or source" });
     this.filter.on("change", (_e, cx) => { this.query = this.filter.value(); cx.notify(); });
     // No remote work while the panel is hidden; showing it again refreshes (see render).
@@ -295,11 +296,13 @@ export default class Skillshare extends View {
     const ctx = this.context(), key = ctx ? `${ctx.on}|${ctx.folder}|${ctx.spaceFolder}` : null;
     if (key !== this.ctxKey) {
       this.ctxKey = key; this.ctx = ctx; this.token++; this.items = []; this.raw = {}; this.loadedAt = 0; this.projectKnown = false; this.checks = {}; this.checkKey = null; this.git = null; this.project = null; this.loading = false; this.open = null;
+      this.doctorAt = 0;
       if (ctx) later(cx, (cx) => this.refresh(cx, false));
     }
     const req = this.nextRequest();
     if (req) later(cx, (cx) => this.perform(req, cx));
     if (this.view === "machines" && !this.machinesAt && !this.machinesLoading) later(cx, (cx) => this.loadMachines(cx));
+    if (this.view === "doctor" && !this.doctorAt && !this.doctorLoading && ctx) later(cx, (cx) => this.loadDoctor(cx));
     this.receiver();
 
     const node = find(layout(), PANEL);
@@ -315,13 +318,13 @@ export default class Skillshare extends View {
         .when(Boolean(node), (el) => el.child(h_flex().id("close").size(24).justify_center().items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover))
           .on_mouse_down("left", stop).on_click(() => run("layout.hide", { id: PANEL })).child(icon("close", 14, t.muted)))))
       .child(h_flex().flex_none().px(14).pt(8).gap(4).border_b(1).border_color(t.border)
-        .children([["resources", "Resources"], ["machines", "Machines"]].map(([k, label]) => {
+        .children([["resources", "Resources"], ["machines", "Machines"], ["doctor", "Doctor"]].map(([k, label]) => {
           const on = this.view === k;
           return div().id(`view-${k}`).h(30).px(10).flex().items_center().border_b(2).border_color(on ? t.foreground : t.background)
             .text_size(S().body).text_color(on ? t.foreground : t.muted).when(on, (el) => el.font_semibold()).cursor_pointer()
-            .on_mouse_down("left", stop).on_click((_e, cx) => { this.view = k; if (k === "machines") this.machinesAt = 0; cx.notify(); }).child(label);
+            .on_mouse_down("left", stop).on_click((_e, cx) => { this.view = k; if (k === "machines") this.machinesAt = 0; if (k === "doctor") this.doctorAt = 0; cx.notify(); }).child(label);
         })))
-      .child(this.view === "machines" ? this.renderMachines(t) : this.renderResources(t, ctx))
+      .child(this.view === "machines" ? this.renderMachines(t) : this.view === "doctor" ? this.renderDoctor(t, ctx) : this.renderResources(t, ctx))
       .children([this.renderStatus(t)].filter(Boolean))
       .child(this.renderFooter(t, ctx));
   }
@@ -540,6 +543,65 @@ export default class Skillshare extends View {
         .child(v_flex().p(10).gap(10)
           .children(cards.length ? cards : [note(t, "Checking machines…")])
           .when(Boolean(this.machinesAt), (el) => el.child(note(t, `Checked ${ago(Date.now() - this.machinesAt)}`)))));
+  }
+
+  // ---- Doctor tab: skillshare doctor per scope, with its errors and warnings listed ----
+
+  loadDoctor(cx) {
+    if (this.doctorLoading || !this.ctx) return;
+    this.doctorLoading = true;
+    const { on } = this.ctx, project = this.project;
+    const scopes = project ? ["project", "global"] : ["global"];
+    cx.spawn(async (cx) => {
+      try {
+        const io = machineIO(cx);
+        const out = [];
+        for (const scope of scopes) {
+          const r = await io.job(["doctor", "--json", flag(scope)], { on, cwd: scope === "project" ? project : null });
+          const j = parseJSON(r.stdout);
+          if (!j?.checks) throw new Error(failure(r, "skillshare doctor"));
+          out.push({ scope, checks: j.checks });
+        }
+        this.doctor = out; this.doctorError = null;
+      } catch (e) { this.doctorError = String(e?.message ?? e); }
+      this.doctorAt = Date.now(); this.doctorLoading = false;
+      cx.notify();
+    });
+  }
+
+  doctorRow(t, c) {
+    const color = c.status === "error" ? t.ansi1 : t.blocked;
+    return v_flex().gap(4).px(12).py(8).rounded(8).border_1().border_color(t.border).bg(t.background)
+      .child(h_flex().gap(8).items_center()
+        .child(dot(color, 8))
+        .child(div().flex_1().min_w(0).truncate().text_size(S().secondary).font_semibold().child(c.name))
+        .child(pill(c.status, t)))
+      .child(div().text_size(S().secondary).text_color(t.foreground).child(c.message))
+      .children((c.details ?? []).map((l) => div().text_size(S().label).text_color(t.muted).child(l)));
+  }
+
+  renderDoctor(t, ctx) {
+    const refresh = this.doctorLoading
+      ? disabledButton("doctor-busy", "Checking…", t, { h: 26, px: 10, size: S().label, spin: true })
+      : secondary("doctor-refresh", "Run doctor", t, (_e, cx) => { this.doctorAt = 0; cx.notify(); }, { h: 26, px: 10, size: S().label, icon: "sync" });
+    const header = h_flex().flex_none().px(14).py(10).gap(8).items_center().border_b(1).border_color(t.border)
+      .child(div().flex_1().text_size(S().body).font_semibold().child("Doctor"))
+      .child(refresh);
+    const body = [];
+    if (!ctx) body.push(note(t, "Open a space to run doctor."));
+    else if (this.doctorError) body.push(note(t, this.doctorError, t.ansi1));
+    else if (!this.doctor) body.push(note(t, this.doctorLoading ? "Running skillshare doctor…" : "Doctor has not run yet."));
+    for (const r of this.doctor ?? []) {
+      const errors = r.checks.filter((c) => c.status === "error");
+      const warns = r.checks.filter((c) => c.status === "warning");
+      const rest = r.checks.length - errors.length - warns.length;
+      const label = r.scope === "project" ? "Project" : "Global";
+      body.push(sectionLabel(t, `${label} · ${plural(errors.length, "error")} · ${plural(warns.length, "warning")} · ${rest} other`));
+      if (!errors.length && !warns.length) body.push(note(t, "No errors or warnings."));
+      body.push(...errors.map((c) => this.doctorRow(t, c)), ...warns.map((c) => this.doctorRow(t, c)));
+    }
+    return v_flex().flex_1().min_h(0).child(header)
+      .child(div().id("doctor").flex_1().min_h(0).overflow_y_scrollbar().child(v_flex().p(14).gap(10).children(body)));
   }
 
   renderStatus(t) {
