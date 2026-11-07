@@ -1,8 +1,8 @@
 // The bar under the workspace: this computer or machine, the branch, the agents that need you, and
 // "Sync both ways" for the skillshare source, which stays here whatever panel is shown. The bar reads
 // the source's git state itself, because the skillshare panel only looks while it is shown. Clicking
-// opens skillshare's sync dialog; confirming it shows the panel, where the sync's progress and any
-// conflict appear.
+// opens skillshare's sync dialog; confirming it runs the sync without showing the panel or changing any
+// window. The button reads "Working…" meanwhile, and a conflict opens its own dialog.
 import { View, div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, agents, theme, exec, openOverlay, shared } from "herdr";

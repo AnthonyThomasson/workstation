@@ -777,7 +777,7 @@ export default class Skillshare extends View {
         [dialogButton("close", "Close", t, close)], close);
     }
     if (p.role === "syncboth") {
-      const go = () => { showPanel(); request({ op: "syncboth", on: p.on, repo: p.repo }); close(); };
+      const go = () => { request({ op: "syncboth", on: p.on, repo: p.repo }); close(); };
       const steps = ["Commit your local changes", "Pull and merge changes from the remote", "Push the result", "Sync every target"];
       return dialogFrame(t, "syncboth", this.handle, "Sync both ways?",
         [note(t, "This will:", t.foreground),
