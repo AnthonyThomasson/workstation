@@ -13,7 +13,7 @@ orchestrator:
   model: opus
   effort: medium
   prompt: ""
-  planning: "Read the repo's AGENTS.md / CLAUDE.md and explore the code the ticket touches. Grill the user with `mattpocock-skills:grilling` until nothing material is open, then present the plan for acceptance. With a visual part, show the user a mock-up first."
+  planning: "Read the repo's AGENTS.md / CLAUDE.md and explore the code the ticket touches. Grill the user with `mattpocock-skills:grilling` until nothing material is open, putting each round to them with the AskUserQuestion tool (up to 4 questions per call, recommended option first) rather than as plain text, then present the plan for acceptance. With a visual part, show the user a mock-up first."
   retro: "Look back on the run: what slowed it, what to write down for next time. Then ask whether to finish (merge, push, close the ticket)."
 
 worker:
