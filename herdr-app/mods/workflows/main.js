@@ -40,15 +40,14 @@ const later = (cx, fn) => cx.spawn(async (cx) => { await cx.sleep(0); return fn(
 function toggle() {
   const t = theme(), on = shownHere();
   return h_flex().size_full().pr(8).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border)
-    .child(h_flex().id("toggle-workflows").h(26).w(100).justify_center().gap(5).flex_none().items_center().rounded(6)
+    .child(h_flex().id("toggle-workflows").tooltip("Workflows").h(30).w(34).justify_center().flex_none().items_center().rounded(6)
       .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
       .hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
       .on_click(() => {
         if (on) run("layout.hide", { id: PANEL });
         else { run("layout.select", { stack: STACK, child: SHOWN }); run("layout.show", { id: PANEL }); }
       })
-      .child(svg("mods/workflows/icons/workflows.svg").size(14))
-      .child("Workflows"));
+      .child(svg("mods/workflows/icons/workflows.svg").size(16)));
 }
 
 export default class Workflows extends View {

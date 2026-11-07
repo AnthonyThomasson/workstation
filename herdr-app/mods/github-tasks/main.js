@@ -37,15 +37,14 @@ const activeSpace = () => spaces().find((s) => s.active) ?? null;
 function toggle() {
   const t = theme(), on = shownHere();
   return h_flex().size_full().pr(8).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border)
-    .child(h_flex().id("toggle-github-tasks").h(26).w(100).justify_center().gap(5).flex_none().items_center().rounded(6)
+    .child(h_flex().id("toggle-github-tasks").tooltip("Tasks").h(30).w(34).justify_center().flex_none().items_center().rounded(6)
       .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
       .hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
       .on_click(() => {
         if (on) run("layout.hide", { id: PANEL });
         else { run("layout.select", { stack: STACK, child: SHOWN }); run("layout.show", { id: PANEL }); }
       })
-      .child(svg("mods/github-tasks/icons/tasks.svg").size(14))
-      .child("Tasks"));
+      .child(svg("mods/github-tasks/icons/tasks.svg").size(16)));
 }
 
 // What a failure says, and the gh command that fixes it when Tasks can run it.

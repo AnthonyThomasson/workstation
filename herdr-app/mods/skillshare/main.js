@@ -121,15 +121,14 @@ function find(node, id) {
 function toggle() {
   const t = theme(), on = shownHere();
   return h_flex().size_full().pr(8).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border)
-    .child(h_flex().id("toggle-skillshare").h(26).w(100).justify_center().gap(5).flex_none().items_center().rounded(6)
+    .child(h_flex().id("toggle-skillshare").tooltip("Skillshare").h(30).w(34).justify_center().flex_none().items_center().rounded(6)
       .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
       .hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
       .on_click(() => {
         if (on) run("layout.hide", { id: PANEL });
         else showPanel();
       })
-      .child(svg("mods/skillshare/icons/skillshare.svg").size(14))
-      .child("Skillshare"));
+      .child(svg("mods/skillshare/icons/skillshare.svg").size(16)));
 }
 
 // A dialog's frame: title, Esc hint, body, buttons.
