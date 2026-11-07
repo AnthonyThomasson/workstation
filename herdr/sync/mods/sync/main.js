@@ -1,7 +1,7 @@
 // Sync: keeps Herdr's config folder and your config repo in step, from an icon in the tab bar.
 // The icon is a circular arrow; small yellow arrows at its top-right corner say files changed in Herdr (up, what Push
 // would send) or the repo is behind its remote (down). It follows the shown space's machine and uses that machine's
-// settings (repo path, sync script). Click it to open or close the Details panel in the layout's right-hand panel
+// settings (repo path). Click it to open or close the Details panel in the layout's right-hand panel
 // column: Repo (the branch or worktree being synced, Sync, Push) and Settings.
 //   Sync: the repo to Herdr, one way (the repo wins), then the running Herdr is asked whether it loaded the result.
 //   Push: Herdr's changes into the repo, commit, push. Only from main.
@@ -10,15 +10,15 @@
 // work to the button through channel.js, which runs it; results come back as shared state.
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex, InputState } from "gpui-base";
-import { exec, run, spaces, layout, shared, setShared, theme, pickFolder, notify, readTextFile, props as blockProps } from "herdr";
-import { settingsFor, normalizeSettings, badge, changedFiles, viewState, commitMessage, plural, fetchBlocksCheck, DEFAULTS } from "./model.js";
+import { exec, run, spaces, layout, shared, setShared, theme, pickFolder, notify, readTextFile, knownAgents, props as blockProps } from "herdr";
+import { settingsFor, normalizeSettings, badge, changedFiles, viewState, commitMessage, plural, fetchBlocksCheck } from "./model.js";
 import { checkRepo, push, syncHerdr, listTargets, switchBranch, PATHS } from "./ops.js";
 import { createRunner } from "./jobs.js";
 import { createChannel } from "./channel.js";
 import { renderDetails } from "./details.js";
 import { icon, stop, later } from "./ui.js";
 
-const SETTINGS = "sync.settings.v1"; // { [machine]: { repo, script, dir } }; "" is this computer
+const SETTINGS = "sync.settings.v1"; // { [machine]: { repo, script (always ./sync.sh), dir } }; "" is this computer
 const STATE = "sync.state.v1"; // { [machine]: what the last check read }
 const BUMP = "sync.where.bump.v1"; // changes when the branch and worktree lists should be read again
 const CHECK_EVERY = 20 * 1000, FETCH_EVERY = 5 * 60 * 1000, WHERE_EVERY = 20 * 1000;
@@ -121,6 +121,7 @@ export default class Sync extends View {
       setShared(BUMP, Date.now());
       return this.check(cx, { fetch: true });
     }
+    if (req.op === "generate") return this.generateScript(key, c, cx);
     if (!["herdrsync", "push", "switch"].includes(req.op)) return;
     if (!c.cfg.repo) { notify({ title: "Sync", body: "Choose the config repo first: open the Sync panel and set it under Settings.", level: "warning" }); return; }
     const busyText = { herdrsync: "Syncing Herdr…", push: "Pushing…", switch: "Switching branch…" }[req.op];
@@ -145,6 +146,17 @@ export default class Sync extends View {
         this.check(cx, { fetch: req.op !== "herdrsync" });
       }
     });
+  }
+
+  // sync.sh is missing: the agent, in a new tab in the repo folder, writes it from RECIPE.md.
+  async generateScript(key, c, cx) {
+    if (!c.cfg.repo) return;
+    const list = await knownAgents({ on: c.on }).catch(() => []);
+    const agent = list.find((a) => a.key === "claude" && a.installed) ?? list.find((a) => a.installed) ?? list.find((a) => a.key === "claude") ?? null;
+    const space = spaces().find((s) => (s.machine ?? "") === key && s.active) ?? spaces().find((s) => (s.machine ?? "") === key);
+    const task = "Read RECIPE.md in this folder and write sync.sh to match it exactly (POSIX sh, executable). Then run ./sync.sh --check and ./sync.sh --push --dry-run and fix anything that fails. Do not run it for real or commit anything.";
+    run("tab.new", { name: "Generate sync.sh", space: space?.id, folder: c.rcfg.repo, argv: agent?.run ?? ["claude"], task });
+    notify({ title: "Sync", body: "An agent is writing sync.sh from RECIPE.md in a new tab.", level: "info" });
   }
 
   renderButton(cx) {
@@ -185,7 +197,6 @@ export default class Sync extends View {
     this.msg.on("change", () => { this.edited = this.msg.value() !== this.autoMessage; });
     this.settingsOpen = false; this.settingsKey = null;
     this.repoInput = InputState.new({ placeholder: "/path/to/your/config-repo" });
-    this.scriptInput = InputState.new({ placeholder: DEFAULTS.script });
     // A shown panel renders this often, which keeps the branch list fresh; a hidden panel reads nothing.
     cx.timer.every(WHERE_EVERY, (cx) => cx.notify());
   }
@@ -203,7 +214,7 @@ export default class Sync extends View {
 
   saveSettings(key, cx) {
     const prev = settingsFor(shared(SETTINGS), key);
-    const cfg = normalizeSettings({ repo: this.repoInput.value(), script: this.scriptInput.value(), dir: prev.repo === this.repoInput.value().trim() ? prev.dir : "" });
+    const cfg = normalizeSettings({ repo: this.repoInput.value(), dir: prev.repo === this.repoInput.value().trim() ? prev.dir : "" });
     setIn(SETTINGS, key, cfg);
     channel.request({ op: "fetch", key });
     this.settingsOpen = false;
@@ -220,7 +231,7 @@ export default class Sync extends View {
     // The settings fields start from the shown machine's settings, and again when the shown machine changes.
     if (this.settingsKey !== key) {
       this.settingsKey = key; this.settingsOpen = false;
-      later(cx, (cx) => { this.repoInput.set_value(c.cfg.repo); this.scriptInput.set_value(c.cfg.script); cx.notify(); });
+      later(cx, (cx) => { this.repoInput.set_value(c.cfg.repo); cx.notify(); });
     }
     // The commit message for Push follows the file count until the person edits it.
     const st = c.state, auto = commitMessage(st?.repo ? changedFiles(st).length : 0, st?.host);
@@ -237,7 +248,7 @@ export default class Sync extends View {
       toggleRepo: (name, cx) => { this.repoOpen = { ...this.repoOpen, [name]: !this.repoOpen[name] }; cx.notify(); },
       openSettings: (cx) => { this.settingsOpen = true; cx.notify(); },
       settings: {
-        repo: this.repoInput, script: this.scriptInput, open: this.settingsOpen, forced: !c.cfg.repo,
+        repo: this.repoInput, open: this.settingsOpen, forced: !c.cfg.repo,
         browse: (cx) => cx.spawn(async (cx) => { const dir = await pickFolder({ prompt: "Use this folder" }).catch(() => null); if (dir) this.repoInput.set_value(dir); cx.notify(); }),
         save: (cx) => this.saveSettings(key, cx),
         toggle: (cx) => { this.settingsOpen = !this.settingsOpen; cx.notify(); },

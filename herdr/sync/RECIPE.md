@@ -16,7 +16,7 @@ A Herdr tab-bar button and side panel that keep a Git configuration repository a
 - The local check runs every 20 seconds and `git fetch` every five minutes, plus on opening the panel or switching machine. It reads branch/upstream, up to 200 incoming and outgoing commits, uncommitted files, and a two-way sync-script dry run. Files the dry run would copy to the repository count as Herdr changes; files it would copy to Herdr are repository-newer and block Push. `.sync-backup/` is excluded.
 - **Sync** is one way, repository to Herdr: fast-forward the repository to its upstream if behind (`--autostash`), run the sync script with `--push --prune` (files in a repo-owned mod folder that the repo lacks are moved to the backup folder), then `herdr-app check mods/<mod>` for each mod the repository owns and `herdr-app status` must show no errors. It never commits or pushes.
 - **Push** runs only on `main` (checked in the UI and in the script). It refuses while repository-newer files exist, runs the script with `--pull`, restores and refuses if that would overwrite an uncommitted repository edit, commits everything except `.sync-backup`, fetches, rebases onto the upstream (aborting and pushing nothing if it does not apply cleanly), re-runs `--push` if commits came in, and pushes. There is no conflict resolution.
-- Settings are **Config repo** (empty by default; Browse is local-only) and **Sync script** (default `./sync.sh`).
+- The one setting is **Config repo** (empty by default; Browse is local-only). The script is always `./sync.sh` in the repository. When it is missing and the repository has a `RECIPE.md`, **Generate sync.sh** opens an agent in a new tab to write it from that recipe.
 
 ### Sync script contract
 

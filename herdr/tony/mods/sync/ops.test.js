@@ -363,3 +363,16 @@ test("Sync removes files the repo no longer has from the repo's mods, keeping a 
     assert.equal(w.git(w.a, "status", "--porcelain", "--", "herdr").trim(), "");
   } finally { clean(w); }
 });
+
+test("a repo without sync.sh is reported with whether a RECIPE.md could generate it", async () => {
+  const w = world("no-script");
+  try {
+    rmSync(join(w.a, "sync.sh"));
+    let s = await checkRepo(w.io, w.cfg);
+    assert.equal(s.noScript, true);
+    assert.equal(s.recipe, false);
+    writeFileSync(join(w.a, "RECIPE.md"), "# recipe\n");
+    s = await checkRepo(w.io, w.cfg);
+    assert.equal(s.recipe, true);
+  } finally { clean(w); }
+});

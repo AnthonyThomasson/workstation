@@ -9,17 +9,15 @@ import {
 test("settings default to ./sync.sh, with no repo and no picked worktree", () => {
   assert.deepEqual(normalizeSettings(undefined), { repo: "", script: "./sync.sh", dir: "" });
   assert.deepEqual(normalizeSettings({ repo: "  ~/cfg ", script: " " }), { repo: "~/cfg", script: "./sync.sh", dir: "" });
-  assert.deepEqual(normalizeSettings({ repo: "/r", script: "sh sync.sh", dir: " /r-wt " }), { repo: "/r", script: "sh sync.sh", dir: "/r-wt" });
+  assert.deepEqual(normalizeSettings({ repo: "/r", script: "sh sync.sh", dir: " /r-wt " }), { repo: "/r", script: "./sync.sh", dir: "/r-wt" });
   assert.equal(DEFAULTS.script, "./sync.sh");
 });
 
-test("a saved ./mount.sh or mount.sh is the old default and becomes ./sync.sh", () => {
+test("the sync script is not configurable: it is always ./sync.sh", () => {
   assert.equal(normalizeSettings({ script: "./mount.sh" }).script, "./sync.sh");
-  assert.equal(normalizeSettings({ script: " mount.sh " }).script, "./sync.sh");
-  assert.equal(normalizeSettings({ script: "./my-mount.sh" }).script, "./my-mount.sh");
-  assert.equal(settingsFor({ vps: { script: "./mount.sh" } }, "vps").script, "./sync.sh");
+  assert.equal(normalizeSettings({ script: "sh other.sh" }).script, "./sync.sh");
+  assert.equal(settingsFor({ vps: { script: "x.sh" } }, "vps").script, "./sync.sh");
 });
-
 test("settings are kept per machine, this computer under the empty key", () => {
   const all = { "": { repo: "/a" }, vps: { repo: "/b" } };
   assert.equal(settingsFor(all, "").repo, "/a");
@@ -65,7 +63,9 @@ test("reads the check script's output", () => {
 
 test("a folder that is not a repo, or a missing script, is reported", () => {
   assert.deepEqual(parseCheck("@norepo\n"), { repo: false, error: null });
-  assert.equal(parseCheck("@top\t/x\n@noscript\t./sync.sh\n@end").error, "The sync script ./sync.sh was not found in the repo");
+  assert.equal(parseCheck("@top\t/x\n@noscript\t./sync.sh\n@end").error, "./sync.sh was not found in the repo");
+  assert.equal(parseCheck("@top\t/x\n@recipe\t1\n@noscript\t./sync.sh\n@end").noScript, true);
+  assert.equal(parseCheck("@top\t/x\n@recipe\t1\n@end").recipe, true);
   assert.equal(parseCheck("").error, "No answer from the repo");
 });
 

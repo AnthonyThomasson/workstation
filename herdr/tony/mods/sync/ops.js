@@ -67,6 +67,7 @@ if [ -n "$up" ]; then
 fi
 [ -z "$inprog" ] || printf '@inprogress\\t%s\\n' "$inprog"
 status_lines | while IFS="$tab" read -r xy f; do printf '@file\\t%s\\t%s\\n' "$xy" "$f"; done
+[ -f RECIPE.md ] && printf '@recipe\\t1\\n' || printf '@recipe\\t0\\n'
 if [ "$script_missing" = 1 ]; then printf '@noscript\\t%s\\n' "$script"
 elif ! two_way; then printf '@scripterr\\t%s\\n' "$(tail -n 1 "$tmp/dry")"
 fi

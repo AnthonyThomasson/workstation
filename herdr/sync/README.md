@@ -19,9 +19,10 @@ Per machine (this computer, and each machine from `hc machine ls`); stored with 
 | Setting | Default |
 | --- | --- |
 | Config repo (folder path on that machine; this computer has a Browse button) | empty; the panel shows only Settings |
-| Sync script: a path relative to the repo, absolute or `~/…`; spaces are fine, arguments are not | `./sync.sh` |
 
-The picked worktree is remembered per machine and cleared when the repo path changes. The sync script must take `--push`, `--pull` and `--dry-run`, and with `--dry-run` alone print `to repo: <path>` / `to repo (new): <path>` for each file it would copy to the repo and `to Herdr: <path>` / `to Herdr (new): <path>` for each it would copy to Herdr. This repo's `sync.sh` does.
+The sync script is not a setting: it is always `./sync.sh` at the top of the repo. If it is missing, the panel says so and offers **Generate sync.sh**, which opens an agent (Claude Code) in a new tab in the repo to write it from the repo's `RECIPE.md` (this repo's describes the flags, output and layout the mod needs). Without a `RECIPE.md` there is nothing to generate from.
+
+The picked worktree is remembered per machine and cleared when the repo path changes. `sync.sh` must take `--push`, `--pull` and `--dry-run`, and with `--dry-run` alone print `to repo: <path>` / `to repo (new): <path>` for each file it would copy to the repo and `to Herdr: <path>` / `to Herdr (new): <path>` for each it would copy to Herdr. This repo's `sync.sh` does.
 
 `git fetch` runs every 5 minutes and when the panel opens; the local check (the script's dry run plus `git status`) every 20 seconds.
 

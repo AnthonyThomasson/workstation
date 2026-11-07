@@ -1,18 +1,17 @@
 // What the sync mod knows, with no Herdr and no I/O: settings, the check script's output, the badge,
 // the badge. The tests (model.test.js) run under node.
 
-export const DEFAULTS = { repo: "", script: "./sync.sh" };
+// The script is not a setting: it is always sync.sh at the top of the repo, generated from RECIPE.md when missing.
+export const SCRIPT = "./sync.sh";
+export const DEFAULTS = { repo: "", script: SCRIPT };
 export const PUSH_BRANCH = "main"; // the only branch Push is allowed from
 
 // One machine's settings from whatever is stored: trimmed, with the defaults filled in.
 export function normalizeSettings(raw) {
   const o = raw && typeof raw === "object" ? raw : {};
   const text = (v) => (typeof v === "string" ? v.trim() : "");
-  // "./mount.sh" was the default script before it was renamed; a machine that saved it explicitly gets the new default.
-  const script = text(o.script);
-  const oldDefault = script === "./mount.sh" || script === "mount.sh";
   // dir: the worktree picked in the panel ("" = the repo itself); it is not a typed setting.
-  return { repo: text(o.repo), script: (oldDefault ? "" : script) || DEFAULTS.script, dir: text(o.dir) };
+  return { repo: text(o.repo), script: SCRIPT, dir: text(o.dir) };
 }
 
 // Settings are kept per machine: this computer under "", every other machine under its name.
@@ -48,7 +47,8 @@ export function parseCheck(text) {
     } else if (tag === "inprogress") out.inProgress = a || "rebase";
     else if (tag === "herdr") out.herdr.push(a);
     else if (tag === "newer") out.repoNewer.push(a);
-    else if (tag === "noscript") out.error = `The sync script ${a} was not found in the repo`;
+    else if (tag === "noscript") { out.error = `${a} was not found in the repo`; out.noScript = true; }
+    else if (tag === "recipe") out.recipe = a === "1";
     else if (tag === "scripterr") out.error = `The sync script failed: ${a}`;
     else if (tag === "fetcherr") out.fetchError = a || "git fetch failed";
     else if (tag === "remote") out.remote = a ?? "";

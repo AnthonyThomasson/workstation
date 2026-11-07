@@ -1,5 +1,5 @@
-// The Settings section of the Details panel: repo path (with a folder picker on this computer), sync script and Save. With no repo yet it is shown first and open (details.js); after that it sits last, collapsed.
-//   ctx: { t, key, settings: { repo, script, open, forced, browse(cx), save(cx), toggle(cx) } } (see details.js)
+// The Settings section of the Details panel: repo path (with a folder picker on this computer) and Save. With no repo yet it is shown first and open (details.js); after that it sits last, collapsed.
+//   ctx: { t, key, settings: { repo, open, forced, browse(cx), save(cx), toggle(cx) } } (see details.js)
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Input } from "gpui-base";
 import { S, icon, stop, note, sectionLabel, primary, secondary } from "./ui.js";
@@ -21,6 +21,5 @@ export function renderSettings(ctx) {
     .when(s.open || s.forced, (el) => el
       .when(s.forced, (e) => e.child(note(t, "Choose the git repository that holds your Herdr config, and sync stays one click away.")))
       .child(field("Config repo", s.repo, key ? `The repo's path on ${key}.` : "The git repository that holds your Herdr config.", browse))
-      .child(field("Sync script", s.script, "Run from the repo folder with --push, --pull and --dry-run. Default ./sync.sh."))
       .child(h_flex().child(primary("save", "Save", t, (_e, cx) => s.save(cx)))));
 }
