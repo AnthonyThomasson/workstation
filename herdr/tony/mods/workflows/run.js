@@ -45,7 +45,7 @@ export class RunPage {
     const lead = orchestratorOf(all, this.orchestrator);
     if (cx) { this.advance(cx, workers, reviewers); this.startPolling(cx); }
     return v_flex().id("workflow-run").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
-      .child(this.renderHeader(t, lead, cx))
+      .child(this.renderHeader(t, lead, cx, workers))
       .when(needsYou > 0, (el) => el.child(h_flex().flex_none().px(16).py(8).border_b(1).border_color(t.border).text_size(S().secondary).text_color(t.blocked)
         .child(`${needsYou === 1 ? "An agent is" : `${needsYou} agents are`} waiting for you. Click to answer.`)))
       .child(div().id("workflow-run-agents").flex_1().min_h(0).overflow_y_scrollbar()
@@ -54,7 +54,7 @@ export class RunPage {
           .child(this.renderSection(t, "Reviewers", reviewers, "Reviewers start once the work is done."))));
   }
 
-  renderHeader(t, lead, cx) {
+  renderHeader(t, lead, cx, workers = []) {
     const ended = !lead?.live;
     const color = ended ? t.dim : statusColor(lead.status, t);
     const words = ended ? "Ended. Its agents ended with it, and the work stays on the branch." : `Orchestrator: ${statusLabel(lead.status)}`;
@@ -64,7 +64,7 @@ export class RunPage {
       .child(h_flex().gap(7).items_center().text_size(S().secondary).text_color(ended ? t.muted : t.foreground)
         .child(div().w(8).h(8).flex_none().rounded_full().bg(color))
         .child(div().min_w(0).truncate().child(words)))
-      .when(!ended || this.pr, (el) => el.child(this.renderActions(t, lead, cx)));
+      .when(!ended || this.pr, (el) => el.child(this.renderActions(t, lead, cx, workers)));
   }
 
   // The ticket follows the run: In Progress once a worker has started, In Review once a reviewer has. It never goes back.
@@ -106,19 +106,21 @@ export class RunPage {
     });
   }
 
-  renderActions(t, lead, cx) {
+  renderActions(t, lead, cx, workers = []) {
+    // Finish waits for the ticket to be in review and every worker to stop.
+    const canFinish = this.stage >= 2 && !workers.some((w) => w.live);
     const button = (id, label, onClick, on = true) => h_flex().id(id).h(26).px(10).items_center().rounded(6).text_size(S().secondary).font_medium()
       .when(on, (el) => el.cursor_pointer().bg(t.selected).hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click(onClick))
       .when(!on, (el) => el.text_color(t.muted)).child(label);
     const row = h_flex().gap(8).items_center().pt(4);
     if (this.strategy === "worktree") {
-      row.child(button("run-finish", this.busy === "finish" ? "Finishing…" : "Finish", (_e, cx) => this.finishWorktree(cx), !this.busy));
+      if (canFinish) row.child(button("run-finish", this.busy === "finish" ? "Finishing…" : "Finish", (_e, cx) => this.finishWorktree(cx), !this.busy));
     } else if (this.strategy === "branch") {
       if (!this.pr) row.child(button("run-pr", this.busy === "pr" ? "Creating PR…" : "Create PR", (_e, cx) => this.createPr(cx), !this.busy));
       else row.child(h_flex().id("run-pr-link").h(26).px(10).gap(6).items_center().rounded(6).cursor_pointer().bg(t.selected).hover((s) => s.bg(t.hover))
         .text_size(S().secondary).font_medium().on_mouse_down("left", stop).on_click((_e, cx) => cx.open_url(this.pr.url))
         .child(`PR #${this.pr.number}${this.pr.state === "MERGED" ? " · merged" : ""}`).child(icon("external", 12, t.muted)));
-      if (this.pr?.state === "MERGED") row.child(button("run-finish", this.busy === "finish" ? "Finishing…" : "Finish", (_e, cx) => this.finishBranch(cx), !this.busy));
+      if (canFinish && this.pr?.state === "MERGED") row.child(button("run-finish", this.busy === "finish" ? "Finishing…" : "Finish", (_e, cx) => this.finishBranch(cx), !this.busy));
     } else return div();
     return v_flex().gap(4).child(row).when(Boolean(this.error), (el) => el.child(div().text_size(S().secondary).text_color(t.blocked).child(this.error)));
   }
