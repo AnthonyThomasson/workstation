@@ -460,7 +460,11 @@ export default class Sync extends View {
     }[c.kind];
     const tint = c.kind === "conflict" || c.kind === "error" ? t.blocked : c.kind === "unset" || c.kind === "norepo" ? t.dim : on ? t.foreground : t.muted;
     const arrows = c.kind === "ok" ? b : { down: 0, up: 0 };
-    const glyph = icon("sync", 16, tint);
+    const counted = arrows.down > 0 || arrows.up > 0;
+    // With counts the icon shrinks to 12 px and sits bottom-left of the 34x30 hit area (x 3..15, y 15..27); the counts sit
+    // top-right (y 2..14, at most ~26 px wide even for "↓3 ↑5"), so the two never share a row of pixels.
+    const glyph = icon("sync", counted ? 12 : 16, tint);
+    const spinning = c.kind === "busy" ? glyph.spin(900) : glyph;
     return h_flex().size_full().pr(8).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border)
       .child(h_flex().id("sync-button").tooltip(tip).h(30).w(34).flex_none().items_center().justify_center().rounded(6)
         .bg(on ? t.selected : t.chrome).hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
@@ -468,11 +472,13 @@ export default class Sync extends View {
           if (on) run("layout.hide", { id: PANEL });
           else { showPanel(); channel.request({ op: "fetch", key }); } // opening fetches
         })
-        .child(div().relative().size(16).flex_none()
-          .child(c.kind === "busy" ? glyph.spin(900) : glyph)
-          .when(arrows.down > 0 || arrows.up > 0, (el) => el.child(h_flex().absolute().top(-6).right(-9).gap(2).text_size(9.5).font_semibold().text_color(t.working)
-            .when(arrows.down > 0, (e) => e.child(div().child(`↓${arrows.down}`)))
-            .when(arrows.up > 0, (e) => e.child(div().child(`↑${arrows.up}`)))))));
+        .child(counted
+          ? div().relative().size_full()
+            .child(div().absolute().left(3).bottom(3).size(12).flex_none().child(spinning))
+            .child(h_flex().absolute().top(2).right(2).gap(2).text_size(9.5).font_semibold().text_color(t.working)
+              .when(arrows.down > 0, (e) => e.child(div().child(`↓${arrows.down}`)))
+              .when(arrows.up > 0, (e) => e.child(div().child(`↑${arrows.up}`))))
+          : div().size(16).flex_none().child(spinning)));
   }
 
   // ================= A text dialog: one command's output (a Diff) =================
