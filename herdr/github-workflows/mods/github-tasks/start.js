@@ -14,11 +14,26 @@ const liveOrchestrator = (label, value) => terminals().find((k) => k.state === "
 // The live run's orchestrator for a ticket, or null. Start becomes View while one is going.
 export const liveRunFor = (repo, ticket) => liveOrchestrator(TICKET_LABEL, ticketKey(repo, ticket));
 
-// Brings a run's tab to the front.
-export function viewRun(running) {
-  const { "herdr.space": space, "herdr.tab": tab } = running.labels;
+// Brings a run's tab to the front with the run's own pane (the Workflows mod's list of its agents) beside the
+// orchestrator. The pane is opened again when it's gone: closed, or never made because that part of Start failed.
+// ticket and repo: what the run is for, to name the pane. Doesn't throw; a pane that can't open leaves the tab as it is.
+export async function viewRun(running, cx, { ticket, repo, project } = {}) {
+  const { "herdr.space": space, "herdr.tab": tab, [RUN_LABEL]: id, [FOLDER_LABEL]: folder } = running.labels;
   if (space) run("space.select", { id: space });
   if (tab) run("tab.select", { id: tab });
+  if (!tab || !id || panes().some((p) => p.tab === tab && p.mod === "workflows")) return;
+  try {
+    const pane = panes().find((p) => p.terminal === running.address)?.pane;
+    if (!pane) return;
+    await app("pane.split", {
+      pane, direction: "right", mod: "workflows",
+      props: {
+        role: "run", id, orchestrator: running.address, title: ticketName(ticket), workflow: "", branch: branchName(ticket), folder: folder ?? "",
+        ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null }, projectId: project?.id ?? null,
+      },
+    });
+    run("pane.focus", { pane });
+  } catch { /* the tab is showing; only the list of agents is missing */ }
 }
 
 // One app command, waited for, with what it made ({ tab, terminal, pane, ... }).
@@ -116,7 +131,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   const key = ticketKey(repo, ticket);
   const running = liveOrchestrator(TICKET_LABEL, key);
   if (running) {
-    viewRun(running);
+    await viewRun(running, cx, { ticket, repo, project: board.project });
     return { resumed: true };
   }
 

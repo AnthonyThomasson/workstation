@@ -422,7 +422,7 @@ export default class GitHubTasks extends View {
       .child(div().w(8).h(8).flex_none().rounded_full().when(ticket.draft, (el) => el.border(1.5).border_color(color)).when(!ticket.draft, (el) => el.bg(color)))
       .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(ticket.title, max)))
       .when(Boolean(ticket.url), (el) => el.child(iconButton(`open-${ticket.key}`, "external", t, (_e, cx) => cx.open_url(ticket.url), false, "Open on GitHub")))
-      .when(Boolean(running), (el) => el.child(iconButton(`view-${ticket.key}`, "eye", t, () => viewRun(running), false, "View the running agent")))
+      .when(Boolean(running), (el) => el.child(iconButton(`view-${ticket.key}`, "eye", t, (_e, cx) => viewRun(running, cx, { ticket, repo: this.repo, project: this.project }), false, "View the running agent")))
       .when(!running, (el) => el.child(iconButton(`start-${ticket.key}`, busy ? "ring" : "play", t, (_e, cx) => this.startTicket(ticket, cx), busy, "Start")));
   }
 }
