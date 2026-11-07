@@ -10,3 +10,4 @@ herdr-app/mods/skillshare/gpui-kit.d.ts
 herdr-app/mods/skillshare/jsconfig.json
 *.d.ts
 jsconfig.json
+skillshare/skills/skillshare/

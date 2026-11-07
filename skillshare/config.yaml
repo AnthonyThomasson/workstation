@@ -16,27 +16,12 @@ targets:
   claude:
     skills:
       path: ~/.claude/skills
-  copilot:
-    skills:
-      path: ~/.copilot/skills
-  cursor:
-    skills:
-      path: ~/.cursor/skills
   devin:
     skills:
       path: ~/.config/devin/skills
-  gemini:
-    skills:
-      path: ~/.gemini/skills
   hermes:
     skills:
       path: ~/.hermes/skills
-  kimi-code:
-    skills:
-      path: ~/.kimi-code/skills
-  opencode:
-    skills:
-      path: ~/.config/opencode/skills
   universal:
     skills:
       path: ~/.agents/skills
