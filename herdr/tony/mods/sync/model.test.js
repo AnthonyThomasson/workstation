@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULTS, normalizeSettings, settingsFor, parseCheck, parseOutcome, changedFiles, badge, viewState,
-  commitMessage, conflictBrief, resolved, plural, shortError, ago,
+  commitMessage, conflictBrief, resolved, plural, shortError, ago, pushBlocked, withSaved,
 } from "./model.js";
 
 test("settings default to ./mount.sh and Claude Code, with no repo", () => {
@@ -149,6 +149,26 @@ test("the brief for the conflict agent names every file and both sides", () => {
   const copy = conflictBrief({ repo: "/r", script: "./mount.sh", kind: "copy", files: [{ path: "herdr/a.js", remote: "", local: "", saved: ".sync-backup/conflict-1/herdr/herdr/a.js" }] });
   assert.match(copy, /uncommitted/);
   assert.match(copy, /\.sync-backup\/conflict-1/);
+  assert.doesNotMatch(copy, /Nothing was copied/, "the files that did not clash were copied");
+  assert.match(copy, /repo's version was kept/);
+});
+
+test("repo files newer than Herdr are kept apart from Herdr changes, block Push and are not in ↑", () => {
+  const s = parseCheck("@top\t/r\n@herdr\tmods/a/main.js\n@newer\tmods/b/main.js\n@newer\tmods/c/main.js\n@end\n");
+  assert.deepEqual(s.herdr, ["mods/a/main.js"]);
+  assert.deepEqual(s.repoNewer, ["mods/b/main.js", "mods/c/main.js"]);
+  assert.equal(badge(s).up, 1);
+  assert.equal(pushBlocked(s), true);
+  assert.equal(pushBlocked(parseCheck("@top\t/r\n@end\n")), false);
+  assert.equal(pushBlocked(null), false);
+});
+
+test("a copy conflict names where Herdr's version of each file was saved", () => {
+  const files = withSaved([{ path: "herdr/a.js" }, { path: "b c.js" }], ".sync-backup/conflict-1");
+  assert.equal(files[0].saved, ".sync-backup/conflict-1/herdr/herdr/a.js");
+  assert.equal(files[1].saved, ".sync-backup/conflict-1/herdr/b c.js");
+  assert.deepEqual(withSaved([{ path: "x" }], null), [{ path: "x" }]);
+  assert.match(conflictBrief({ repo: "/r", script: "./mount.sh", kind: "copy", files }), /Herdr's version is saved at \.sync-backup\/conflict-1\/herdr\/herdr\/a\.js/);
 });
 
 test("small helpers", () => {

@@ -20,10 +20,11 @@ export const shortError = (text) => String(text ?? "").split("\n").map((l) => l.
 
 // ---- What the check script prints ----
 // Lines starting with @ are ours: @top, @host, @branch <name> <upstream>, @behind/@ahead <hash> <subject>,
-// @file <XY> <path>, @inprogress <rebase|merge>, @herdr <path>, @noscript, @norepo, @end. Other lines (the sync
+// @file <XY> <path>, @inprogress <rebase|merge>, @herdr <path> (the sync script would copy it to the repo), @newer <path> (it would copy it to Herdr: the repo is
+// newer), @noscript, @norepo, @end. Other lines (the sync
 // script's own output) are ignored here.
 export function parseCheck(text) {
-  const out = { repo: true, top: null, host: "", branch: null, upstream: null, behind: [], unpushed: [], uncommitted: [], unmerged: [], inProgress: null, herdr: [], error: null };
+  const out = { repo: true, top: null, host: "", branch: null, upstream: null, behind: [], unpushed: [], uncommitted: [], unmerged: [], inProgress: null, herdr: [], repoNewer: [], error: null };
   let any = false;
   for (const line of String(text ?? "").split("\n")) {
     if (!line.startsWith("@")) continue;
@@ -41,6 +42,7 @@ export function parseCheck(text) {
       if (/^(DD|AU|UD|UA|DU|AA|UU)$/.test(a)) out.unmerged.push(b);
     } else if (tag === "inprogress") out.inProgress = a || "rebase";
     else if (tag === "herdr") out.herdr.push(a);
+    else if (tag === "newer") out.repoNewer.push(a);
     else if (tag === "noscript") out.error = `The sync script ${a} was not found in the repo`;
     else if (tag === "scripterr") out.error = `The sync script failed: ${a}`;
     else if (tag === "fetcherr") out.fetchError = a || "git fetch failed";
@@ -75,8 +77,9 @@ export function parseOutcome(text) {
 // are the same file when the repo's path ends with the Herdr one.
 const sameFile = (herdrPath, repoPath) => repoPath === herdrPath || repoPath.endsWith(`/${herdrPath}`);
 
-// Files the next push commits: what the sync script would copy from Herdr, plus what is already
-// uncommitted in the repo (skills included), each file once.
+// Files the next push commits: what the sync script's two-way run would copy from Herdr to the repo, plus
+// what is already uncommitted in the repo (skills included), each file once. Files the repo has newer than
+// Herdr are not Herdr changes and are only counted when they are uncommitted.
 export function changedFiles(state) {
   const files = [], herdr = state?.herdr ?? [];
   for (const path of herdr) files.push({ path, where: "herdr", code: "M" });
@@ -86,6 +89,10 @@ export function changedFiles(state) {
   }
   return files;
 }
+
+// Push is blocked while the repo has files newer than Herdr's copies: copying Herdr over them would revert them.
+export const pushBlocked = (state) => (state?.repoNewer?.length ?? 0) > 0;
+export const PULL_FIRST = "Pull first: the repo has newer files than Herdr";
 
 // { down, up, text }: ↓ commits the repo is behind its remote, ↑ files changed; no text at zero.
 export function badge(state) {
@@ -104,6 +111,9 @@ export function resolved(state, conflict) {
   if (conflict?.kind === "copy") return !state.uncommitted?.some((f) => (conflict.files ?? []).some((c) => c.path === f.path));
   return true;
 }
+
+// Where Herdr's copy of a conflicting file was saved (a copy conflict): per file, so the brief can name it.
+export const withSaved = (files, saved) => (files ?? []).map((f) => (saved ? { ...f, saved: `${saved}/herdr/${f.path}` } : f));
 
 // "just now", "5 min ago", "2 h ago"; "" when never.
 export function ago(at, now = Date.now()) {
@@ -155,7 +165,7 @@ export function conflictBrief({ repo, script, kind, files, target }) {
     ].join("\n");
   }
   const how = kind === "copy"
-    ? `Nothing was copied or pushed. Compare the two versions of each file with me and keep what we both want in the repo working tree, then run ${script} --pull again (Herdr to repo), commit, \`git pull --rebase\` and \`git push\`.`
+    ? `Nothing was committed or pushed. The files Herdr changed that did not clash were copied into the repo working tree and are uncommitted. For each file listed, the repo's version was kept. Compare the two versions with me and keep what we both want in the repo working tree, then run ${script} --pull again (Herdr to repo), commit, \`git pull --rebase\` and \`git push\`.`
     : `The push was stopped and the rebase undone, so nothing was pushed and the repo is as it was before. Run \`git pull --rebase\`, resolve each conflicted file with me keeping what both sides meant, \`git rebase --continue\`, then \`${script} --push\` so Herdr's config matches the repo, and \`git push\`.`;
   return [
     `Sync hit a conflict in the repo at ${repo}.`,

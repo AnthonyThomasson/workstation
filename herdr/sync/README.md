@@ -5,7 +5,7 @@ Keeps Herdr's config folder (`~/.config/herdr-app`) and your config repo in step
 The button shows a badge:
 
 - `↓N` commits the repo is behind its remote
-- `↑M` files changed in Herdr's config that are not in the repo yet, plus anything uncommitted in the repo (skills included)
+- `↑M` files changed in Herdr's config that are not in the repo yet (the files the sync script's two-way dry run would copy to the repo), plus anything uncommitted in the repo (skills included)
 
 No badge means both are zero. The button follows the shown space's machine and uses that machine's settings.
 
@@ -15,8 +15,8 @@ Click the button.
 
 | Row | Button | What it does |
 | --- | --- | --- |
-| Behind by N commits (expands to list them) | **Pull** | `git pull --rebase`, then the sync script with `--push` (the repo wins; the script backs up any Herdr file it overwrites), then `skillshare sync --all -g` if skillshare is installed. |
-| N files changed in Herdr (expands to list the files, with an editable commit message and "N commits not pushed") | **Push** | The sync script with `--pull`, commit everything, `git pull --rebase`, push to the branch's upstream. If the rebase brought in remote commits, the sync script runs with `--push` afterwards so Herdr matches. |
+| Behind by N commits, or N repo files newer than Herdr (expands to list them) | **Pull** | `git pull --rebase` (only when behind; if an uncommitted edit clashes with the pulled commits the pull is undone and the repo is left as it was), then the sync script with `--push` (the repo wins; the script backs up any Herdr file it overwrites), then `skillshare sync --all -g` if skillshare is installed. |
+| N files changed in Herdr (expands to list the files, with an editable commit message and "N commits not pushed") | **Push** | Refused ("Pull first: the repo has newer files than Herdr") while the sync script's two-way dry run would copy any file to Herdr, because the copy would revert those repo files. Otherwise: the sync script with `--pull`, commit everything, `git pull --rebase`, push to the branch's upstream. If the rebase brought in remote commits, the sync script runs with `--push` afterwards so Herdr matches. |
 | Skillshare: N need sync | **Sync targets** | `skillshare sync --all` and `skillshare sync plugins`, for global and project scope. |
 
 `Details…` opens a tab with Targets, Source, Machines and Conflicts. The gear opens the settings dialog.
@@ -28,7 +28,7 @@ Click the button.
 - **Machines**: a card for this computer and each Herdr machine: skillshare version (an "update" pill, or "skillshare not found"), the source's git state, target count, "Needs sync" count, doctor errors and warnings, "Checked N ago". The cards refresh every 60 seconds while the tab is shown. **Pull and sync** pulls that machine's own source repo, or else its config repo, or else just links the targets. **Update to <version>** asks first, then runs `skillshare upgrade --cli --force` there.
 - **Conflicts**: see below.
 
-`git fetch` runs every 5 minutes and whenever the popover opens. The local check, the sync script's `--pull --dry-run` plus `git status`, runs every 20 seconds.
+`git fetch` runs every 5 minutes and whenever the popover opens. The local check, the sync script's two-way `--dry-run` plus `git status`, runs every 20 seconds. Files the dry run would copy to the repo are Herdr changes (↑); files it would copy to Herdr are "repo newer than Herdr" (a `git pull` in a terminal, an agent's commit, an edit made in the repo): they don't count toward ↑ and they block Push until Pull has applied them.
 
 ## Conflicts
 
@@ -38,7 +38,7 @@ When a push's rebase, or its copy of Herdr's files, meets a conflict, sync undoe
 
 A pull of the skillshare source, and a repo Pull or Push that hit a conflict, stop with nothing changed. Details, Conflicts shows both sides of each conflicting file (the lines the other side lacks are marked) and a **Keep this** button per side, plus **Keep all local** and **Keep all remote**. `.metadata.json` is merged entry by entry without asking: an entry changed on one side takes that side; changed on both, the later `installed_at` wins and an edit beats a delete. **Apply choices** replays the merge, takes the chosen side of each file and commits it; then the targets are linked again (source), or the sync script runs with `--push` and, for a stopped Push, the merge is pushed (repo). Before applying, sync fetches again: if the remote moved since you looked, or other files conflict now, nothing is applied and you are asked again. **Hand it to the agent** opens the conflict agent instead, with a brief naming each file.
 
-A copy conflict means Herdr's copy of a file would overwrite an uncommitted edit in the repo. The repo's edit is put back and Herdr's version is saved under `.sync-backup/conflict-<time>/herdr/` in the repo (sync adds `.sync-backup/` to the repo's `.git/info/exclude`).
+A copy conflict means Herdr's copy of a file would overwrite an uncommitted edit in the repo. The repo's edit is put back and Herdr's version is saved under `.sync-backup/conflict-<time>/herdr/` in the repo. Herdr's other files were copied into the repo but not committed. Sync never commits or lists `.sync-backup/` (it leaves the repo's own ignore files alone).
 
 ## Settings
 
@@ -47,10 +47,10 @@ Per machine: this computer, and each machine from `hc machine ls`. The dialog ed
 | Setting | Default |
 | --- | --- |
 | Config repo (folder path on that machine; this computer has a Browse button) | empty; the button reads "Set up" |
-| Sync script, relative to the repo | `./mount.sh` |
+| Sync script: a path, relative to the repo (`mount.sh` and `./mount.sh` are the same), absolute or `~/…`; spaces are fine, arguments are not | `./mount.sh` |
 | Agent for conflicts (an installed agent from Herdr's list) | Claude Code |
 
-The sync script must take `--push` (repo to Herdr), `--pull` (Herdr to repo) and `--dry-run`, and print `to repo: <path>` or `to repo (new): <path>` for each file a `--pull` would copy. This repo's `mount.sh` does.
+The sync script must take `--push` (repo to Herdr), `--pull` (Herdr to repo) and `--dry-run`, and, with `--dry-run` alone, print `to repo: <path>` or `to repo (new): <path>` for each file it would copy to the repo and `to Herdr: <path>` or `to Herdr (new): <path>` for each file it would copy to Herdr. This repo's `mount.sh` does.
 
 ## Files
 

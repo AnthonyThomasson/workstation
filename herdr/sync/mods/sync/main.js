@@ -13,7 +13,7 @@ import {
   props as blockProps,
 } from "herdr";
 import {
-  settingsFor, normalizeSettings, badge, changedFiles, viewState, resolved, commitMessage, conflictBrief,
+  settingsFor, normalizeSettings, badge, changedFiles, pushBlocked, PULL_FIRST, withSaved, viewState, resolved, commitMessage, conflictBrief,
   plural, ago, DEFAULTS, sourceCommitMessage,
 } from "./model.js";
 import { checkRepo, pull, push, finishMerge, PATHS } from "./ops.js";
@@ -112,7 +112,7 @@ export default class Sync extends View {
   // ================= The button: polls, runs the work the other views ask for =================
 
   initButton(cx) {
-    this.key = null; this.tokens = {}; this.nextRequest = channel.listen();
+    this.key = null; this.tokens = {}; this.fetching = {}; this.nextRequest = channel.listen();
     cx.timer.every(CHECK_EVERY, (cx) => this.check(cx));
     cx.timer.every(FETCH_EVERY, (cx) => this.check(cx, { fetch: true }));
     cx.timer.every(TARGETS_EVERY, (cx) => this.readTargets(cx, activeKey()));
@@ -163,20 +163,27 @@ export default class Sync extends View {
     });
   }
 
-  // Reads the shown machine's repo (with a git fetch when asked). A newer read wins over an older one.
+  // Reads the shown machine's repo (with a git fetch when asked). A newer read wins over an older one, but a
+  // plain 20 s check never replaces a fetch that is still running: it waits for the next tick instead.
   check(cx, { fetch = false } = {}) {
     const key = activeKey(), c = context(key);
     if (!c.cfg.repo || channel.busyAt(c.on)) return Promise.resolve();
+    if (!fetch && this.fetching[key]) return Promise.resolve();
     const token = this.tokens[key] = (this.tokens[key] ?? 0) + 1;
+    if (fetch) this.fetching[key] = token;
     return cx.spawn(async (cx) => {
-      const prev = c.state, at = Date.now();
-      const state = await checkRepo(repoIO(cx, c.on), c.cfg, { fetch });
-      if (token !== this.tokens[key] || channel.busyAt(c.on)) return;
-      state.fetchedAt = fetch && !state.fetchError ? at : prev?.fetchedAt ?? null;
-      if (!sameState(prev, state)) setIn(STATE, key, state);
-      const conflict = obj(shared(CONFLICT))[key];
-      if (conflict && state.repo && !state.error && resolved(state, conflict)) { dropIn(CONFLICT, key); if (obj(shared(STOPPED))[key]?.target === "repo") dropIn(STOPPED, key); }
-      cx.notify();
+      try {
+        const prev = c.state, at = Date.now();
+        const state = await checkRepo(repoIO(cx, c.on), c.cfg, { fetch });
+        if (token !== this.tokens[key] || channel.busyAt(c.on)) return;
+        state.fetchedAt = fetch && !state.fetchError ? at : obj(shared(STATE))[key]?.fetchedAt ?? prev?.fetchedAt ?? null;
+        if (!sameState(prev, state)) setIn(STATE, key, state);
+        const conflict = obj(shared(CONFLICT))[key];
+        if (conflict && state.repo && !state.error && resolved(state, conflict)) { dropIn(CONFLICT, key); if (obj(shared(STOPPED))[key]?.target === "repo") dropIn(STOPPED, key); }
+      } finally {
+        if (this.fetching[key] === token) this.fetching[key] = 0;
+        cx.notify();
+      }
     });
   }
 
@@ -362,7 +369,9 @@ export default class Sync extends View {
       return;
     }
     if (out.result === "conflict") {
-      const conflict = { kind: out.extra.kind ?? "rebase", files: out.files, saved: out.extra.saved ?? null, at: Date.now() };
+      const kind = out.extra.kind ?? "rebase";
+      // A copy conflict names where Herdr's version of each file was saved, for the agent's brief.
+      const conflict = { kind, files: kind === "copy" ? withSaved(out.files, out.extra.saved) : out.files, saved: out.extra.saved ?? null, at: Date.now() };
       setIn(CONFLICT, key, conflict);
       if (conflict.kind === "rebase" && conflict.files.length) {
         // Both sides of each file, so Details can offer a choice per file as well as the agent.
@@ -453,7 +462,8 @@ export default class Sync extends View {
   renderPopover(cx) {
     const t = theme(), c = context(this.key), st = c.state, p = blockProps() ?? {};
     const close = () => closeOverlay(p.overlay);
-    const files = st?.repo ? changedFiles(st) : [], behind = st?.behind ?? [], unpushed = st?.unpushed ?? [];
+    const files = st?.repo ? changedFiles(st) : [], behind = st?.behind ?? [], unpushed = st?.unpushed ?? [], newer = st?.repo ? st.repoNewer ?? [] : [];
+    const blocked = pushBlocked(st);
     const ready = c.kind === "ok", working = Boolean(c.busy);
     // The default commit message follows the file count until the person edits it.
     const auto = commitMessage(files.length, st?.host);
@@ -488,22 +498,29 @@ export default class Sync extends View {
       }
       if (working) body.child(h_flex().flex_none().gap(8).px(14).py(10).items_center().border_b(1).border_color(t.border).text_size(S().secondary).text_color(t.working)
         .child(icon("ring", 13, t.working).spin(900)).child(c.busy));
-      // 1. Pull
+      // 1. Pull (also the way to bring the repo's newer files into Herdr)
+      const pullTitle = behind.length ? `Behind by ${plural(behind.length, "commit")}` : newer.length ? `${plural(newer.length, "repo file")} newer than Herdr` : "Up to date with the remote";
+      const pullSub = behind.length ? `from ${st.upstream ?? "the remote"}${newer.length ? ` · ${plural(newer.length, "repo file")} newer than Herdr` : ""}`
+        : newer.length ? "Pull to update Herdr from the repo"
+        : st.fetchError ? `Could not fetch: ${st.fetchError}` : `Fetched ${ago(st.fetchedAt) || "not yet"}`;
+      const pullOpen = this.openCommits && (behind.length > 0 || newer.length > 0);
       body.child(this.rowFrame(t, "pull",
-        this.toggleHead(t, "pull-head", behind.length ? `Behind by ${plural(behind.length, "commit")}` : "Up to date with the remote",
-          behind.length ? "from " + (st.upstream ?? "the remote") : st.fetchError ? `Could not fetch: ${st.fetchError}` : `Fetched ${ago(st.fetchedAt) || "not yet"}`,
-          this.openCommits && behind.length > 0, () => { this.openCommits = !this.openCommits; cx.notify(); }),
-        behind.length && ready && !working ? primary("pull-button", "Pull", t, req("pull")) : disabledButton("pull-off", "Pull", t),
-        this.openCommits && behind.length > 0 ? v_flex().gap(2).pl(20).children(behind.slice(0, 50).map((cm, i) =>
-          h_flex().id(`commit-${i}`).gap(8).text_size(S().secondary)
-            .child(div().flex_none().w(56).text_color(t.muted).child(cm.hash)).child(div().flex_1().min_w(0).truncate().child(cm.subject)))) : null));
+        this.toggleHead(t, "pull-head", pullTitle, pullSub, pullOpen, () => { this.openCommits = !this.openCommits; cx.notify(); }),
+        (behind.length || newer.length) && ready && !working ? primary("pull-button", "Pull", t, req("pull")) : disabledButton("pull-off", "Pull", t),
+        pullOpen ? v_flex().gap(2).pl(20)
+          .children(behind.slice(0, 50).map((cm, i) =>
+            h_flex().id(`commit-${i}`).gap(8).text_size(S().secondary)
+              .child(div().flex_none().w(56).text_color(t.muted).child(cm.hash)).child(div().flex_1().min_w(0).truncate().child(cm.subject))))
+          .children(newer.slice(0, 50).map((f, i) =>
+            h_flex().id(`newer-${i}`).gap(8).text_size(S().secondary)
+              .child(div().flex_1().min_w(0).truncate().child(f)).child(div().flex_none().text_color(t.dim).child("repo newer")))) : null));
       // 2. Push
       const n = files.length;
       body.child(this.rowFrame(t, "push",
         this.toggleHead(t, "push-head", n ? `${plural(n, "file")} changed in Herdr` : "No files changed in Herdr",
-          unpushed.length ? `${plural(unpushed.length, "commit")} not pushed` : null,
+          blocked ? PULL_FIRST : unpushed.length ? `${plural(unpushed.length, "commit")} not pushed` : null,
           this.openFiles && n > 0, () => { this.openFiles = !this.openFiles; cx.notify(); }),
-        (n || unpushed.length) && ready && !working ? primary("push-button", "Push", t, req("push")) : disabledButton("push-off", "Push", t),
+        (n || unpushed.length) && ready && !working && !blocked ? primary("push-button", "Push", t, req("push")) : disabledButton("push-off", "Push", t),
         [this.openFiles && n > 0 ? v_flex().gap(2).pl(20).children(files.slice(0, 100).map((f, i) =>
           h_flex().id(`file-${i}`).gap(8).text_size(S().secondary)
             .child(div().flex_none().w(14).text_color(f.code === "D" ? t.ansi1 : f.code === "??" || f.code === "A" ? t.ansi2 : t.muted).child(f.code === "??" ? "+" : f.code))

@@ -24,20 +24,38 @@ branch=$(git symbolic-ref --short -q HEAD || true)
 up=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
 tmp=$(mktemp -d "\${TMPDIR:-/tmp}/sync.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
-first=\${script%% *}
+tab=$(printf '\\t')
+# The sync script is a path: absolute, ~/..., or relative to the repo (./mount.sh and mount.sh are the same). It is
+# always quoted, so a path with spaces works and the setting is never split into words.
+case "$script" in
+  "~/"*) sp=$HOME/\${script#"~/"} ;;
+  /*|./*|../*) sp=$script ;;
+  *) sp=./$script ;;
+esac
 script_missing=0
-case "$first" in ./*|/*) [ -f "$first" ] || script_missing=1 ;; esac
-# Our own backups must never be committed.
-exclude=$(git rev-parse --git-path info/exclude 2>/dev/null || true)
-if [ -n "$exclude" ] && ! grep -qxF '.sync-backup/' "$exclude" 2>/dev/null; then
-  mkdir -p "$(dirname "$exclude")"; printf '.sync-backup/\\n' >> "$exclude"
-fi
+[ -f "$sp" ] || script_missing=1
+# Paths git prints, one "XY<TAB>path" per line, unquoted (-z), without our own backups.
+status_lines() {
+  git status --porcelain=v1 -z --untracked-files=all -- . ':(exclude).sync-backup' 2>/dev/null | tr '\\0' '\\n' | awk '
+    skip { skip = 0; next }
+    length($0) < 4 { next }
+    { xy = substr($0, 1, 2); if (xy ~ /[RC]/) skip = 1; printf "%s\\t%s\\n", xy, substr($0, 4) }'
+}
+# The unmerged files, one per line (-z, so spaces and non-ASCII names come out as they are).
+unmerged() { git diff --name-only -z --diff-filter=U 2>/dev/null | tr '\\0' '\\n'; }
+# The sync script's two-way dry run: which files it would copy which way. Prints "@herdr <path>" for each file it
+# would copy to the repo (Herdr changed it) and "@newer <path>" for each it would copy to Herdr (the repo is newer).
+two_way() {
+  "$sp" --dry-run >"$tmp/dry" 2>&1 || return 1
+  awk '/^to repo( \\(new\\))?: /{ sub(/^to repo( \\(new\\))?: /, ""); printf "@herdr\\t%s\\n", $0 }
+       /^to Herdr( \\(new\\))?: /{ sub(/^to Herdr( \\(new\\))?: /, ""); printf "@newer\\t%s\\n", $0 }' "$tmp/dry"
+}
 fail() { printf '@msg\\t%s\\n@result\\terror\\n' "$1"; exit 0; }
 # The files both sides changed, then undo the half-done rebase so nothing is left behind.
 # Needs $mb (merge base), $up and $tip (our tip before the rebase).
 conflict_report() {
   printf '@result\\tconflict\\n'
-  git diff --name-only --diff-filter=U | while IFS= read -r f; do
+  unmerged | while IFS= read -r f; do
     r=$(git log --format=%s "$mb".."$up" -- "$f" 2>/dev/null | paste -sd ';' - || true)
     l=$(git log --format=%s "$mb".."$tip" -- "$f" 2>/dev/null | paste -sd ';' - || true)
     printf '@conflict\\t%s\\t%s\\t%s\\n' "$f" "$r" "$l"
@@ -47,8 +65,10 @@ conflict_report() {
 }
 `;
 
-// The repo's state and what the sync script would copy from Herdr. $3 = 1: git fetch first.
+// The repo's state and what the sync script would copy either way (its two-way dry run). $3 = 1: git fetch first.
+// GIT_OPTIONAL_LOCKS=0: this runs every 20 s and must never take the index lock from the person's own git.
 export const CHECK = `${PRELUDE}
+GIT_OPTIONAL_LOCKS=0; export GIT_OPTIONAL_LOCKS
 if [ "$3" = 1 ] && [ -n "$up" ]; then
   git fetch --quiet >"$tmp/fetch" 2>&1 || printf '@fetcherr\\t%s\\n' "$(tail -n 1 "$tmp/fetch")"
 fi
@@ -60,20 +80,16 @@ if [ -n "$up" ]; then
   git log --format='@ahead%x09%h%x09%s' -n 200 "$up"..HEAD 2>/dev/null || true
 fi
 [ -z "$inprog" ] || printf '@inprogress\\t%s\\n' "$inprog"
-git status --porcelain=v1 --untracked-files=all 2>/dev/null | while IFS= read -r l; do
-  printf '@file\\t%s\\t%s\\n' "$(printf %s "$l" | cut -c1-2)" "$(printf %s "$l" | cut -c4-)"
-done
+status_lines | while IFS="$tab" read -r xy f; do printf '@file\\t%s\\t%s\\n' "$xy" "$f"; done
 if [ "$script_missing" = 1 ]; then printf '@noscript\\t%s\\n' "$script"
-else
-  if $script --pull --dry-run >"$tmp/dry" 2>&1; then
-    awk '/^to repo( \\(new\\))?: /{ sub(/^to repo( \\(new\\))?: /, ""); printf "@herdr\\t%s\\n", $0 }' "$tmp/dry"
-  else printf '@scripterr\\t%s\\n' "$(tail -n 1 "$tmp/dry")"; fi
+elif ! two_way; then printf '@scripterr\\t%s\\n' "$(tail -n 1 "$tmp/dry")"
 fi
 printf '@end\\n'
 `;
 
 // Pull the remote's commits, then make Herdr match the repo (the repo wins; the script backs up what it
 // overwrites). Linking skillshare's targets again is a separate step (targets-ops.js), done by main.js.
+// A pull that stops (a clash with an uncommitted edit, a failed git command) leaves the repo as it was.
 export const PULL = `${PRELUDE}
 [ "$script_missing" = 0 ] || fail "The sync script $script was not found in the repo"
 [ -z "$inprog" ] || fail "A rebase or merge is already in progress in the repo"
@@ -83,36 +99,53 @@ n=$(git rev-list --count HEAD.."$up")
 mb=$(git merge-base HEAD "$up" 2>/dev/null || true)
 tip=$(git rev-parse HEAD)
 if [ "$n" -gt 0 ]; then
+  stash0=$(git rev-parse -q --verify refs/stash || true)
   if ! git pull --rebase --autostash --quiet >"$tmp/out" 2>&1; then
-    conflict_report
-    exit 0
+    # Only a rebase that stopped on conflicting files is a conflict; anything else is an error.
+    if [ -n "$(unmerged)" ]; then conflict_report; exit 0; fi
+    git rebase --abort >/dev/null 2>&1 || true
+    fail "git pull failed: $(tail -n 1 "$tmp/out")"
   fi
-  if git diff --name-only --diff-filter=U | grep -q .; then
-    git diff --name-only --diff-filter=U | while IFS= read -r f; do printf '@conflict\\t%s\\t\\t\\n' "$f"; done
-    printf '@msg\\tYour uncommitted changes conflict with the pulled commits.\\n@result\\tconflict\\n'
+  stash1=$(git rev-parse -q --verify refs/stash || true)
+  if [ -n "$(unmerged)" ] || [ "$stash0" != "$stash1" ]; then
+    # The rebase finished but putting the uncommitted edits back clashed with the pulled commits. The edits are in
+    # the stash entry git kept. Go back to where we were, bring the edits back cleanly, drop the entry.
+    unmerged > "$tmp/clash"
+    git reset -q --hard "$tip" >/dev/null 2>&1
+    if git stash apply --index --quiet >/dev/null 2>&1 || git stash apply --quiet >/dev/null 2>&1; then
+      git stash drop -q >/dev/null 2>&1
+      printf '@msg\\tPull stopped: an uncommitted edit clashes with the remote (%s). Nothing changed.\\n@result\\terror\\n' "$(paste -sd ',' "$tmp/clash" | sed 's/,/, /g')"
+    else
+      printf '@msg\\tPull stopped: an uncommitted edit clashes with the remote, and git could not put it back. It is saved in the stash (git stash list).\\n@result\\terror\\n'
+    fi
     exit 0
   fi
 fi
-$script --push >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
+"$sp" --push >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
 copied=$(grep '^copied:' "$tmp/mount" | tail -n 1 || true)
 printf '@pulled\\t%s\\n@copied\\t%s\\n' "$n" "$copied"
-printf '@msg\\tPulled %s commit(s) and updated Herdr\\n@result\\tok\\n' "$n"
+if [ "$n" -gt 0 ]; then printf '@msg\\tPulled %s commit(s) and updated Herdr\\n@result\\tok\\n' "$n"
+else printf '@msg\\tUpdated Herdr from the repo\\n@result\\tok\\n'; fi
 `;
 
 // Copy Herdr's changes into the repo, commit everything ($3 is the message), put our commits on top of
-// the remote's and push to the upstream branch. A conflict undoes the rebase and pushes nothing.
+// the remote's and push to the upstream branch. A conflict undoes the rebase and pushes nothing. Push
+// refuses while the repo has files newer than Herdr's copies: the copy would revert them.
 export const PUSH = `${PRELUDE}
 msg=$3
 [ "$script_missing" = 0 ] || fail "The sync script $script was not found in the repo"
 [ -z "$inprog" ] || fail "A rebase or merge is already in progress in the repo"
 [ -n "$up" ] || fail "This branch has no remote branch to push to"
-git status --porcelain=v1 --untracked-files=all | while IFS= read -r l; do
-  case "$l" in D*|" D"*|*"->"*) continue ;; esac
-  f=$(printf %s "$l" | cut -c4-)
+two_way > "$tmp/two" || fail "The sync script failed: $(tail -n 1 "$tmp/dry")"
+if grep -q '^@newer' "$tmp/two"; then
+  fail "Pull first: the repo has newer files than Herdr ($(grep '^@newer' "$tmp/two" | cut -f2 | head -n 3 | paste -sd ',' - | sed 's/,/, /g'))"
+fi
+status_lines | while IFS="$tab" read -r xy f; do
+  case "$xy" in D?|?D) continue ;; esac
   [ -f "$f" ] || continue
   mkdir -p "$tmp/pre/$(dirname "$f")"; cp -p "$f" "$tmp/pre/$f"
 done
-$script --pull >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
+"$sp" --pull >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
 # The copy must not overwrite an uncommitted edit made in the repo. Tony's copies are regenerated, so skip them.
 if [ -d "$tmp/pre" ]; then
   (cd "$tmp/pre" && find . -type f | sed 's|^\\./||') | while IFS= read -r f; do
@@ -131,11 +164,11 @@ if [ -d "$tmp/pre" ]; then
       printf '@conflict\\t%s\\t\\t\\n' "$f"
     done < "$tmp/clash"
     printf '@saved\\t%s\\n@kind\\tcopy\\n' "$saved"
-    printf '@msg\\tHerdr and the repo both changed the same files. Nothing was pushed.\\n'
+    printf '@msg\\tHerdr and the repo both changed the same files. The repo versions were kept and Herdr versions saved; nothing was committed or pushed.\\n'
     exit 0
   fi
 fi
-git add -A
+git add -A -- . ':(exclude).sync-backup'
 if ! git diff --cached --quiet; then
   git commit -q -m "$msg" >"$tmp/out" 2>&1 || fail "git commit failed: $(tail -n 1 "$tmp/out")"
 fi
@@ -145,11 +178,16 @@ mb=$(git merge-base HEAD "$up" 2>/dev/null || true)
 tip=$(git rev-parse HEAD)
 if [ "$n" -gt 0 ]; then
   if ! git pull --rebase --quiet >"$tmp/out" 2>&1; then
-    conflict_report
-    printf '@kind\\trebase\\n'
-    exit 0
+    # Only a rebase that stopped on conflicting files is a conflict; anything else is an error.
+    if [ -n "$(unmerged)" ]; then
+      conflict_report
+      printf '@kind\\trebase\\n'
+      exit 0
+    fi
+    git rebase --abort >/dev/null 2>&1 || true
+    fail "git pull failed: $(tail -n 1 "$tmp/out")"
   fi
-  $script --push >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
+  "$sp" --push >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
 fi
 ahead=$(git rev-list --count "$up"..HEAD)
 if [ "$ahead" -eq 0 ]; then printf '@pushed\\t0\\n@msg\\tNothing to push\\n@result\\tok\\n'; exit 0; fi
@@ -160,12 +198,12 @@ printf '@msg\\tPushed %s commit(s) to %s\\n@result\\tok\\n' "$ahead" "$up"
 `;
 
 // After the person chose a side for each conflicting file (conflicts.js) and the merge was committed:
-// make Herdr match the repo ($script --push; the repo wins and the script backs up what it replaces) and,
-// with $3 = 1, push the merge to the upstream branch.
+// make Herdr match the repo (the sync script with --push; the repo wins and the script backs up what it
+// replaces) and, with $3 = 1, push the merge to the upstream branch.
 export const FINISH = `${PRELUDE}
 [ "$script_missing" = 0 ] || fail "The sync script $script was not found in the repo"
 [ -z "$inprog" ] || fail "A rebase or merge is still in progress in the repo"
-$script --push >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
+"$sp" --push >"$tmp/mount" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/mount")"
 if [ "$3" = 1 ]; then
   [ -n "$up" ] || fail "This branch has no remote branch to push to"
   remote=\${up%%/*}; rbranch=\${up#*/}
