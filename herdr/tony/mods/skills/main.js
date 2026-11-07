@@ -121,7 +121,7 @@ function find(node, id) {
 function toggle() {
   const t = theme(), on = shownHere();
   return h_flex().size_full().pr(8).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border)
-    .child(h_flex().id("toggle-skillshare").tooltip("Skillshare").h(30).w(34).justify_center().flex_none().items_center().rounded(6)
+    .child(h_flex().id("toggle-skillshare").tooltip("Skills").h(30).w(34).justify_center().flex_none().items_center().rounded(6)
       .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
       .hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
       .on_click(() => {
@@ -296,7 +296,7 @@ export default class Skillshare extends View {
     return v_flex().id("skillshare").track_focus(this.handle).size_full().min_h(0).rounded(10).overflow_hidden()
       .bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(S().body)
       .child(h_flex().h(42).flex_none().pl(14).pr(8).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(div().flex_1().text_size(S().title).font_semibold().child("Skillshare"))
+        .child(div().flex_1().text_size(S().title).font_semibold().child("Skills"))
         .when(Boolean(this.version), (el) => el.child(div().text_size(S().secondary).text_color(t.muted).child(`v${String(this.version).replace(/^v/, "")}`)))
         .when(Boolean(node), (el) => el.child(h_flex().id("close").size(24).justify_center().items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover))
           .on_mouse_down("left", stop).on_click(() => run("layout.hide", { id: PANEL })).child(icon("close", 14, t.muted)))))
