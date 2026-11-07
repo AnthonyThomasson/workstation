@@ -316,7 +316,6 @@ export default class Skillshare extends View {
     return v_flex().id("skillshare").track_focus(this.handle).size_full().min_h(0).rounded(10).overflow_hidden()
       .bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(S().body)
       .child(h_flex().h(42).flex_none().pl(14).pr(8).gap(8).items_center().border_b(1).border_color(t.border)
-        .child(image("mods/skillshare/mark.svg").w(18).h(18).flex_none())
         .child(div().flex_1().text_size(S().title).font_semibold().child("skillshare"))
         .when(Boolean(this.version), (el) => el.child(div().text_size(S().secondary).text_color(t.muted).child(`v${String(this.version).replace(/^v/, "")}`)))
         .when(Boolean(node), (el) => el.child(h_flex().id("close").size(24).justify_center().items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover))
