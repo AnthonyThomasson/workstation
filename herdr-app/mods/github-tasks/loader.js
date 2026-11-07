@@ -129,6 +129,22 @@ async function mutate(gh, query, vars, where) {
   if (r.code !== 0) throw new GitHubError(r.stderr || r.stdout);
 }
 
+const ADD_DRAFT_MUTATION = `mutation($project: ID!, $title: String!) {
+  addProjectV2DraftIssue(input: { projectId: $project, title: $title }) {
+    projectItem { id content { ... on DraftIssue { id title createdAt } } }
+  }
+}`;
+
+// Adds a draft task to the project and returns it as a ticket, ready to open in the editor.
+export async function createDraft(gh, projectId, title, where) {
+  const fields = ["-f", `project=${projectId}`, "-f", `title=${title}`];
+  const r = await gh(["api", "graphql", "-f", `query=${ADD_DRAFT_MUTATION}`, ...fields], where);
+  const item = r.code === 0 ? parse(r.stdout)?.data?.addProjectV2DraftIssue?.projectItem : null;
+  if (!item?.id) throw new GitHubError(r.stderr || r.stdout);
+  const c = item.content ?? {};
+  return { key: item.id, contentId: c.id ?? null, draft: true, number: null, title: c.title ?? title, url: null, state: "OPEN", reason: null, createdAt: c.createdAt ?? new Date().toISOString(), status: null };
+}
+
 // The ticket as GitHub has it now: { title, body, labels: [name], updatedAt }. An issue is read by gh
 // issue view, a draft through the project. The caller's own status comes from the project item.
 export async function loadTask(gh, repo, ticket, where) {

@@ -20,7 +20,8 @@ test("slug makes a file name from a name", () => {
 
 test("a blank workflow has every role with a default agent and effort", () => {
   const w = blank();
-  for (const role of ROLES) assert.deepEqual(w[role], { prompt: "", agent: "claude", command: "", model: "", effort: "medium" });
+  const role0 = { prompt: "", agent: "claude", command: "", model: "", effort: "medium" };
+  for (const role of ROLES) assert.deepEqual(w[role], role === "orchestrator" ? { ...role0, planning: "", retro: "" } : role0);
   assert.deepEqual(w.trigger, { labels: [], match: "any" });
   assert.equal("global" in w, false); // where it is kept is the folder's business
   assert.equal(w.strategy, "branch");
@@ -58,7 +59,7 @@ test("normalize survives junk and keeps an agent it does not know", () => {
   assert.equal(w.worker.agent, "newagent");
   assert.equal(w.worker.model, "m");
   assert.equal(w.worker.effort, "medium");
-  assert.deepEqual(w.orchestrator, { prompt: "", agent: "claude", command: "", model: "", effort: "medium" });
+  assert.deepEqual(w.orchestrator, { prompt: "", agent: "claude", command: "", model: "", effort: "medium", planning: "", retro: "" });
   assert.deepEqual(normalize(null), normalize({}));
 });
 
@@ -108,11 +109,23 @@ test("dirty tracking sees edits and ignores shape noise", () => {
   assert.equal(snapshot(base), snapshot(normalize(base)));
 });
 
+test("the orchestrator's planning and retro prompts are optional and survive a round-trip", () => {
+  const w = valid({ id: "x" });
+  assert.deepEqual(validate(w), []);
+  w.orchestrator.planning = "Plan it";
+  w.orchestrator.retro = "Look back";
+  const back = parse(serialize(w));
+  assert.equal(back.orchestrator.planning, "Plan it");
+  assert.equal(back.orchestrator.retro, "Look back");
+  assert.equal(back.worker.planning, undefined);
+});
+
 test("serialize and parse round-trip, in a fixed key order", () => {
   const w = valid({ id: "feature-work", strategy: "worktree" });
   const text = serialize(w);
   assert.ok(text.endsWith("}\n"));
   assert.deepEqual(Object.keys(JSON.parse(text)), ["version", "id", "name", "strategy", "trigger", "orchestrator", "worker", "reviewer"]);
+  assert.deepEqual(Object.keys(JSON.parse(text).orchestrator), ["prompt", "agent", "command", "model", "effort", "planning", "retro"]);
   assert.deepEqual(Object.keys(JSON.parse(text).worker), ["prompt", "agent", "command", "model", "effort"]);
   assert.deepEqual(parse(text), normalize(w));
 });

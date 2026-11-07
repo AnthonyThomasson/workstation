@@ -17,6 +17,17 @@ export function iconButton(id, name, t, onClick, color) {
     .on_mouse_down("left", stop).on_click(onClick).child(icon(name, 14, color ?? t.muted));
 }
 
+// A row of tabs, one chosen: options are [key, label] pairs.
+export function segmented(id, options, value, t, onPick) {
+  return h_flex().id(id).w_full().p(2).gap(2).rounded(8).bg(t.chrome).border_1().border_color(t.border).children(options.map(([key, label]) => {
+    const on = key === value;
+    return h_flex().id(`${id}-${key}`).flex_1().min_w(0).h(26).justify_center().items_center().rounded(6)
+      .bg(on ? t.raised : t.chrome).text_size(S().secondary).text_color(on ? t.foreground : t.muted).when(on, (el) => el.font_semibold())
+      .cursor_pointer().hover((s) => s.text_color(t.foreground)).on_mouse_down("left", stop).on_click((_e, cx) => onPick(key, cx))
+      .child(div().truncate().child(label));
+  }));
+}
+
 // A solid button, or a quiet outline one. disabled: dimmed and inert.
 export function action(id, label, t, onClick, quiet = false, disabled = false) {
   return h_flex().id(id).h(28).px(12).flex_none().items_center().rounded(6).text_size(S().secondary)

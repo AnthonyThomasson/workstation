@@ -38,7 +38,7 @@ async function readDir(dir, scope) {
   return { items, errors };
 }
 
-// Every workflow this ticket's place can see, by name: { items: [{ id, name, scope, text, trigger }], errors }.
+// Every workflow this ticket's place can see, by name: { items: [parseWorkflow's workflows], errors }.
 // A repo's own workflows are there only for a repo on this computer, as in the Workflows panel.
 export async function loadWorkflows(where) {
   const [workstation, repo] = await Promise.all([

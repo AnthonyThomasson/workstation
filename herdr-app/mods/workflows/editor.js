@@ -5,7 +5,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { run, setShared, theme } from "herdr";
-import { ROLES, ROLE_LABELS, AGENTS, AGENT_LABELS, CUSTOM, EFFORTS, STRATEGIES, STRATEGY_LABELS, STRATEGY_HINTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, SCOPES, SCOPE_LABELS, SCOPE_HINTS, blank, normalize, isDirty, uniqueLabels } from "./model.js";
+import { ROLES, ORCHESTRATOR_PROMPTS, ROLE_LABELS, AGENTS, AGENT_LABELS, CUSTOM, EFFORTS, STRATEGIES, STRATEGY_LABELS, STRATEGY_HINTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, SCOPES, SCOPE_LABELS, SCOPE_HINTS, blank, normalize, isDirty, uniqueLabels } from "./model.js";
 import { StoreError } from "./store.js";
 import { S, icon, stop, iconButton, action } from "./ui.js";
 import { CHANGED, store, gh, codexModels, kimiModels, workstationRepo } from "./env.js";
@@ -38,8 +38,10 @@ export class WorkflowEditor {
         prompt: TextareaState.new({ value: "", rows: 7 }),
       };
     }
+    // The orchestrator's planning and retro prompts.
+    for (const { key } of ORCHESTRATOR_PROMPTS) this.roles.orchestrator[key] = TextareaState.new({ value: "", rows: 5 });
     const touched = (_e, cx) => { if (this.notice?.kind === "saved") this.notice = null; cx.notify(); };
-    const inputs = [this.nameInput, ...ROLES.flatMap((r) => [this.roles[r].prompt, this.roles[r].command])];
+    const inputs = [this.nameInput, ...ROLES.flatMap((r) => [this.roles[r].prompt, this.roles[r].command]), ...ORCHESTRATOR_PROMPTS.map((p) => this.roles.orchestrator[p.key])];
     for (const input of inputs) input.on("change", touched);
 
     // A model field completes from its agent's models: the list shows under the field that has focus.
@@ -166,6 +168,7 @@ export class WorkflowEditor {
       const r = this.roles[role];
       w[role] = { prompt: r.prompt.value(), agent: r.agent, command: r.command.value(), model: r.model.value(), effort: r.effort };
     }
+    for (const { key } of ORCHESTRATOR_PROMPTS) w.orchestrator[key] = this.roles.orchestrator[key].value();
     return normalize(w);
   }
 
@@ -184,6 +187,7 @@ export class WorkflowEditor {
       r.model.set_value(w.model);
       r.prompt.set_value(w.prompt);
     }
+    for (const { key } of ORCHESTRATOR_PROMPTS) this.roles.orchestrator[key].set_value(workflow.orchestrator[key]);
     this.base = normalize(workflow);
   }
 
@@ -464,7 +468,10 @@ export class WorkflowEditor {
         }))))
       .child(v_flex().gap(4).child(this.heading(t, "Prompt"))
         .child(div().id(`field-prompt-${role}`).p(10).rounded(8).border_1().border_color(t.input).on_mouse_down("left", stop)
-          .child(Textarea.new(r.prompt).w_full().text_size(S().body).text_color(t.foreground))));
+          .child(Textarea.new(r.prompt).w_full().text_size(S().body).text_color(t.foreground))))
+      .children(role === "orchestrator" ? ORCHESTRATOR_PROMPTS.map(({ key, label, hint }) => v_flex().gap(4).child(this.heading(t, label, hint))
+        .child(div().id(`field-${key}-${role}`).p(10).rounded(8).border_1().border_color(t.input).on_mouse_down("left", stop)
+          .child(Textarea.new(r[key]).w_full().text_size(S().body).text_color(t.foreground)))) : []);
   }
 
   // The dialog over the editor: a search box and the agents, the current one marked.

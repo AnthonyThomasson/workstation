@@ -32,6 +32,12 @@ export const SCOPE_HINTS = {
   global: "Kept in the workstation repo. Push it with Skillshare to sync it to your other machines and to other people.",
   repo: "Kept in the repo's .herdr/workflows folder, to commit with the repo. Listed only while a space in that repo is selected.",
 };
+// Besides its own prompt, the orchestrator has one for planning the work and one for the retro after it.
+// Both are optional: left empty, that step gets no extra instructions.
+export const ORCHESTRATOR_PROMPTS = [
+  { key: "planning", label: "Planning prompt", hint: "how the orchestrator plans the work before handing it to the worker" },
+  { key: "retro", label: "Retro prompt", hint: "how the orchestrator looks back on the run once it is done" },
+];
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 // How the work is kept apart from the main checkout: a branch in the folder the space is in, or a git
 // worktree of its own, so several runs can go at once without sharing files.
@@ -45,9 +51,10 @@ export const STRATEGY_HINTS = {
 const text = (v) => (typeof v === "string" ? v : "");
 
 export const blankRole = () => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium" });
+export const blankOrchestrator = () => ({ ...blankRole(), planning: "", retro: "" });
 export const blank = () => ({
   version: VERSION, id: "", name: "", strategy: "branch", trigger: { labels: [], match: "any" },
-  orchestrator: blankRole(), worker: blankRole(), reviewer: blankRole(),
+  orchestrator: blankOrchestrator(), worker: blankRole(), reviewer: blankRole(),
 });
 
 // "Feature development!" -> "feature-development"; what a workflow's file is called.
@@ -71,7 +78,7 @@ function normalizeTrigger(raw) {
   return { labels: list, match: text(r.match) || "any" };
 }
 
-function normalizeRole(raw) {
+function normalizeRole(raw, extras = []) {
   const r = raw && typeof raw === "object" ? raw : {};
   const base = blankRole();
   const agent = text(r.agent) || base.agent; // an agent kind this list doesn't know is kept, so a newer file survives
@@ -81,8 +88,10 @@ function normalizeRole(raw) {
     command: agent === CUSTOM ? text(r.command).trim() : "", // only a custom agent has one
     model: text(r.model).trim(),
     effort: text(r.effort) || base.effort,
+    ...Object.fromEntries(extras.map((key) => [key, text(r[key])])),
   };
 }
+const normalizeOrchestrator = (raw) => normalizeRole(raw, ORCHESTRATOR_PROMPTS.map((p) => p.key));
 
 // Whatever was read from a file, shaped as a workflow. Never throws; validate() says what is wrong.
 export function normalize(raw) {
@@ -93,7 +102,7 @@ export function normalize(raw) {
     name: text(r.name).trim(),
     strategy: text(r.strategy) || "branch", // an older file has none, and worked on a branch
     trigger: normalizeTrigger(r.trigger),
-    orchestrator: normalizeRole(r.orchestrator),
+    orchestrator: normalizeOrchestrator(r.orchestrator),
     worker: normalizeRole(r.worker),
     reviewer: normalizeRole(r.reviewer),
   };
@@ -129,7 +138,7 @@ export function serialize(workflow) {
   const role = (r) => ({ prompt: r.prompt, agent: r.agent, command: r.command, model: r.model, effort: r.effort });
   return `${JSON.stringify({
     version: w.version, id: w.id, name: w.name, strategy: w.strategy, trigger: { labels: w.trigger.labels, match: w.trigger.match },
-    orchestrator: role(w.orchestrator), worker: role(w.worker), reviewer: role(w.reviewer),
+    orchestrator: { ...role(w.orchestrator), planning: w.orchestrator.planning, retro: w.orchestrator.retro }, worker: role(w.worker), reviewer: role(w.reviewer),
   }, null, 2)}\n`;
 }
 

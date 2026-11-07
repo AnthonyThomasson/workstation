@@ -5,16 +5,22 @@
 // pull carry to other machines; and a repo's .herdr folder, committed with that project. A repo's are listed
 // only while a space in that repo is the selected one.
 // Roles (props.role): the panel (default); "toggle", the tab-bar button that opens or closes the
-// layout's shared side panel on this panel, as Tasks and Skillshare do; "editor", one workflow in the center.
+// layout's shared side panel on this panel, as Tasks and Skillshare do; "editor", one workflow in the center;
+// "settings", the built-in instructions of every role (settings.js);
+// "run", a started workflow's agents, beside its orchestrator (run.js).
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
-import { S, icon, stop, note, iconButton, action } from "./ui.js";
+import { S, icon, stop, note, iconButton, action, segmented } from "./ui.js";
 import { WorkflowEditor } from "./editor.js";
+import { RunPage } from "./run.js";
+import { SettingsPage } from "./settings.js";
 import { SCOPE_LABELS } from "./model.js";
 import { CHANGED, REPO_KEY, store, repoDir, checkRepo, expandHome, workstationRepo, repoRootOf } from "./env.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "workflows";
+// The tabs over the list, as Skillshare's: everything, the selected space's repo, or the global ones.
+const TABS = [["all", "All"], ["repo", "Project"], ["global", "Global"]];
 const POLL = 5000; // a listing of a local folder costs nothing; this picks up files that arrive by git pull
 const FIND_EVERY = 30000; // how long the workstation repo, once looked for, is taken as found
 const baseName = (path) => String(path ?? "").split("/").filter(Boolean).pop() ?? "";
@@ -50,8 +56,11 @@ export default class Workflows extends View {
     this.role = blockProps()?.role ?? "panel";
     if (this.role === "toggle") return;
     if (this.role === "editor") { this.editor = new WorkflowEditor(blockProps(), cx); return; }
+    if (this.role === "run") { this.page = new RunPage(blockProps()); return; }
+    if (this.role === "settings") { this.page = new SettingsPage(); return; }
     this.handle = cx.focus_handle();
     this.items = [];
+    this.scope = "all";
     this.loaded = false;
     this.error = null;
     this.lastCwd = new Map(); // each space's last known terminal folder; focus on a panel has none
@@ -150,6 +159,7 @@ export default class Workflows extends View {
   render(cx) {
     if (this.role === "toggle") return toggle();
     if (this.role === "editor") return this.editor.render(cx);
+    if (this.role === "run" || this.role === "settings") return this.page.render();
     const t = theme();
     // Another space, or another folder in it, may be in another repo: its workflows come and the last one's go.
     const ctx = this.context(), key = ctx ? `${ctx.on ?? ""}|${ctx.cwd ?? ""}` : "";
@@ -166,6 +176,7 @@ export default class Workflows extends View {
       .bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(S().body)
       .child(h_flex().h(42).flex_none().pl(14).pr(8).gap(4).items_center().border_b(1).border_color(t.border)
         .child(div().flex_1().text_size(S().title).font_semibold().child("Workflows"))
+        .child(iconButton("settings", "settings", t, () => run("tab.new", { name: "Workflow settings", mod: "workflows", props: { role: "settings" } })))
         .child(iconButton("close", "close", t, () => run("layout.hide", { id: PANEL }))))
       .child(h_flex().flex_none().px(14).py(10).border_b(1).border_color(t.border)
         .child(h_flex().id("new-workflow").h(30).px(12).gap(6).items_center().rounded(6).cursor_pointer()
@@ -173,24 +184,37 @@ export default class Workflows extends View {
           .hover((s) => s.opacity(0.88)).on_mouse_down("left", stop).on_click(() => this.openWorkflow(null))
           .child(icon("plus", 14, t.solid_foreground))
           .child("New workflow")))
-      .child(this.renderList(t))
-      .child(this.renderRepo(t));
+      .child(this.renderList(t, ctx))
+      .when(this.needsRepoField(), (el) => el.child(this.renderRepo(t)));
   }
 
-  renderList(t) {
+  renderList(t, ctx) {
     if (!this.loaded) return v_flex().flex_1().min_h(0).p(16).gap(10).children([0, 1, 2].map((i) => div().h(40).flex_none().rounded(8).bg(t.chrome).opacity(1 - i * 0.2)));
+    // Without a repo there is only Global, so no tabs.
+    const scope = this.repoRoot ? this.scope : "global";
+    const count = (k) => (k === "all" ? this.items.length : this.items.filter((i) => i.scope === k).length);
+    const shown = scope === "all" ? this.items : this.items.filter((i) => i.scope === scope);
+    const folderName = baseName(this.repoRoot || ctx?.cwd) || "~";
+    const header = v_flex().flex_none().px(14).pt(10).pb(12).gap(8).border_b(1).border_color(t.border)
+      .child(h_flex().gap(8).items_center()
+        .child(icon("folder", 14, t.muted))
+        .child(div().text_size(S().body).font_semibold().child(this.repoRoot ? folderName : "Global"))
+        .child(div().flex_1().min_w(0).truncate().text_size(S().secondary).text_color(t.muted)
+          .child(this.repoRoot ? "" : ctx?.on ? "Project workflows need a space on this computer" : `${folderName} is not in a git repo`)))
+      .when(Boolean(this.repoRoot), (el) => el.child(segmented("scope", TABS.map(([k, l]) => [k, `${l} ${count(k)}`]), scope, t, (k, cx) => { this.scope = k; cx.notify(); })));
     const rows = [];
     if (this.error) rows.push(div().px(14).py(8).child(note(t, this.error, t.ansi1)));
-    if (this.repoRoot) rows.push(div().px(14).pt(8).pb(4).child(note(t, `Includes ${baseName(this.repoRoot)}'s .herdr workflows while this space is selected.`)));
-    if (!this.items.length && !this.error) rows.push(div().px(14).py(12).child(note(t, "No workflows yet. Make one with New workflow.")));
-    rows.push(...this.items.map((item) => this.row(t, item)));
-    return div().id("workflow-list").flex_1().min_h(0).overflow_y_scrollbar().child(v_flex().py(6).children(rows));
+    if (!shown.length && !this.error) rows.push(div().px(14).py(12).child(note(t, scope === "all" || scope === "global" && !this.items.length ? "No workflows yet. Make one with New workflow." : "No workflows here yet.")));
+    rows.push(...shown.map((item) => this.row(t, item, scope === "all" && Boolean(this.repoRoot))));
+    return v_flex().flex_1().min_h(0)
+      .child(header)
+      .child(div().id("workflow-list").flex_1().min_h(0).overflow_y_scrollbar().child(v_flex().py(6).children(rows)));
   }
 
-  row(t, item) {
+  row(t, item, showWhere) {
     const key = `${item.scope}/${item.id}`, armed = this.confirming === key;
-    // Where it is kept: Global, or the repo's name.
-    const where = item.scope === "global" ? SCOPE_LABELS.global : item.scope === "repo" ? baseName(this.repoRoot) || SCOPE_LABELS.repo : null;
+    // Where it is kept, when the list mixes both: Global, or the repo's name.
+    const where = !showWhere ? null : item.scope === "global" ? SCOPE_LABELS.global : item.scope === "repo" ? baseName(this.repoRoot) || SCOPE_LABELS.repo : null;
     return h_flex().id(`workflow-${item.scope}-${item.id}`).flex_none().mx(8).mb(2).px(8).py(7).gap(8).items_center().rounded(8)
       .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click(() => this.openWorkflow(item))
       .child(v_flex().flex_1().min_w(0).gap(1)
@@ -200,6 +224,12 @@ export default class Workflows extends View {
         .text_size(S().label).text_color(t.muted).child(where)))
       .when(armed, (el) => el.child(div().flex_none().text_size(S().label).text_color(t.ansi1).child("Delete?")))
       .child(iconButton(`delete-${item.scope}-${item.id}`, "trash", t, (_e, cx) => this.trash(item, cx), armed ? t.ansi1 : t.muted));
+  }
+
+  // The field is only for when Skillshare doesn't lead to the repo: none found, or one set by hand
+  // (which stays editable). It also stays while a path was just entered, to show how that went.
+  needsRepoField() {
+    return !this.workstation || Boolean(repoDir()) || Boolean(this.repoNote);
   }
 
   // The workstation repo that synced workflows are kept in. Found from Skillshare's source; this field

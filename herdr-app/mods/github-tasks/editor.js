@@ -10,6 +10,7 @@ import { S, icon, stop, iconButton, action, gh } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { matchWorkflows } from "./match.js";
 import { loadWorkflows } from "./workflows.js";
+import { startRun } from "./start.js";
 
 // Set to the time of each save, so the panel's list refreshes.
 export const CHANGED = "github-tasks.changed";
@@ -41,7 +42,7 @@ export class TaskEditor {
     this.search.on("change", (_e, cx) => cx.notify());
     this.search.on("submit", (_e, cx) => { const first = this.options()[0]; if (first) this.choose(first.name, cx); });
 
-    // The Start dialog: null, or { phase: "loading" | "ready" | "error", matches, labels, chosen, error, skipped }.
+    // The Start dialog: null, or { phase: "loading" | "ready" | "starting" | "error", matches, labels, chosen, error, skipped }.
     this.start = null;
     this.startable = false; // whether the saved labels match any workflow, which is what enables Start
 
@@ -156,8 +157,8 @@ export class TaskEditor {
     });
   }
 
-  // Opens the Start dialog: the workflows this ticket's labels trigger. A ticket as GitHub holds it is
-  // what starts, so the saved labels are matched, not unsaved edits.
+  // Start: the workflow this ticket's labels trigger starts at once; when several do, the dialog lists them to
+  // choose from. A ticket as GitHub holds it is what starts, so the saved labels are matched, not unsaved edits.
   openStart(cx) {
     const labels = [...this.base.labels], token = (this.startToken = (this.startToken ?? 0) + 1);
     this.start = { phase: "loading", matches: [], labels, chosen: null, error: null, skipped: [] };
@@ -167,7 +168,8 @@ export class TaskEditor {
         const { items, errors } = await loadWorkflows(this.where);
         if (token !== this.startToken || !this.start) return;
         const matches = matchWorkflows(items, labels);
-        this.start = { ...this.start, phase: "ready", matches, chosen: matches.length === 1 ? matches[0] : null, skipped: errors };
+        this.start = { ...this.start, phase: "ready", matches, skipped: errors };
+        if (matches.length === 1) this.runWorkflow(matches[0], cx);
       } catch (e) {
         if (token !== this.startToken || !this.start) return;
         this.start = { ...this.start, phase: "error", error: String(e?.message ?? e) };
@@ -176,17 +178,28 @@ export class TaskEditor {
     });
   }
 
+  // Starts the workflow on the ticket. The dialog goes once the tab is open, and stays with the reason if it can't.
+  runWorkflow(workflow, cx) {
+    const ticket = { ...this.ticket, ...this.base };
+    this.start = { ...this.start, phase: "starting", chosen: workflow, error: null };
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        await startRun(workflow, ticket, this.repo, this.where, cx);
+        this.start = null;
+      } catch (e) {
+        this.start = { ...this.start, phase: "error", error: String(e?.message ?? e) };
+      }
+      cx.notify();
+    });
+  }
+
+  // A run that is starting finishes first: it can't be called back halfway, and the dialog says how it went.
   closeStart(cx) {
+    if (this.start?.phase === "starting") return;
     this.startToken++;
     this.start = null;
     cx.notify();
-  }
-
-  // Esc: from one workflow's JSON back to the list when there is a list, else out.
-  backStart(cx) {
-    const s = this.start;
-    if (s?.chosen && s.matches.length > 1) { this.start = { ...s, chosen: null }; cx.notify(); }
-    else this.closeStart(cx);
   }
 
   openPicker(kind, cx) {
@@ -230,7 +243,7 @@ export class TaskEditor {
     return v_flex().id("task-editor").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
       .on_size_change((size, cx) => { this.size = size; this.bodyInput.set_rows(this.rows()); cx.notify(); })
       .on_key_down((e, cx) => {
-        if (e.key === "escape" && this.start) { this.backStart(cx); cx.stop_propagation(); }
+        if (e.key === "escape" && this.start) { this.closeStart(cx); cx.stop_propagation(); }
         else if (e.key === "escape" && this.picker) { this.closePicker(cx); cx.stop_propagation(); }
         else if (e.keystroke === "cmd-s") { this.save(cx); cx.stop_propagation(); }
       })
@@ -333,15 +346,15 @@ export class TaskEditor {
       .child(dialog);
   }
 
-  // The dialog Start opens: the JSON of the workflow the labels trigger, or, when several are, a list to
-  // choose from first.
+  // The dialog Start opens: the workflow starting, why it couldn't, or, when the labels trigger several, a
+  // list to choose from first.
   renderStart(t) {
     const s = this.start, chosen = s.chosen, several = s.matches.length > 1;
     const title = chosen ? chosen.name : several ? "Choose a workflow" : "Start";
     const close = (_e, cx) => this.closeStart(cx);
     const where = (w) => (w.scope === "global" ? "Global" : "Repo");
     const row = (w) => h_flex().id(`start-${w.scope}-${w.id}`).flex_none().px(10).py(8).gap(8).items_center().rounded(6).cursor_pointer()
-      .hover((st) => st.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => { this.start = { ...this.start, chosen: w }; cx.notify(); })
+      .hover((st) => st.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => this.runWorkflow(w, cx))
       .child(v_flex().flex_1().min_w(0).gap(1)
         .child(div().truncate().text_size(S().body).font_medium().child(w.name))
         .child(div().truncate().text_size(S().label).text_color(t.muted).child(w.trigger.labels.length ? `${w.trigger.match === "all" ? "All of" : "Any of"}: ${w.trigger.labels.join(", ")}` : "Fallback: no labels")))
@@ -349,8 +362,7 @@ export class TaskEditor {
       .child(icon("chevron-right", 14, t.muted));
     const body = s.phase === "loading" ? v_flex().gap(8).children([0, 1].map((i) => div().h(40).flex_none().rounded(8).bg(t.chrome).opacity(1 - i * 0.3)))
       : s.phase === "error" ? note(t, s.error, t.ansi1)
-      : chosen ? div().id("start-json").max_h(380).p(10).rounded(8).border_1().border_color(t.border).bg(t.chrome).overflow_y_scrollbar()
-        .child(v_flex().text_size(S().secondary).children(chosen.text.replace(/\n$/, "").split("\n").map((line) => div().min_h(S().secondary * 1.5).child(line))))
+      : s.phase === "starting" ? h_flex().gap(8).items_center().child(icon("ring", 14, t.muted).spin(900)).child(note(t, "Getting the branch ready and starting the orchestrator…"))
       : several ? div().id("start-list").max_h(380).overflow_y_scrollbar().child(v_flex().gap(2).children(s.matches.map(row)))
       : v_flex().gap(6)
         .child(note(t, s.labels.length ? "No workflow matches this ticket's labels." : "This ticket has no labels, and no workflow is the fallback."))
@@ -360,7 +372,6 @@ export class TaskEditor {
       .bg(t.popover).shadow_lg().text_color(t.foreground).text_size(S().body)
       .on_mouse_down("left", stop)
       .child(h_flex().flex_none().items_center().gap(8)
-        .when(Boolean(chosen) && several, (el) => el.child(iconButton("start-back", "chevron-left", t, (_e, cx) => this.backStart(cx))))
         .child(div().flex_1().min_w(0).truncate().text_size(S().title).font_semibold().child(title))
         .child(div().text_size(S().label).text_color(t.muted).child("Esc"))
         .child(iconButton("start-close", "close", t, close)))
@@ -395,7 +406,7 @@ export class TaskEditor {
       .child(h_flex().gap(8).items_center()
         .child(div().flex_1().min_w(0).truncate().text_size(S().secondary).text_color(n?.kind === "saved" ? t.ansi2 : t.muted)
           .child(this.saving ? "Saving…" : n?.kind === "saved" ? n.text : dirty ? `Unsaved: ${Object.keys(diff).join(", ")}` : "No changes"))
-        .child(action("task-start", "Start", t, (_e, cx) => this.openStart(cx), true, this.saving || !this.startable))
+        .child(action("task-start", "Start", t, (_e, cx) => this.openStart(cx), true, this.saving || dirty || !this.startable))
         .child(action("task-revert", "Revert", t, (_e, cx) => this.revert(cx), true, !dirty || this.saving))
         .child(action("task-save", this.saving ? "Saving…" : "Save", t, (_e, cx) => this.save(cx), false, !dirty || this.saving)));
   }

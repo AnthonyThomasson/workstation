@@ -8,7 +8,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
 import { normalizeItems, groupTickets, chooseProject, ticketLine } from "./model.js";
-import { GitHubError, MAX_ITEMS, findRepo, findProjects, loadItems } from "./loader.js";
+import { GitHubError, MAX_ITEMS, findRepo, findProjects, loadItems, createDraft } from "./loader.js";
 import { S, icon, stop, note, iconButton, action, gh } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { TaskEditor, CHANGED } from "./editor.js";
@@ -183,6 +183,7 @@ export default class GitHubTasks extends View {
       .bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(S().body)
       .child(h_flex().h(42).flex_none().pl(14).pr(8).gap(4).items_center().border_b(1).border_color(t.border)
         .child(div().flex_1().text_size(S().title).font_semibold().child("Tasks"))
+        .when(Boolean(this.project), (el) => el.child(iconButton("new-task", this.creating ? "ring" : "plus", t, (_e, cx) => this.newTask(cx), this.creating)))
         .when(Boolean(ctx), (el) => el.child(iconButton("refresh", this.loading ? "ring" : "sync", t, (_e, cx) => this.refresh(cx), this.loading)))
         .child(iconButton("close", "close", t, () => run("layout.hide", { id: PANEL }))))
       .when(Boolean(this.repo), (el) => el.child(this.renderContext(t)))
@@ -248,6 +249,28 @@ export default class GitHubTasks extends View {
       name,
       mod: "github-tasks",
       props: { role: "editor", ticket, repo: this.repo, project: { id: project.id, title: project.title }, where: { cwd: ctx.folder, on: ctx.on } },
+    });
+  }
+
+  // The + button: adds a draft task to the project, then opens it in the editor to fill in.
+  newTask(cx) {
+    const ctx = this.ctx, project = this.project;
+    if (!ctx || !project || this.creating) return;
+    this.creating = true;
+    cx.notify();
+    const where = { cwd: ctx.folder, on: ctx.on };
+    cx.spawn(async (cx) => {
+      try {
+        const ticket = await createDraft(gh, project.id, "New task", where);
+        this.error = null;
+        this.openTicket(ticket);
+        this.refresh(cx);
+      } catch (e) {
+        this.error = e instanceof GitHubError ? e : { kind: "other", message: String(e?.message ?? e) };
+      } finally {
+        this.creating = false;
+        cx.notify();
+      }
     });
   }
 

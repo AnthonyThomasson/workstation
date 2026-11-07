@@ -1,6 +1,6 @@
 // Which workflows a ticket starts, with no Herdr in it. A workflow is a JSON file kept by the Workflows
-// mod (see mods/workflows/model.js): the labels that trigger it, and how its roles run. Only what is
-// needed to match is read here; the file's own text is what the Start dialog shows.
+// mod (see mods/workflows/model.js): the labels that trigger it, and how its roles run. What is needed to
+// match is read here, along with the strategy and the roles, which start.js runs it with.
 
 const text = (v) => (typeof v === "string" ? v : "");
 const key = (label) => text(label).trim().toLowerCase(); // GitHub's label names match without regard to case
@@ -14,8 +14,15 @@ function labelsOf(list) {
   return out;
 }
 
-// A workflow file's text as { id, name, scope, text, trigger: { labels, match } }. Throws a plain Error on
-// text that is not a JSON object. A file from before triggers had several labels holds one, as `label`.
+// A role as it is run. A file without planning or retro prompts has them empty.
+function roleOf(raw) {
+  const r = raw && typeof raw === "object" ? raw : {};
+  return { prompt: text(r.prompt), agent: text(r.agent) || "claude", command: text(r.command).trim(), model: text(r.model).trim(), effort: text(r.effort) || "medium", planning: text(r.planning), retro: text(r.retro) };
+}
+
+// A workflow file's text as { id, name, scope, strategy, trigger: { labels, match }, orchestrator, worker, reviewer }.
+// Throws a plain Error on text that is not a JSON object. A file from before triggers had several labels holds
+// one, as `label`.
 export function parseWorkflow(source, { id, scope }) {
   let data;
   try { data = JSON.parse(source); } catch (e) { throw new Error(`not valid JSON (${e.message})`); }
@@ -23,9 +30,11 @@ export function parseWorkflow(source, { id, scope }) {
   const trigger = data.trigger && typeof data.trigger === "object" ? data.trigger : {};
   const labels = labelsOf(trigger.labels);
   return {
-    id, scope, text: source,
+    id, scope,
     name: text(data.name).trim() || id,
+    strategy: data.strategy === "worktree" ? "worktree" : "branch",
     trigger: { labels: labels.length || typeof trigger.label !== "string" ? labels : labelsOf([trigger.label]), match: trigger.match === "all" ? "all" : "any" },
+    orchestrator: roleOf(data.orchestrator), worker: roleOf(data.worker), reviewer: roleOf(data.reviewer),
   };
 }
 
