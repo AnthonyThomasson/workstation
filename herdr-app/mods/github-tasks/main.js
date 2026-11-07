@@ -3,21 +3,21 @@
 // own to edit (editor.js), and saving pushes the change to GitHub.
 // Roles (props.role): the panel (default); "toggle", the tab-bar button that opens or closes the
 // layout's shared side panel on this panel, as Files, Changes and Skillshare do; "editor", one ticket
-// in the center, opened by a click on a row.
+// in the center, opened by a click on a row; "settings", the statuses and grooming prompt, in a tab.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
-import { normalizeItems, groupTickets, groupByStage, normalizeSettings, sameStatus, chooseProject, ticketLine } from "./model.js";
+import { normalizeItems, groupTickets, groupByStage, normalizeSettings, sameStatus, statusesKey, chooseProject, ticketLine } from "./model.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, loadItems, createDraft, loadStatusField } from "./loader.js";
 import { installedAgents, startGrooming } from "./groom.js";
 import { S, icon, stop, note, iconButton, action, gh } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { TaskEditor, CHANGED } from "./editor.js";
+import { TaskSettings } from "./settings.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
 const projectKey = (repo) => `github-tasks.project.${repo}`;
-const statusesKey = (repo) => `github-tasks.statuses.${repo}`; // which statuses are the backlog and the groomed
 const AGENT_KEY = "github-tasks.groomAgent";
 // The dim layer behind a dialog: the theme's background, half see-through where it is a hex color.
 const scrim = (t) => (/^#[0-9a-f]{6}$/i.test(t.background ?? "") ? `${t.background}b3` : t.background);
@@ -67,14 +67,14 @@ export default class GitHubTasks extends View {
     this.role = blockProps()?.role ?? "panel";
     if (this.role === "toggle") return;
     if (this.role === "editor") { this.editor = new TaskEditor(blockProps(), cx); return; }
+    if (this.role === "settings") { this.page = new TaskSettings(blockProps(), cx); return; }
     this.handle = cx.focus_handle();
     this.auth = new Auth();
     this.changedAt = shared(CHANGED) ?? null; // a save in an editor tab refreshes the list
     this.lastCwd = new Map();
     this.reset(null);
     this.backlogOpen = false; // the Backlog section is collapsed until opened
-    this.dialog = null; // null | "settings" | "agent"
-    this.statusOptions = null; // the project's Status field options, read when the settings dialog opens
+    this.dialog = null; // null | "agent"
     this.agents = []; // installed agents Start Grooming can use
     this.grooming = false;
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
@@ -172,6 +172,7 @@ export default class GitHubTasks extends View {
   render(cx) {
     if (this.role === "toggle") return toggle();
     if (this.role === "editor") return this.editor.render(cx);
+    if (this.role === "settings") return this.page.render(cx);
     const t = theme();
 
     // An editor tab saved something: the list is stale.
@@ -194,13 +195,13 @@ export default class GitHubTasks extends View {
       .bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(S().body)
       .child(h_flex().h(42).flex_none().pl(14).pr(8).gap(4).items_center().border_b(1).border_color(t.border)
         .child(div().flex_1().text_size(S().title).font_semibold().child("Tasks"))
-        .when(Boolean(this.project), (el) => el.child(iconButton("settings", "settings", t, (_e, cx) => this.openSettings(cx))))
+        .when(Boolean(this.project), (el) => el.child(iconButton("settings", "settings", t, () => this.openSettings())))
         .when(Boolean(ctx), (el) => el.child(iconButton("refresh", this.loading ? "ring" : "sync", t, (_e, cx) => this.refresh(cx), this.loading)))
         .child(iconButton("close", "close", t, () => run("layout.hide", { id: PANEL }))))
       .when(Boolean(this.repo), (el) => el.child(this.renderContext(t)))
       .when(Boolean(this.project), (el) => el.child(this.renderGroom(t)))
       .child(this.renderBody(t, ctx))
-      .when(Boolean(this.dialog), (el) => el.child(this.dialog === "agent" ? this.renderAgentDialog(t) : this.renderSettingsDialog(t)));
+      .when(Boolean(this.dialog), (el) => el.child(this.renderAgentDialog(t)));
   }
 
   // Where the list comes from: the repo, its project, and a choice if several are linked.
@@ -310,22 +311,14 @@ export default class GitHubTasks extends View {
     });
   }
 
-  // The settings dialog reads the project's statuses once, when it opens.
-  openSettings(cx) {
+  // Settings open in a tab of their own, as the workflows' do.
+  openSettings() {
     const project = this.project, ctx = this.ctx;
     if (!project || !ctx) return;
-    this.dialog = "settings";
-    this.statusOptions = null;
-    cx.notify();
-    cx.spawn(async (cx) => {
-      try { this.statusOptions = (await loadStatusField(gh, project.id, { cwd: ctx.folder, on: ctx.on }))?.options ?? []; } catch { this.statusOptions = []; }
-      cx.notify();
+    run("tab.new", {
+      name: "Task settings", mod: "github-tasks",
+      props: { role: "settings", repo: this.repo, project: { id: project.id, title: project.title, url: project.url }, where: { cwd: ctx.folder, on: ctx.on } },
     });
-  }
-
-  setStatus(kind, name, cx) {
-    setShared(statusesKey(this.repo), { ...this.statuses(), [kind]: name });
-    cx.notify();
   }
 
   closeDialog(cx) { this.dialog = null; cx.notify(); }
@@ -351,29 +344,6 @@ export default class GitHubTasks extends View {
     return this.dialogFrame(t, "groom-agent-dialog", "Grooming agent",
       div().id("groom-agent-options").max_h(320).overflow_y_scrollbar()
         .child(v_flex().gap(2).children(rows.length ? rows : [div().px(8).py(8).child(note(t, "No installed agents were found."))])));
-  }
-
-  renderSettingsDialog(t) {
-    const cfg = this.statuses(), options = this.statusOptions;
-    const group = (kind, title, hint) => v_flex().flex_none().gap(4)
-      .child(div().text_size(S().secondary).font_semibold().child(title))
-      .child(note(t, hint))
-      .child(v_flex().gap(2).children((options ?? []).map((o) => {
-        const on = sameStatus(o.name, cfg[kind]);
-        return h_flex().id(`status-${kind}-${o.id ?? o.name}`).h(30).flex_none().px(8).gap(8).items_center().rounded(6).cursor_pointer()
-          .hover((s) => s.bg(t.hover)).when(on, (el) => el.bg(t.selected)).on_mouse_down("left", stop)
-          .on_click((_e, cx) => this.setStatus(kind, o.name, cx))
-          .child(div().w(14).h(14).flex_none().child(on ? icon("check", 14, t.foreground) : div()))
-          .child(div().flex_1().min_w(0).truncate().child(o.name));
-      })))
-      .when(options && !options.some((o) => sameStatus(o.name, cfg[kind])), (el) => el.child(note(t, `The project has no "${cfg[kind]}" status.`, t.blocked)));
-    const body = options === null ? note(t, "Loading statuses…")
-      : !options.length ? note(t, "This project has no Status field.")
-      : div().id("status-settings-body").max_h(360).overflow_y_scrollbar()
-        .child(v_flex().gap(14)
-          .child(group("backlog", "Backlog status", "Tickets here are the ones Start Grooming works through."))
-          .child(group("groomed", "Groomed status", "Ready tickets, listed under In Progress.")));
-    return this.dialogFrame(t, "status-settings", "Task settings", body);
   }
 
   sectionTitle(t, label) {

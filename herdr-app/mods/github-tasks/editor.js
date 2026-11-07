@@ -6,7 +6,7 @@ import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui
 import { run, setShared, theme } from "herdr";
 import { snapshot, isDirty, changes } from "./model.js";
 import { GitHubError, loadTask, loadStatusField, loadRepoLabels, saveTask } from "./loader.js";
-import { S, icon, stop, iconButton, action, gh } from "./ui.js";
+import { S, icon, stop, note, iconButton, action, gh } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { matchWorkflows } from "./match.js";
 import { loadWorkflows } from "./workflows.js";

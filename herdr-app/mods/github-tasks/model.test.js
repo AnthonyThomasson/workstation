@@ -188,7 +188,7 @@ test("status names match ignoring case, spaces and punctuation", () => {
 
 test("the grooming prompt has the agent ask the person how to clean up and prioritize before changing anything", () => {
   const p = groomPrompt({ repo: "me/app", project: { title: "Roadmap", url: "https://x/p" }, backlog: "Todo", groomed: "Up Next" });
-  assert.match(p, /ask the person how they want to go about cleaning/);
-  assert.match(p, /prioritiz/);
+  assert.match(p, /grill the person/);
+  for (const s of ["Audit the codebase", "Clean up old tickets", "Prepare tickets for new work"]) assert.ok(p.includes(s), s);
   assert.match(p, /Don't change anything yet/);
 });
