@@ -5,25 +5,28 @@
 import { div } from "gpui-kit";
 import { v_flex } from "gpui-base";
 import { theme } from "herdr";
-import { orchestratorPrompt, workerPrompt, reviewerPrompt, groomPrompt } from "./prompts.js";
+import { orchestratorPrompt, workerPrompt, reviewerPrompt } from "./prompts.js";
 import { ROLE_LABELS } from "./model.js";
-const LABELS = { ...ROLE_LABELS, groomer: "Grooming agent" };
+const LABELS = ROLE_LABELS;
 import { S, note } from "./ui.js";
 
 // What a run fills in, shown as it is in the prompts' own words.
 const SAMPLE = {
-  workflow: { name: "<workflow name>", orchestrator: {}, worker: {}, reviewer: {} },
+  workflow: {
+    name: "<workflow name>",
+    orchestrator: { planning: "<the workflow's planning prompt goes here>", retro: "<the workflow's retro prompt goes here>", prompt: "<the workflow's orchestrator prompt goes here>" },
+    worker: { prompt: "<the workflow's worker prompt goes here>" },
+    reviewer: { prompt: "<the workflow's reviewer prompt goes here>" },
+  },
   ticket: { number: 0, title: "<ticket title>" },
   repo: "<owner/repo>", runDir: "<run folder>", workDir: "<work folder>", branch: "<branch>",
 };
-const GROOM = { repo: "<owner/repo>", project: { title: "<project>", url: "<project url>" }, backlog: "<backlog status>", groomed: "<groomed status>" };
 const clean = (text) => text.replace(/#0 <ticket title>/g, "<ticket>");
 
 const PAGES = [
   ["orchestrator", "Directs the work: plans it, starts workers and reviewers, and decides what to fix.", orchestratorPrompt],
   ["worker", "Does one job the orchestrator gives it.", workerPrompt],
   ["reviewer", "Reads the finished work and reports findings. Read-only.", reviewerPrompt],
-  ["groomer", "Started by Start Grooming on the Tasks page. Reads the backlog, then asks you how to clean it up and prioritize.", () => groomPrompt(GROOM)],
 ];
 
 export class SettingsPage {
@@ -36,7 +39,7 @@ export class SettingsPage {
     return v_flex().id("workflow-settings").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
       .child(v_flex().flex_none().px(20).py(14).gap(4).border_b(1).border_color(t.border)
         .child(div().text_size(S().title).font_semibold().child("Workflow settings"))
-        .child(note(t, "What every run's orchestrator, workers and reviewers are told, in every workflow, and what the grooming agent is told. A workflow's own prompts are added at the end of the workflow ones.")))
+        .child(note(t, "What every run's orchestrator, workers and reviewers are told, in every workflow. A workflow's own prompts are added at the end of the workflow ones.")))
       .child(div().id("workflow-settings-body").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(20).py(16).gap(20).children(this.sections.map((s) => this.section(t, s)))));
   }
