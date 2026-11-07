@@ -24,7 +24,8 @@ const RECENT = "skillshare.recent.v1"; // install sources, newest first
 const HIDE_DISABLED = "skillshare.hideDisabled.v1"; // false lists disabled rows; unset or true hides them
 const IN_SYNC_VIEW = "skillshare.inSyncView.v1"; // "list", or unset for In sync skills/agents grouped by source
 const POLL = 20000, CHECK_EVERY = 10 * 60 * 1000, MACHINES_POLL = 60000, NOTICE_MS = 4000;
-const PATHS = 'PATH="$HOME/.local/bin:$HOME/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH';
+// SKILLSHARE_THEME: the panel runs without a terminal, so skillshare can't probe the theme and warns.
+const PATHS = 'PATH="$HOME/.local/bin:$HOME/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH; SKILLSHARE_THEME=dark; export SKILLSHARE_THEME';
 
 // ---- Running skillshare on the space's machine ----
 
