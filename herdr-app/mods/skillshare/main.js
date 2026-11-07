@@ -574,19 +574,19 @@ export default class Skillshare extends View {
   }
 
   doctorRow(t, c, scope, ignored = false) {
-    const color = c.status === "error" ? t.ansi1 : t.blocked;
+    const isError = c.status === "error";
+    const color = isError ? t.ansi1 : t.ansi3; // red for errors, yellow for warnings
     const key = doctorKey(scope, c);
     const id = `${scope}-${c.name}`;
     const action = c.status !== "warning" ? null
-      : ignored ? secondary(`restore-${id}`, "Restore", t, (_e, cx) => { setShared(IGNORED, ignoredList().filter((k) => k !== key)); cx.notify(); }, { h: 24, px: 8, size: S().label, quiet: true })
-      : secondary(`ignore-${id}`, "Ignore", t, () => openOverlay({ mod: "skillshare", kind: "dialog", width: 460, height: 230, props: { role: "ignore", key, name: c.name, scope } }), { h: 24, px: 8, size: S().label, quiet: true });
-    return v_flex().gap(4).px(12).py(8).rounded(8).border_1().border_color(t.border).bg(t.background)
+      : ignored ? secondary(`restore-${id}`, "Restore", t, (_e, cx) => { setShared(IGNORED, ignoredList().filter((k) => k !== key)); cx.notify(); }, { h: 26, px: 10, size: S().label })
+      : secondary(`ignore-${id}`, "Ignore", t, () => openOverlay({ mod: "skillshare", kind: "dialog", width: 460, height: 230, props: { role: "ignore", key, name: c.name, scope } }), { h: 26, px: 10, size: S().label, color: t.foreground });
+    return v_flex().gap(4).px(12).py(8).rounded(8).border_1().border_color(color).bg(t.background)
       .child(h_flex().gap(8).items_center()
         .child(dot(color, 8))
-        .child(div().flex_1().min_w(0).truncate().text_size(S().secondary).font_semibold().child(c.name))
-        .child(pill(c.status, t))
+        .child(div().flex_1().min_w(0).truncate().text_size(S().secondary).font_semibold().text_color(color).child(c.name))
         .when(Boolean(action), (el) => el.child(action)))
-      .child(div().text_size(S().secondary).text_color(t.foreground).child(c.message))
+      .child(div().text_size(S().secondary).text_color(color).child(c.message))
       .children((c.details ?? []).map((l) => div().text_size(S().label).text_color(t.muted).child(l)));
   }
 
