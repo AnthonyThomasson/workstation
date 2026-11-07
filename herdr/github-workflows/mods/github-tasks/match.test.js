@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseWorkflow, matchWorkflows, skillshareSource } from "./match.js";
+import { parseWorkflow, matchWorkflows, globalWorkflowsDir, repoWorkflowsDir } from "./match.js";
 
 const wf = (id, trigger) => parseWorkflow(JSON.stringify({ name: id, trigger }), { id, scope: "global" });
 const ids = (list) => list.map((w) => w.id);
@@ -41,9 +41,10 @@ test("a file that is not a workflow object is refused", () => {
   assert.throws(() => parseWorkflow("- a", { id: "x", scope: "global" }), /not a workflow object/);
 });
 
-test("skillshare's skills folder is read from its config", () => {
-  assert.equal(skillshareSource("sources:\n  skills: ~/skills # here\nother: 1\n", "/h"), "/h/skills");
-  assert.equal(skillshareSource("", "/h"), "/h/.config/skillshare/skills");
+test("global workflows are in the workflows folder of the Herdr home, a repo's in its .herdr folder", () => {
+  assert.equal(globalWorkflowsDir("/home/me/.config/herdr-app"), "/home/me/.config/herdr-app/workflows");
+  assert.equal(globalWorkflowsDir("/scratch/home/"), "/scratch/home/workflows");
+  assert.equal(repoWorkflowsDir("/code/app"), "/code/app/.herdr/workflows");
 });
 
 test("a YAML workflow file reads, and so does an old JSON one", () => {

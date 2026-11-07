@@ -25,13 +25,13 @@ export const MATCH_HINTS = {
   all: "Starts only once an issue has every one of these labels.",
 };
 // Where a workflow is kept. The folder it is in says which, so the file does not.
-//   global  in the workstation repo's herdr-app/workflows, which Skillshare's push and pull carry to
-//           other machines, and to other people using the same repo
+//   global  in the workflows folder of the Herdr home (~/.config/herdr-app/workflows), for every project
+//           on this computer
 //   repo    in <repo>/.herdr/workflows of the repo a space is in, committed with that project
 export const SCOPES = ["global", "repo"];
 export const SCOPE_LABELS = { global: "Global", repo: "Repo" };
 export const SCOPE_HINTS = {
-  global: "Kept in the workstation repo. Push it with Skillshare to sync it to your other machines and to other people.",
+  global: "Kept in ~/.config/herdr-app/workflows, for every project on this computer.",
   repo: "Kept in the repo's .herdr/workflows folder, to commit with the repo. Listed only while a space in that repo is selected.",
 };
 // Besides its own prompt, the orchestrator has one for planning the work and one for the retro after it.

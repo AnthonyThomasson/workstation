@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { makeStore, StoreError } from "./store.js";
 import { blank, ROLES } from "./model.js";
 
-const GLOBAL = "/ws/herdr-app/workflows", REPO = "/proj/.herdr/workflows";
+const GLOBAL = "/home/me/.config/herdr-app/workflows", REPO = "/proj/.herdr/workflows";
 const ALL = { global: GLOBAL, repo: REPO };
 
 // A disk in a Map. write() rejects like writeTextFile when the file is not what the caller expected.
@@ -21,7 +21,7 @@ function disk(files = {}) {
       },
       list: async (dir) => [...fs.keys()].filter((p) => p.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1)),
       remove: async (p) => { calls.push(["remove", p]); fs.delete(p); },
-      mkdir: async () => {},
+      mkdir: async (dir) => { calls.push(["mkdir", dir]); },
     },
   };
 }
@@ -43,6 +43,12 @@ test("a new workflow is written under its slug in the folder of the scope it is 
     assert.equal(saved.scope, scope);
     assert.deepEqual([...d.fs.keys()], [`${dir}/feature-work.yaml`]);
   }
+});
+
+test("saving a global workflow makes its folder first, since it may not exist yet", async () => {
+  const { d, store } = setup({ global: GLOBAL });
+  await store.save(wf("First"), "global");
+  assert.deepEqual(d.calls.slice(0, 2), [["mkdir", GLOBAL], ["write", `${GLOBAL}/first.yaml`]]);
 });
 
 test("the file holds the workflow and not where it is kept", async () => {

@@ -8,7 +8,7 @@ import { run, setShared, theme } from "herdr";
 import { ROLES, ROLE_PROMPTS, ROLE_LABELS, AGENTS, AGENT_LABELS, CUSTOM, EFFORTS, STRATEGIES, STRATEGY_LABELS, STRATEGY_HINTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, SCOPES, SCOPE_LABELS, SCOPE_HINTS, blank, normalize, isDirty, uniqueLabels } from "./model.js";
 import { StoreError } from "./store.js";
 import { S, icon, stop, iconButton, action } from "./ui.js";
-import { CHANGED, store, gh, codexModels, kimiModels, workstationRepo } from "./env.js";
+import { CHANGED, store, gh, codexModels, kimiModels, globalDirText } from "./env.js";
 import { modelsFor, matchModels, hasModel } from "./models.js";
 import { findRepo, loadLabels, matchLabels, hasLabel } from "./labels.js";
 
@@ -22,8 +22,6 @@ export class WorkflowEditor {
     this.scope = props?.scope ?? "global"; // where the file is kept (model.js SCOPES)
     this.baseScope = this.scope;
     this.repoRoot = props?.repoRoot ?? null; // the repo of the space this was opened from: where "Repo" is
-    this.workstation = null; // the workstation repo, where "Global" is; found below
-    this.ready = workstationRepo().then((root) => { this.workstation = root; cx.notify(); }, () => {});
     this.nameInput = InputState.new({ value: "", placeholder: "Feature development" });
     this.labelInput = InputState.new({ value: "", placeholder: "Type a label and press Enter" });
     this.triggerLabels = []; // the labels already added, shown as chips; the field holds the next one
@@ -191,14 +189,13 @@ export class WorkflowEditor {
     this.base = normalize(workflow);
   }
 
-  // The stores for what is known now: this workflow's repo and the workstation repo, where they exist.
+  // The store for what is known now: the global folder, and this workflow's repo where it has one.
   store() {
-    return store({ workstation: this.workstation, repo: this.repoRoot });
+    return store({ repo: this.repoRoot });
   }
 
   // Whether each scope can be saved to here, and why not when it cannot.
   unavailable(scope) {
-    if (scope === "global" && !this.workstation) return "No workstation repo found. Skillshare's skills aren't in a git repo with a herdr-app folder; set the repo in the Workflows panel.";
     if (scope === "repo" && !this.repoRoot) return "The space this was opened from isn't a git repo on this computer.";
     return null;
   }
@@ -214,7 +211,6 @@ export class WorkflowEditor {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        await this.ready; // the workstation repo, which a global workflow is in
         if (this.id) {
           const found = await this.store().load(this.scope, this.id);
           if (!found) throw new Error("This workflow's file is gone.");
@@ -262,7 +258,7 @@ export class WorkflowEditor {
         this.base = normalize(saved.workflow);
         this.triggerLabels = [...saved.workflow.trigger.labels]; // what was typed is now one of the chips
         this.labelInput.set_value("");
-        const where = { global: `in ${this.workstation}/herdr-app/workflows. Push it from the Skillshare panel to share it`, repo: `in ${this.repoRoot}/.herdr/workflows. Commit it with the repo` }[saved.scope];
+        const where = { global: `in ${globalDirText()}`, repo: `in ${this.repoRoot}/.herdr/workflows. Commit it with the repo` }[saved.scope];
         const extra = ` ${where}.`;
         this.notice = { kind: "saved", text: `Saved${extra}` };
         if (named) run("tab.rename", { name: saved.workflow.name });
@@ -392,7 +388,7 @@ export class WorkflowEditor {
         .child(div().text_size(S().label).text_color(t.muted).child(SCOPE_HINTS[this.scope] ?? ""))
         .when(Boolean(this.unavailable(this.scope)), (el) => el.child(div().text_size(S().label).text_color(t.ansi1).child(this.unavailable(this.scope))))
         .when(!this.unavailable(this.scope), (el) => el.child(div().text_size(S().label).text_color(t.muted)
-          .child(`In ${this.scope === "global" ? `${this.workstation}/herdr-app/workflows` : `${this.repoRoot}/.herdr/workflows`}.`))));
+          .child(`In ${this.scope === "global" ? globalDirText() : `${this.repoRoot}/.herdr/workflows`}.`))));
   }
 
   // The labels that start the workflow: the added ones as chips, a field that adds the next and completes from

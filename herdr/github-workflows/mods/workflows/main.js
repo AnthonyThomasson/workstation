@@ -1,28 +1,26 @@
 // Workflows: how work gets done. Each one names the GitHub labels that trigger it and how its
 // orchestrator, worker and reviewer run (prompt, agent, model, effort), kept as a YAML file. The panel
 // lists them by name and starts new ones; a click opens one in a tab of its own to edit (editor.js).
-// Two places hold them (model.js SCOPES): global, in the workstation repo, which Skillshare's push and
-// pull carry to other machines; and a repo's .herdr folder, committed with that project. A repo's are listed
-// only while a space in that repo is the selected one.
+// Two places hold them (model.js SCOPES): global, in ~/.config/herdr-app/workflows; and a repo's .herdr
+// folder, committed with that project. A repo's are listed only while a space in that repo is the selected one.
 // Roles (props.role): the panel (default); "toggle", the tab-bar button that opens or closes the
-// layout's shared side panel on this panel, as Tasks and Skillshare do; "editor", one workflow in the center;
+// layout's shared side panel on this panel, as Tasks does; "editor", one workflow in the center;
 // "settings", the built-in instructions of every role (settings.js);
 // "run", a started workflow's agents, beside its orchestrator (run.js).
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
 import { S, icon, stop, note, iconButton, action, segmented } from "./ui.js";
 import { WorkflowEditor } from "./editor.js";
 import { RunPage } from "./run.js";
 import { SettingsPage } from "./settings.js";
 import { SCOPE_LABELS } from "./model.js";
-import { CHANGED, REPO_KEY, store, repoDir, checkRepo, expandHome, workstationRepo, repoRootOf } from "./env.js";
+import { CHANGED, store, repoRootOf } from "./env.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "workflows";
-// The tabs over the list, as Skillshare's: everything, the selected space's repo, or the global ones.
+// The tabs over the list: everything, the selected space's repo, or the global ones.
 const TABS = [["all", "All"], ["repo", "Project"], ["global", "Global"]];
 const POLL = 5000; // a listing of a local folder costs nothing; this picks up files that arrive by git pull
-const FIND_EVERY = 30000; // how long the workstation repo, once looked for, is taken as found
 const baseName = (path) => String(path ?? "").split("/").filter(Boolean).pop() ?? "";
 function find(node, id) {
   if (node?.id === id) return node;
@@ -63,24 +61,19 @@ export default class Workflows extends View {
     this.loaded = false;
     this.error = null;
     this.lastCwd = new Map(); // each space's last known terminal folder; focus on a panel has none
-    this.workstation = null; // the workstation repo, where synced workflows are kept
-    this.foundAt = 0;
     this.repoRoot = null; // the repo of the selected space, whose .herdr workflows are listed
     this.ctxKey = null;
     this.confirming = null; // the workflow whose trash was pressed once; a second press deletes it
     this.changedAt = shared(CHANGED) ?? null; // a save in an editor tab refreshes the list
     this.wasHidden = true;
-    this.repoInput = InputState.new({ value: shared(REPO_KEY) ?? "", placeholder: "~/path/to/workstation" });
-    this.repoInput.on("submit", (_e, cx) => this.saveRepo(cx));
-    this.repoNote = null; // { text, ok } about the repo path just entered
     this.refresh(cx);
     // A hidden panel is not drawn, so it cannot notice being shown again: look while it shows.
     cx.timer.every(POLL, (cx) => { if (shownHere()) this.refresh(cx); });
     cx.spawn(async (cx) => { for (;;) { if ((await nextCommand()) === "focus") this.handle.focus(); cx.notify(); } });
   }
 
-  // Reads the lists again: the workstation repo (looked for now and then), the repo of the selected space
-  // (a space that is not in one, or is on another machine, has no repo workflows), and the workflows in them.
+  // Reads the lists again: the repo of the selected space (a space that is not in one, or is on another
+  // machine, has no repo workflows), and the workflows in it and in the global folder.
   // One at a time; a request made meanwhile runs once more when it ends.
   refresh(cx) {
     if (this.loading) { this.again = true; return; }
@@ -89,9 +82,8 @@ export default class Workflows extends View {
     const ctx = this.context();
     cx.spawn(async (cx) => {
       try {
-        if (Date.now() - this.foundAt > FIND_EVERY) { this.workstation = await workstationRepo(); this.foundAt = Date.now(); }
         this.repoRoot = await repoRootOf(ctx);
-        this.items = await store({ workstation: this.workstation, repo: this.repoRoot }).list();
+        this.items = await store({ repo: this.repoRoot }).list();
         this.error = null;
       } catch (e) {
         this.error = String(e?.message ?? e);
@@ -100,25 +92,6 @@ export default class Workflows extends View {
       this.loading = false;
       cx.notify();
       if (this.again) this.refresh(cx);
-    });
-  }
-
-  // Remembers where the workstation repo is, if it looks like one; empty goes back to finding it from Skillshare.
-  saveRepo(cx) {
-    const value = this.repoInput.value().trim();
-    cx.spawn(async (cx) => {
-      let ok = true;
-      if (!value) {
-        setShared(REPO_KEY, "");
-        this.repoNote = null;
-      } else {
-        ok = await checkRepo(expandHome(value).replace(/\/+$/, ""));
-        if (ok) { setShared(REPO_KEY, value); this.repoNote = { text: "Saved.", ok }; }
-        else this.repoNote = { text: "No herdr-app folder there, so nothing was saved.", ok };
-      }
-      this.foundAt = 0; // look again
-      this.refresh(cx);
-      cx.notify();
     });
   }
 
@@ -149,7 +122,7 @@ export default class Workflows extends View {
     }
     this.confirming = null;
     cx.spawn(async (cx) => {
-      try { await store({ workstation: this.workstation, repo: this.repoRoot }).remove(item.scope, item.id); } catch (e) { this.error = String(e?.message ?? e); }
+      try { await store({ repo: this.repoRoot }).remove(item.scope, item.id); } catch (e) { this.error = String(e?.message ?? e); }
       setShared(CHANGED, Date.now());
       this.refresh(cx);
     });
@@ -183,8 +156,7 @@ export default class Workflows extends View {
           .hover((s) => s.opacity(0.88)).on_mouse_down("left", stop).on_click(() => this.openWorkflow(null))
           .child(icon("plus", 14, t.solid_foreground))
           .child("New workflow")))
-      .child(this.renderList(t, ctx))
-      .when(this.needsRepoField(), (el) => el.child(this.renderRepo(t)));
+      .child(this.renderList(t, ctx));
   }
 
   renderList(t, ctx) {
@@ -223,24 +195,5 @@ export default class Workflows extends View {
         .text_size(S().label).text_color(t.muted).child(where)))
       .when(armed, (el) => el.child(div().flex_none().text_size(S().label).text_color(t.ansi1).child("Delete?")))
       .child(iconButton(`delete-${item.scope}-${item.id}`, "trash", t, (_e, cx) => this.trash(item, cx), armed ? t.ansi1 : t.muted));
-  }
-
-  // The field is only for when Skillshare doesn't lead to the repo: none found, or one set by hand
-  // (which stays editable). It also stays while a path was just entered, to show how that went.
-  needsRepoField() {
-    return !this.workstation || Boolean(repoDir()) || Boolean(this.repoNote);
-  }
-
-  // The workstation repo that synced workflows are kept in. Found from Skillshare's source; this field
-  // overrides it, for a machine where Skillshare is not set up that way.
-  renderRepo(t) {
-    const text = this.repoNote?.text ?? (this.workstation
-      ? `Global workflows are kept in ${this.workstation}/herdr-app/workflows${repoDir() ? "" : ", found from Skillshare"}. Push them from the Skillshare panel.`
-      : "No workstation repo found, so Global is off. Enter the folder of your workstation repo, which has a herdr-app folder. Enter saves.");
-    return v_flex().flex_none().px(14).py(10).gap(6).border_t(1).border_color(t.border)
-      .child(div().text_size(S().label).font_semibold().text_color(t.muted).child("Workstation repo"))
-      .child(div().id("repo-field").h(30).px(10).flex().items_center().rounded(8).border_1().border_color(t.input)
-        .on_mouse_down("left", stop).child(Input.new(this.repoInput).h_full().w_full().text_size(S().secondary).text_color(t.foreground)))
-      .child(note(t, text, this.repoNote && !this.repoNote.ok ? t.ansi1 : t.muted));
   }
 }
