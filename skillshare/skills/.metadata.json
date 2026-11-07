@@ -1,6 +1,20 @@
 {
   "version": 1,
   "entries": {
+    "herdr": {
+      "source": "https://github.com/herdrdev/herdr/blob/v0.9.5/skills/herdr/SKILL.md",
+      "type": "github-subdir",
+      "branch": "v0.9.5",
+      "installed_at": "2026-11-06T22:08:22.25309-06:00",
+      "repo_url": "https://github.com/herdrdev/herdr.git",
+      "subdir": "skills/herdr",
+      "version": "2ecf19a",
+      "tree_hash": "2be0d86d481d1bb29c62e11ef37b78d27d01b478",
+      "commit": "2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01",
+      "file_hashes": {
+        "SKILL.md": "sha256:fbd9d502767f7dff29c211505a0bd9ba34e980ed4cc456247e2adc1642883984"
+      }
+    },
     "skillshare": {
       "source": "github.com/runkids/skillshare/skills/skillshare",
       "type": "github-subdir",
