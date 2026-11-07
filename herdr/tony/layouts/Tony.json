@@ -58,6 +58,17 @@
               }
             },
             {
+              "id": "tasks",
+              "type": "block",
+              "size": {
+                "weight": 1
+              },
+              "min": 90,
+              "content": {
+                "mod": "github-tasks"
+              }
+            },
+            {
               "id": "agents",
               "type": "block",
               "size": {
@@ -249,7 +260,10 @@
                       "id": "github-tasks",
                       "type": "block",
                       "content": {
-                        "mod": "github-tasks"
+                        "mod": "github-tasks",
+                        "props": {
+                          "role": "settings"
+                        }
                       }
                     },
                     {

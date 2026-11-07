@@ -7,10 +7,11 @@ import { shared, setShared, theme } from "herdr";
 import { normalizeSettings, normalizeGroomer, sameStatus, groomPrompt, statusesKey, GROOMER_KEY, EFFORTS, CLAUDE_MODELS } from "./model.js";
 import { installedAgents } from "./groom.js";
 import { loadStatusField } from "./loader.js";
-import { S, icon, stop, note, gh } from "./ui.js";
+import { S, icon, stop, note, iconButton, gh } from "./ui.js";
 
 export class TaskSettings {
-  constructor(props, cx) {
+  constructor(props, cx, onClose) {
+    this.onClose = onClose ?? null; // set when the settings sit in the side panel, which needs a way to close
     this.repo = props?.repo ?? "";
     this.project = props?.project ?? null;
     this.where = props?.where ?? {};
@@ -47,9 +48,11 @@ export class TaskSettings {
     const real = (name) => options.find((o) => sameStatus(o.name, name))?.name ?? name;
     const prompt = groomPrompt({ repo: this.repo, project: this.project, backlog: real(cfg.backlog), groomed: real(cfg.groomed) });
     return v_flex().id("task-settings").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
-      .child(v_flex().flex_none().px(20).py(14).gap(4).border_b(1).border_color(t.border)
-        .child(div().text_size(S().title).font_semibold().child("Task settings"))
-        .child(note(t, `${this.repo}${this.project?.title ? ` · ${this.project.title}` : ""}`)))
+      .child(h_flex().flex_none().px(20).py(14).gap(8).items_start().border_b(1).border_color(t.border)
+        .child(v_flex().flex_1().min_w(0).gap(4)
+          .child(div().text_size(S().title).font_semibold().child("Task settings"))
+          .child(note(t, `${this.repo}${this.project?.title ? ` · ${this.project.title}` : ""}`)))
+        .when(Boolean(this.onClose), (el) => el.child(iconButton("settings-close", "close", t, () => this.onClose(), false, "Close"))))
       .child(div().id("task-settings-body").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(20).py(16).gap(20)
           .child(this.agentSection(t))

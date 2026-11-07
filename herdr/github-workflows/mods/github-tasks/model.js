@@ -19,9 +19,9 @@ export function normalizeItems(nodes, repo) {
     if (!content || node.isArchived) continue;
     const status = node.status?.name ?? null;
     if (content.__typename === "DraftIssue") {
-      tickets.push({ key: node.id, contentId: content.id ?? null, draft: true, number: null, title: content.title, url: null, state: "OPEN", reason: null, createdAt: content.createdAt, status });
+      tickets.push({ key: node.id, contentId: content.id ?? null, draft: true, number: null, title: content.title, url: null, state: "OPEN", reason: null, createdAt: content.createdAt, closedAt: null, status, labels: [] });
     } else if (content.__typename === "Issue" && content.repository?.nameWithOwner?.toLowerCase() === wanted) {
-      tickets.push({ key: node.id, draft: false, number: content.number, title: content.title, url: content.url, state: content.state, reason: content.stateReason ?? null, createdAt: content.createdAt, status });
+      tickets.push({ key: node.id, draft: false, number: content.number, title: content.title, url: content.url, state: content.state, reason: content.stateReason ?? null, createdAt: content.createdAt, closedAt: content.closedAt ?? null, status, labels: (content.labels?.nodes ?? []).map((l) => l.name) });
     }
   }
   return tickets;
@@ -45,6 +45,24 @@ export function groupTickets(tickets) {
     tickets: closed.filter((t) => (known.has(t.reason) ? t.reason : "OTHER") === key).sort(newestFirst),
   }));
   return { open, closed: sections.filter((s) => s.tickets.length) };
+}
+
+const DAY = 24 * 60 * 60 * 1000;
+
+// Tickets closed as done within the last day, most recently closed first. closed: groupTickets' closed sections.
+// A ticket closed as not planned or a duplicate wasn't done, so it is left out.
+export function recentlyDone(closed, now = Date.now()) {
+  const at = (t) => Date.parse(t.closedAt);
+  return (closed ?? []).filter((s) => s.key !== "NOT_PLANNED" && s.key !== "DUPLICATE").flatMap((s) => s.tickets)
+    .filter((t) => at(t) <= now && now - at(t) < DAY).sort((a, b) => at(b) - at(a));
+}
+
+// A title that fits max characters, losing its middle: "Some big name ... of the task".
+export function middleEllipsis(text, max) {
+  const s = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (s.length <= max) return s;
+  const keep = Math.max(2, max - 5), head = Math.ceil(keep / 2), tail = keep - head;
+  return `${s.slice(0, head).trimEnd()} ... ${s.slice(s.length - tail).trimStart()}`;
 }
 
 // The saved project if it's still linked, else the first, which is the most recently updated.
@@ -174,11 +192,11 @@ export const statusKey = (name) => String(name ?? "").toLowerCase().replace(/[^a
 export const sameStatus = (a, b) => statusKey(a) === statusKey(b);
 const same = sameStatus;
 
-// The open tickets by stage, newest first: { inProgress, groomed, backlog }. A ticket in any other status is left out.
+// The open tickets by stage, newest first: { inProgress, inReview, groomed, backlog }. A ticket in any other status is left out.
 export function groupByStage(open, settings) {
   const s = normalizeSettings(settings);
   const pick = (name) => (open ?? []).filter((t) => same(t.status, name)).sort(newestFirst);
-  return { inProgress: pick("In progress"), groomed: pick(s.groomed), backlog: pick(s.backlog) };
+  return { inProgress: pick("In progress"), inReview: pick("In review"), groomed: pick(s.groomed), backlog: pick(s.backlog) };
 }
 
 // What the agent is first told. It reads the backlog itself with gh; nothing from the tickets is pasted in.

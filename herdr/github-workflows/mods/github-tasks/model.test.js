@@ -152,7 +152,7 @@ test("a save needs a title and a status the project has", () => {
   assert.equal(checkTask({ title: "T", status: null }, options), null);
 });
 
-import { normalizeSettings, groupByStage, groomPrompt, setupPrompt, groomArgv, normalizeGroomer, DEFAULT_STATUSES } from "./model.js";
+import { normalizeSettings, groupByStage, groomPrompt, setupPrompt, groomArgv, normalizeGroomer, DEFAULT_STATUSES, recentlyDone, middleEllipsis } from "./model.js";
 
 test("grooming statuses default to To Do and Up Next", () => {
   assert.deepEqual(normalizeSettings(undefined), DEFAULT_STATUSES);
@@ -212,4 +212,29 @@ test("the setup prompt has the agent search the modules and ask the person quest
   assert.match(p, /Ask one question at a time/);
   assert.match(p, /Don't change anything yet/);
   assert.match(p, /wait for the person to agree before you change anything/);
+});
+
+test("recentlyDone: only what was closed as done in the last day, newest first", () => {
+  const now = Date.parse("2026-11-07T12:00:00Z");
+  const done = (key, closedAt) => ticket(key, "2026-01-01T00:00:00Z", { state: "CLOSED", reason: "COMPLETED", closedAt });
+  const sections = [
+    { key: "COMPLETED", tickets: [done("old", "2026-11-05T12:00:00Z"), done("a", "2026-11-07T01:00:00Z"), done("b", "2026-11-07T09:00:00Z")] },
+    { key: "NOT_PLANNED", tickets: [done("no", "2026-11-07T09:00:00Z")] },
+  ];
+  assert.deepEqual(recentlyDone(sections, now).map((t) => t.key), ["b", "a"]);
+  assert.deepEqual(recentlyDone([], now), []);
+});
+
+test("middleEllipsis keeps both ends of a long name and leaves a short one alone", () => {
+  assert.equal(middleEllipsis("Short", 20), "Short");
+  const cut = middleEllipsis("Some big name of the task that goes on", 20);
+  assert.ok(cut.length <= 20, cut);
+  assert.ok(cut.startsWith("Some") && cut.includes(" ... ") && cut.endsWith("on"));
+});
+
+test("groupByStage finds In review whatever its spelling", () => {
+  const open = [ticket("r", "2026-01-01T00:00:00Z", { status: "In Review" }), ticket("p", "2026-01-01T00:00:00Z", { status: "In progress" })];
+  const g = groupByStage(open, {});
+  assert.deepEqual(g.inReview.map((t) => t.key), ["r"]);
+  assert.deepEqual(g.inProgress.map((t) => t.key), ["p"]);
 });

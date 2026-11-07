@@ -43,6 +43,8 @@ const ITEMS_QUERY = `query($id: ID!, $cursor: String) {
               state
               stateReason(enableDuplicate: true)
               createdAt
+              closedAt
+              labels(first: 30) { nodes { name } }
               repository { nameWithOwner }
             }
           }
@@ -166,7 +168,7 @@ export async function createDraft(gh, projectId, title, where) {
   const item = r.code === 0 ? parse(r.stdout)?.data?.addProjectV2DraftIssue?.projectItem : null;
   if (!item?.id) throw new GitHubError(r.stderr || r.stdout);
   const c = item.content ?? {};
-  return { key: item.id, contentId: c.id ?? null, draft: true, number: null, title: c.title ?? title, url: null, state: "OPEN", reason: null, createdAt: c.createdAt ?? new Date().toISOString(), status: null };
+  return { key: item.id, contentId: c.id ?? null, draft: true, number: null, title: c.title ?? title, url: null, state: "OPEN", reason: null, createdAt: c.createdAt ?? new Date().toISOString(), closedAt: null, status: null, labels: [] };
 }
 
 // The ticket as GitHub has it now: { title, body, labels: [name], updatedAt }. An issue is read by gh

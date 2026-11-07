@@ -27,6 +27,7 @@ export class TaskEditor {
     this.project = props?.project ?? null;
     this.where = props?.where ?? {};
     this.draft = Boolean(this.ticket.draft);
+    this.autoStart = Boolean(props?.autoStart); // the sidebar's Start asked for several workflows or none: show the dialog once loaded
 
     this.auth = new Auth();
     this.titleInput = InputState.new({ value: this.ticket.title ?? "" });
@@ -95,6 +96,7 @@ export class TaskEditor {
         this.base = snapshot({ ...task.value, status: this.status });
         this.loaded = true;
         this.checkStartable(cx);
+        if (this.autoStart) { this.autoStart = false; this.openStart(cx); }
       }
       cx.notify();
     });

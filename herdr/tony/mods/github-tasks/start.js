@@ -11,6 +11,16 @@ const out = (r) => (r.stderr || r.stdout).trim();
 // A live orchestrator with this label value.
 const liveOrchestrator = (label, value) => terminals().find((k) => k.state === "live" && k.labels?.[ROLE_LABEL] === "orchestrator" && k.labels?.[label] === value) ?? null;
 
+// The live run's orchestrator for a ticket, or null. Start becomes View while one is going.
+export const liveRunFor = (repo, ticket) => liveOrchestrator(TICKET_LABEL, ticketKey(repo, ticket));
+
+// Brings a run's tab to the front.
+export function viewRun(running) {
+  const { "herdr.space": space, "herdr.tab": tab } = running.labels;
+  if (space) run("space.select", { id: space });
+  if (tab) run("tab.select", { id: tab });
+}
+
 // One app command, waited for, with what it made ({ tab, terminal, pane, ... }).
 async function app(name, args) {
   const r = await exec("herdr-app", ["do", name, ...Object.entries(args).flatMap(([k, v]) => [`--${k}`, typeof v === "string" ? v : JSON.stringify(v)])]);
@@ -106,9 +116,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   const key = ticketKey(repo, ticket);
   const running = liveOrchestrator(TICKET_LABEL, key);
   if (running) {
-    const { "herdr.space": space, "herdr.tab": tab } = running.labels;
-    if (space) run("space.select", { id: space });
-    if (tab) run("tab.select", { id: tab });
+    viewRun(running);
     return { resumed: true };
   }
 
