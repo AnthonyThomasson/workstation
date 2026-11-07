@@ -169,7 +169,7 @@ export default class Skillshare extends View {
     this.ctx = null; this.project = null; this.raw = {}; this.items = []; this.git = null; this.loading = false; this.loadedAt = 0;
     this.checks = {}; this.checkedAt = 0; this.nextRequest = channel.listen(); this.shownNotice = null;
     this.lastAgent = null; this.machines = {}; this.machinesAt = 0; this.version = null; this.token = 0;
-    this.doctor = null; this.doctorAt = 0; this.doctorLoading = false; this.doctorError = null;
+    this.doctor = null; this.doctorAt = 0; this.doctorLoading = false; this.doctorError = null; this.doctorIgnoredOpen = false;
     this.filter = InputState.new({ placeholder: "Filter by name or source" });
     this.filter.on("change", (_e, cx) => { this.query = this.filter.value(); cx.notify(); });
     // No remote work while the panel is hidden; showing it again refreshes (see render).
@@ -612,8 +612,12 @@ export default class Skillshare extends View {
       if (!errors.length && !warns.length) body.push(note(t, "No errors or warnings."));
       body.push(...errors.map((c) => this.doctorRow(t, c, r.scope)), ...warns.map((c) => this.doctorRow(t, c, r.scope)));
       if (ignored.length) {
-        body.push(sectionLabel(t, `Ignored · ${ignored.length}`));
-        body.push(...ignored.map((c) => this.doctorRow(t, c, r.scope, true)));
+        const open = this.doctorIgnoredOpen;
+        body.push(h_flex().id(`ignored-${r.scope}`).h(26).gap(6).items_center().cursor_pointer().hover((s) => s.text_color(t.foreground))
+          .on_mouse_down("left", stop).on_click((_e, cx) => { this.doctorIgnoredOpen = !this.doctorIgnoredOpen; cx.notify(); })
+          .child(icon(open ? "chevron-down" : "chevron-right", 12, t.muted))
+          .child(sectionLabel(t, `Ignored · ${ignored.length}`)));
+        if (open) body.push(...ignored.map((c) => this.doctorRow(t, c, r.scope, true)));
       }
     }
     return v_flex().flex_1().min_h(0).child(header)
