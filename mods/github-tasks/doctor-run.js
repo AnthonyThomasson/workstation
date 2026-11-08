@@ -53,7 +53,10 @@ export async function gather(place, deps) {
 // issues are kept for this place while gh cannot say.
 export async function check(place, deps, previous = null) {
   const inputs = await gather(place && { cwd: place.cwd, on: place.on }, deps);
-  const prior = previous && doctorFor(previous, place) && (inputs.repo === undefined || previous.repo === inputs.repo) ? previous : null;
+  // Kept only for the same repo, and for the same project once this check has found one.
+  const sameRepo = inputs.repo === undefined || previous?.repo === inputs.repo;
+  const sameProject = !inputs.project || previous?.project?.id === inputs.project.id;
+  const prior = previous && doctorFor(previous, place) && sameRepo && sameProject ? previous : null;
   const issues = diagnose({ ...inputs, carried: prior?.issues });
   return {
     issues,
@@ -79,28 +82,38 @@ export class Doctor {
     cx.spawn((cx) => this.look(force, (ms) => cx.sleep(ms)));
   }
 
-  // The place as the checks see it: { cwd, on, root }, or null with no place yet.
-  async place() {
+  // The place as the checks see it: { cwd, on, root }, or null with no place yet. arm() is called before a lookup that is not
+  // cached, which is the only one that can hang. Only an answer is kept; a failed lookup is asked again next time.
+  async place(arm) {
     const at = this.deps.shared(PLACE);
     if (!at) return null;
     const key = `${at.on ?? ""}|${at.cwd ?? ""}`;
-    if (!this.roots.has(key)) this.roots.set(key, await attempt(this.deps.repoRootOf({ cwd: at.cwd, on: at.on })).then((r) => r.value ?? null));
+    if (!this.roots.has(key)) {
+      arm();
+      const found = await attempt(this.deps.repoRootOf({ cwd: at.cwd, on: at.on }));
+      if (found.error) return { cwd: at.cwd, on: at.on, root: null };
+      this.roots.set(key, found.value ?? null);
+    }
     return { cwd: at.cwd, on: at.on, root: this.roots.get(key) };
   }
 
   // The inputs of the signature other than the place.
   rest() { return { workflowsChanged: this.deps.shared(WORKFLOWS_CHANGED), groomer: { agent: this.deps.groomerAgent() } }; }
 
-  // A check, when forced or when something it depends on changed. One at a time, and none that takes longer than TIMEOUT.
-  // Without a place, only a forced check runs: the place is published a moment after the mod starts, and an answer for no place
-  // would only be thrown away. sleep(ms): resolves after ms.
+  // A check, when forced or when something it depends on changed. One at a time, and none that takes longer than TIMEOUT. The
+  // timeout starts only once there is something to wait for (a lookup or a check), so looks that find nothing to do leave nothing
+  // pending. Without a place, only a forced check runs: the place is published a moment after the mod starts, and an answer for
+  // no place would only be thrown away. sleep(ms): resolves after ms.
   async look(force, sleep = () => new Promise(() => {})) {
     if (this.running) return;
     this.running = true;
     const mine = ++this.generation;
     const TIMED_OUT = Symbol("timed out");
+    let armed = false, expire;
+    const timeout = new Promise((resolve) => { expire = resolve; });
+    const arm = () => { if (!armed) { armed = true; sleep(TIMEOUT).then(() => expire(TIMED_OUT)); } };
     try {
-      const outcome = await Promise.race([this.work(force, mine), sleep(TIMEOUT).then(() => TIMED_OUT)]);
+      const outcome = await Promise.race([this.work(force, mine, arm), timeout]);
       if (outcome === TIMED_OUT) { this.generation++; this.sig = null; } // the next look starts over
     } catch {
       this.sig = null; // the doctor never breaks the panel: the last answer stays, and the next look tries again
@@ -109,12 +122,13 @@ export class Doctor {
     }
   }
 
-  async work(force, mine) {
-    const place = await this.place();
+  async work(force, mine, arm) {
+    const place = await this.place(arm);
     if (mine !== this.generation || (!place && !force)) return;
     const rest = this.rest(), sig = doctorSignature({ place, ...rest });
     if (!force && sig === this.sig) return;
     this.sig = sig;
+    arm();
     const current = this.deps.shared(DOCTOR_KEY);
     const found = await check(place, this.deps, current);
     if (mine !== this.generation) return; // given up on while it ran

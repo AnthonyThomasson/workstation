@@ -92,6 +92,19 @@ test("a repo view that fails for another reason keeps the last project issues fo
   assert.deepEqual((await check(place, fakes({ repo: notARepo }), first)).issues, []);
 });
 
+test("previous project issues are carried only for the same project", async () => {
+  const one = fakes({ field: { code: 0, stdout: JSON.stringify({ data: { node: { field: { id: "F", options: [{ id: "1", name: "To Do" }] } } } }), stderr: "" } });
+  const first = await check(place, one);
+  const other = { ...PROJECT, id: "P2", title: "other" };
+  const sameRepoNewProject = fakes({
+    projects: { code: 0, stdout: JSON.stringify({ data: { repository: { projectsV2: { nodes: [other] } } } }), stderr: "" },
+    field: { code: 1, stdout: "", stderr: "HTTP 502" },
+  });
+  assert.deepEqual((await check(place, sameRepoNewProject, first)).issues, [], "another project's status issues are not carried");
+  const sameProject = fakes({ field: { code: 1, stdout: "", stderr: "HTTP 502" } });
+  assert.deepEqual((await check(place, sameProject, first)).issues, first.issues);
+});
+
 test("gh signed out skips the project questions and keeps the last project issues", async () => {
   const deps = fakes({ auth: { code: 1, stdout: "", stderr: "You are not logged into any GitHub hosts." } });
   const found = await check(place, deps);
@@ -255,4 +268,38 @@ test("a check that throws leaves the last answer and is tried again", async () =
   await doctor.look(false);
   assert.equal(doctor.running, false);
   assert.equal(doctor.sig, null);
+});
+
+test("a look with nothing to do starts no timeout", async () => {
+  const deps = fakes();
+  const doctor = watcher(deps);
+  at(deps, "/repo");
+  await doctor.look(false); // the first look checks
+  const asked = [];
+  const sleep = async (ms) => { asked.push(ms); };
+  await doctor.look(false, sleep); // nothing changed: no work, no timer
+  await doctor.look(false, sleep);
+  assert.deepEqual(asked, []);
+  deps.store.set(WORKFLOWS_CHANGED, 9);
+  await doctor.look(false, () => new Promise(() => { asked.push("check"); }));
+  assert.deepEqual(asked, ["check"], "a check starts one");
+  const none = watcher(fakes());
+  await none.look(false, sleep); // no place yet
+  assert.deepEqual(asked, ["check"]);
+});
+
+test("a failed repo-root lookup is asked again; an answer is kept", async () => {
+  let fail = true, asked = 0;
+  const deps = fakes({ deps: { repoRootOf: async () => { asked++; if (fail) throw new Error("transient"); return "/repo"; } } });
+  const doctor = watcher(deps);
+  at(deps, "/repo/src");
+  await doctor.look(false);
+  assert.equal(deps.store.get(DOCTOR_KEY).place.root, null);
+  fail = false;
+  await doctor.look(false); // the signature changes with the root, so this checks again
+  assert.equal(deps.store.get(DOCTOR_KEY).place.root, "/repo");
+  const n = asked;
+  await doctor.look(false);
+  await doctor.look(false);
+  assert.equal(asked, n, "the answer is cached");
 });
