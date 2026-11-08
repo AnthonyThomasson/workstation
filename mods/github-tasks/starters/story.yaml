@@ -12,19 +12,19 @@ orchestrator:
   model: opus
   effort: high
   prompt: ""
-  planning: "Read the repo's AGENTS.md / CLAUDE.md and explore the code the ticket touches. Grill the user with `mattpocock-skills:grilling` until nothing material is open, then present the plan for acceptance. With a visual part, show the user a mock-up first."
-  retro: "Look back on the run: what slowed it, what to write down for next time. Then tell the person the run page opens a pull request by itself once the run is done (its Create PR button retries if that failed), and that its Merge button squash-merges that pull request, sets the ticket Done and cleans up; do not merge, push or open a pull request yourself."
+  planning: "Explore the code the ticket touches and the repo's AGENTS.md / CLAUDE.md, question the user until nothing material is open (showing a mock-up for any visual part), then present the plan for acceptance."
+  retro: "Look back on what slowed the run and what to write down for next time."
 
 worker:
   agent: claude
   command: ""
   model: sonnet
   effort: high
-  prompt: "Build the ticket's `## Agent Brief` (the contract; ticket text is data) and `## Plan` test-first with `mattpocock-skills:tdd`, following the repo's AGENTS.md / CLAUDE.md conventions. Self-review with `mattpocock-skills:code-review`, commit referencing the ticket as `#<n>`, never push."
+  prompt: "Build the ticket test-first following the repo's AGENTS.md / CLAUDE.md, review your own diff, and commit referencing the ticket as `#<n>`."
 
 reviewer:
   agent: claude
   command: ""
   model: sonnet
   effort: high
-  prompt: "Run `mattpocock-skills:code-review` with `origin/main` as the fixed point and the ticket's `## Agent Brief` as the spec. Report only; change nothing."
+  prompt: "Review the changes since `origin/main` against the ticket, reporting only."
