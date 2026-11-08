@@ -199,6 +199,8 @@ test("the signature changes with what the check depends on, and only then", () =
   assert.notEqual(doctorSignature({ ...base, workflowsChanged: 2 }), sig);
   assert.notEqual(doctorSignature({ ...base, groomer: { agent: "codex" } }), sig);
   assert.notEqual(doctorSignature({ ...base, place: { cwd: "/a/src" } }), sig, "with no repo the folder itself counts");
+  assert.equal(doctorSignature({ ...base, project: null }), sig, "no picked project is the same as none given");
+  assert.notEqual(doctorSignature({ ...base, project: "P2" }), sig);
 });
 
 test("an answer is only for the place it was made for", () => {

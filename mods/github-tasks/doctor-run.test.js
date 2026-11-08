@@ -249,15 +249,64 @@ test("a hung check is given up on after the timeout, and the next look starts ov
   assert.equal(deps.store.get(DOCTOR_KEY).place.cwd, "/other");
 });
 
-test("after a timeout the same place is checked again at the next look", async () => {
+test("after a timeout nothing new is started until the forced check, unless the place or what it depends on changes", async () => {
   let hang = true;
   const deps = fakes({ auth: () => (hang ? new Promise(() => {}) : OK_AUTH) });
   const doctor = watcher(deps);
   at(deps, "/repo");
   await doctor.look(false, async () => {});
+  const stuck = deps.calls.length;
   hang = false;
   await doctor.look(false);
+  await doctor.look(false);
+  assert.equal(deps.calls.length, stuck, "the 2s looks start no more checks");
+  assert.equal(deps.writes.length, 0);
+  await doctor.look(true); // the 60s check tries again
   assert.equal(deps.writes.length, 1);
+});
+
+test("after a timeout a changed place or workflow still checks at the next look", async () => {
+  for (const change of [(deps) => at(deps, "/other"), (deps) => deps.store.set(WORKFLOWS_CHANGED, 3)]) {
+    const deps = fakes({ auth: () => new Promise(() => {}) });
+    const doctor = watcher(deps);
+    at(deps, "/repo");
+    await doctor.look(false, async () => {});
+    const stuck = deps.calls.length;
+    change(deps);
+    deps.answers.auth = OK_AUTH;
+    await doctor.look(false);
+    assert.ok(deps.calls.length > stuck);
+  }
+});
+
+test("a repo-root lookup that hangs is not asked again by the 2s looks", async () => {
+  let asked = 0;
+  const deps = fakes({ deps: { repoRootOf: () => { asked++; return new Promise(() => {}); } } });
+  const doctor = watcher(deps);
+  at(deps, "/repo");
+  await doctor.look(false, async () => {});
+  await doctor.look(false);
+  await doctor.look(false);
+  assert.equal(asked, 1);
+  await doctor.look(true, async () => {});
+  assert.equal(asked, 2, "the forced check asks again");
+});
+
+test("picking another project in the sidebar checks again at the next look", async () => {
+  let picked;
+  const deps = fakes({ deps: { chosenProject: () => picked } });
+  const doctor = watcher(deps);
+  at(deps, "/repo");
+  await doctor.look(false);
+  const n = deps.calls.length;
+  await doctor.look(false);
+  assert.equal(deps.calls.length, n, "nothing changed: no check");
+  picked = "P2";
+  await doctor.look(false);
+  assert.ok(deps.calls.length > n, "the picked project changed");
+  const m = deps.calls.length;
+  await doctor.look(false);
+  assert.equal(deps.calls.length, m, "and settles after one check");
 });
 
 test("a check that throws leaves the last answer and is tried again", async () => {

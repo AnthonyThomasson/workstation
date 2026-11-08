@@ -70,6 +70,7 @@ export class Doctor {
   constructor(cx, deps) {
     this.deps = deps;
     this.sig = null; // what the last check started for; null to check at the next look
+    this.stuck = null; // the state a check timed out in: the 2s looks start nothing more until it changes or the 60s check comes
     this.running = false;
     this.generation = 0; // a check that was given up on is a past generation, and publishes nothing
     this.roots = new Map(); // cwd -> its repo's top folder, so a folder is asked about once
@@ -97,8 +98,21 @@ export class Doctor {
     return { cwd: at.cwd, on: at.on, root: this.roots.get(key) };
   }
 
-  // The inputs of the signature other than the place.
-  rest() { return { workflowsChanged: this.deps.shared(WORKFLOWS_CHANGED), groomer: { agent: this.deps.groomerAgent() } }; }
+  // The inputs of the signature other than the place. The project is the one picked in the sidebar for the repo of the last
+  // answer for this place (`at`: { cwd, on }), so picking another is seen at the next look, not at the slow check.
+  rest(at) {
+    const repo = doctorFor(this.deps.shared(DOCTOR_KEY), at ?? null)?.repo;
+    return {
+      workflowsChanged: this.deps.shared(WORKFLOWS_CHANGED), groomer: { agent: this.deps.groomerAgent() },
+      project: repo ? this.deps.chosenProject(repo) ?? null : null,
+    };
+  }
+
+  // The state as the 2s look sees it before any lookup: the place as published, and the rest.
+  state() {
+    const at = this.deps.shared(PLACE) ?? null;
+    return JSON.stringify([at?.on ?? null, at?.cwd ?? null, this.rest(at)]);
+  }
 
   // A check, when forced or when something it depends on changed. One at a time, and none that takes longer than TIMEOUT. The
   // timeout starts only once there is something to wait for (a lookup or a check), so looks that find nothing to do leave nothing
@@ -106,6 +120,9 @@ export class Doctor {
   // no place would only be thrown away. sleep(ms): resolves after ms.
   async look(force, sleep = () => new Promise(() => {})) {
     if (this.running) return;
+    const state = this.state();
+    if (force) this.stuck = null;
+    else if (this.stuck === state) return; // a check timed out in this state: wait for the 60s check or a change
     this.running = true;
     const mine = ++this.generation;
     const TIMED_OUT = Symbol("timed out");
@@ -114,7 +131,7 @@ export class Doctor {
     const arm = () => { if (!armed) { armed = true; sleep(TIMEOUT).then(() => expire(TIMED_OUT)); } };
     try {
       const outcome = await Promise.race([this.work(force, mine, arm), timeout]);
-      if (outcome === TIMED_OUT) { this.generation++; this.sig = null; } // the next look starts over
+      if (outcome === TIMED_OUT) { this.generation++; this.sig = null; this.stuck = state; } // not again until the 60s check, or the place or its inputs change
     } catch {
       this.sig = null; // the doctor never breaks the panel: the last answer stays, and the next look tries again
     } finally {
@@ -125,7 +142,7 @@ export class Doctor {
   async work(force, mine, arm) {
     const place = await this.place(arm);
     if (mine !== this.generation || (!place && !force)) return;
-    const rest = this.rest(), sig = doctorSignature({ place, ...rest });
+    const rest = this.rest(place), sig = doctorSignature({ place, ...rest });
     if (!force && sig === this.sig) return;
     this.sig = sig;
     arm();
@@ -135,7 +152,9 @@ export class Doctor {
     // The place or what it depends on moved on while this ran: this answer is not for it, so look again.
     const now = this.deps.shared(PLACE) ?? null;
     if ((now?.cwd ?? null) !== (place?.cwd ?? null) || (now?.on ?? null) !== (place?.on ?? null)
-      || doctorSignature({ place, ...this.rest() }) !== sig) { this.sig = null; return; }
+      || doctorSignature({ place, ...this.rest(place) }) !== sig) { this.sig = null; return; }
     if (JSON.stringify(this.deps.shared(DOCTOR_KEY)) !== JSON.stringify(found)) this.deps.setShared(DOCTOR_KEY, found);
+    // The answer names the repo, so the picked project is now part of the signature: settle on it, or the next look checks again.
+    this.sig = doctorSignature({ place, ...this.rest(place) });
   }
 }

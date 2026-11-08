@@ -95,8 +95,8 @@ export function parseAuthStatus({ code, stdout = "", stderr = "" }) {
 
 // What a check depends on. When it changes, the check runs again. The place is its repo's top folder (cwd when it has none),
 // so moving about inside one repo is not a change.
-export const doctorSignature = ({ place, workflowsChanged, groomer }) => JSON.stringify([
-  place?.root ?? place?.cwd ?? null, place?.on ?? null, workflowsChanged ?? null, groomer?.agent ?? null,
+export const doctorSignature = ({ place, workflowsChanged, groomer, project }) => JSON.stringify([
+  place?.root ?? place?.cwd ?? null, place?.on ?? null, workflowsChanged ?? null, groomer?.agent ?? null, project ?? null,
 ]);
 
 // Whether a check made for `checked` ({ cwd, on, root }) still describes `place` ({ cwd, on }): the same machine, and the same
