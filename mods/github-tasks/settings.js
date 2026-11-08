@@ -1,4 +1,4 @@
-// The Tasks settings page: four collapsible agent sections, each with a read-only prompt tab, then the workflows
+// The Tasks settings page: four agent sections (only New Task collapses), each with a read-only prompt tab, then the workflows
 // (workflow-list.js), which main.js builds once so they keep their place between renders. The agent controls are
 // global; the prompt tabs carry a snapshot of the current repo/project/status spellings. Not a View of its own:
 // main.js builds one and draws it from render.
@@ -11,15 +11,14 @@ import { installedAgents } from "./groom.js";
 import { loadStatusField } from "./loader.js";
 import { normalizeSettingsSections, markdownLiteral } from "./settings-model.js";
 import { DOCTOR_KEY, fixPrompt, doctorFor } from "./doctor.js";
-import { PROMPT_HINTS } from "./prompts-page.js";
 import { S, stop, note, icon, iconButton, action, gh } from "./ui.js";
 
 const SECTIONS_KEY = "github-tasks.settingsSections";
 const SECTIONS = [
-  { role: "newTask", label: "New Task", hint: PROMPT_HINTS.newTask },
-  { role: "orchestrator", label: "Orchestrator", hint: PROMPT_HINTS.orchestrator },
-  { role: "worker", label: "Worker", hint: PROMPT_HINTS.worker },
-  { role: "reviewer", label: "Reviewer", hint: PROMPT_HINTS.reviewer },
+  { role: "newTask", label: "New Task" },
+  { role: "orchestrator", label: "Orchestrator" },
+  { role: "worker", label: "Worker" },
+  { role: "reviewer", label: "Reviewer" },
 ];
 
 export class TaskSettings {
@@ -117,7 +116,12 @@ export class TaskSettings {
           .child(action("doctor-copy", this.copied ? "Copied" : "Copy prompt", t, (_e, cx) => { cx.write_to_clipboard(prompt); this.copied = true; cx.notify(); }))));
   }
 
-  section(t, cx, { role, label, hint }) {
+  section(t, cx, { role, label }) {
+    const prompt = action(`settings-${role}-prompt`, "Prompt", t, () => this.openPrompt(role), true);
+    // Orchestrator, Worker and Reviewer have nothing to set: just the name and a button to see the prompt.
+    if (role !== "newTask") return h_flex().id(`settings-${role}`).flex_none().h(30).gap(6).items_center()
+      .child(div().flex_1().min_w(0).truncate().text_size(S().title).font_semibold().child(label))
+      .child(prompt);
     const open = this.sections()[role];
     return v_flex().id(`settings-${role}`).flex_none().gap(8)
       .child(h_flex().gap(6).items_center()
@@ -125,9 +129,8 @@ export class TaskSettings {
           .hover((s) => s.text_color(t.muted)).on_mouse_down("left", stop).on_click((_e, cx) => this.toggleSection(role, cx))
           .child(icon(open ? "chevron-down" : "chevron-right", 14, t.muted))
           .child(div().truncate().text_size(S().title).font_semibold().child(label)))
-        .child(action(`settings-${role}-prompt`, "Prompt", t, () => this.openPrompt(role), true)))
-      .when(open, (el) => el.child(div().pl(20).pb(4)
-        .child(role === "newTask" ? this.agentBody(t) : note(t, hint))));
+        .child(prompt))
+      .when(open, (el) => el.child(div().pl(20).pb(4).child(this.agentBody(t))));
   }
 
   agentBody(t) {

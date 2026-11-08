@@ -242,12 +242,13 @@ export class WorkflowList {
   workflowMenu(t, item, key) {
     const option = (name, label, choose) => h_flex().id(`workflow-${name}-${item.scope}-${item.id}`).h(30).px(8).flex_none().items_center().rounded(6)
       .cursor_pointer().text_size(S().body).text_color(t.foreground).hover((s) => s.bg(t.hover))
-      .on_mouse_down("left", stop).on_click((_e, cx) => choose(item, cx));
+      .on_mouse_down("left", stop).on_click((_e, cx) => choose(item, cx)).child(label);
     return Popover.new(`workflow-actions-${key}`)
       .open(this.menu === key)
       .on_open_change((open, cx) => { this.menu = open ? key : null; cx.notify(); })
       .anchor("bottom_right")
-      .trigger(iconButton(`workflow-menu-${item.scope}-${item.id}`, "more", t, () => {}, false, "Workflow actions"))
+      .trigger(h_flex().id(`workflow-menu-${item.scope}-${item.id}`).size(24).flex_none().justify_center().items_center().rounded(6).cursor_pointer()
+        .hover((s) => s.bg(t.hover)).tooltip("Workflow actions").child(icon("more", 14, t.muted)))
       .content(v_flex().w(140).p(4).gap(2).rounded(8).border_1().border_color(t.border).bg(t.popover).shadow_lg()
         .child(option("clone", "Clone", (item, cx) => this.clone(item, cx)))
         .child(option("copy", "Copy", (item, cx) => this.copy(item, cx)))
