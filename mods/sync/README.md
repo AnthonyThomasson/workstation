@@ -1,38 +1,51 @@
 # sync
 
-Keeps Herdr's config folder (`~/.config/herdr-app`) and your config repo in step, from one icon in the tab bar. It works with any config repo: nothing about a particular repo is written into the mod.
+Keeps Herdr's config folder (`~/.config/herdr-app`) in step with your clone of this repo, from one icon in the tab bar. It is one way (the repo wins) and automatic: there are no settings and nothing to push.
 
-The button is a circular-arrow icon (dimmed until a repo is set, spinning while it works, red on an error). A small yellow arrow at its top-right corner means something is waiting: down is commits the repo is behind its remote, up is files changed in Herdr (or uncommitted in the repo) that Push would send. No numbers.
+## Setup
 
-## The panel
+Run the script from your clone. That installs everything and links the clone to the mod:
 
-Click the icon to open the Sync panel in Tony's right-hand column. It has **Repo** and **Settings** (collapsed once a repo is set).
+```sh
+./mods/sync/sync.sh
+```
 
-- **Branch / worktree**: the first row shows the branch and folder being synced. Expand it to pick another worktree of the repo, or to switch the current folder to another local branch (a branch checked out in another worktree is greyed out). Everything below, the check, Sync and Push, then works on that folder.
-- **Sync**: one way, repo to Herdr. It fast-forwards the repo to its remote when behind (uncommitted edits are kept), runs the sync script with `--push --prune` (the repo wins; the script moves each Herdr file it replaces, or removes, under `~/.config/herdr-app/.workstation-backup/`). Files in a repo-owned mod folder that the repo no longer has are removed from Herdr; mods the repo does not own are left alone, then asks the running Herdr whether it loaded the result: every mod the repo owns is loaded once with `herdr-app check`, and `herdr-app status` must list no errors. Herdr picks up changed files by itself; no restart.
-- **Push**: Herdr to repo. It runs the sync script with `--pull`, commits everything (editable message), rebases onto the remote and pushes. **Only from `main`**: on any other branch the button is disabled and the script refuses. It is also refused while the repo has files newer than Herdr's copies (Sync first), and if copying Herdr would overwrite an uncommitted repo edit or the rebase does not apply cleanly; in those cases nothing is pushed and the message says why. There is no conflict resolution: fix it in the repo and push again.
+Herdr has to have been started once. Every real run writes `~/.config/herdr-app/sync.json` (`$HERDR_APP_HOME` if set) with the clone's folder and its `origin` URL: `{"repo": "/path/to/clone", "remote": "git@…"}`. The last clone to run the script is the linked one. The mod reads only this computer's `sync.json`, so on another machine you run the script from that machine's clone.
 
-## Settings
+## The icon and the panel
 
-Per machine (this computer, and each machine from `hc machine ls`); stored with Herdr's persisted shared values.
+The tab-bar icon is a circular arrow: dim with no repo linked, muted normally, red when the last sync failed, spinning while it syncs. Click it to open the panel in Tony's right-hand column:
 
-| Setting | Default |
-| --- | --- |
-| Config repo (folder path on that machine; this computer has a Browse button) | empty; the panel shows only Settings |
+```
+> Branch main                 [Force sync]
+  ~/projects/workstation
+  origin: git@github.com:you/workstation.git
+  Synced 12s ago · watching for changes
+```
 
-The sync script is not a setting: it is always `./scripts/sync/sync.sh` in the repo. If it is missing, the panel says so and offers **Generate sync.sh**, which opens an agent (Claude Code) in a new tab in the repo to write it from `scripts/sync/RECIPE.md` (this repo's describes the flags, output and layout the mod needs). Without `scripts/sync/RECIPE.md` there is nothing to generate from.
+With no `sync.json`, or when the folder it names is gone, the panel is one line, "No repo linked. Run mods/sync/sync.sh from your clone.", and nothing syncs.
 
-The picked worktree is remembered per machine and cleared when the repo path changes. `scripts/sync/sync.sh` must take `--push`, `--pull` and `--dry-run`, and with `--dry-run` alone print `to repo: <path>` / `to repo (new): <path>` for each file it would copy to the repo and `to Herdr: <path>` / `to Herdr (new): <path>` for each it would copy to Herdr. This repo's script does.
+- **Branch row**: the branch and folder being synced. Expand it to pick another worktree of the repo, or to switch the folder to another local branch (a branch checked out in another worktree is greyed out). Picking either syncs that checkout. The picked worktree is remembered and forgotten when the linked repo changes.
+- **Force sync**: syncs the picked folder right away. Pressed during a sync, it runs one more sync straight after it, never two at once.
+- **Origin**: the remote from `sync.json`, for information.
 
-`git fetch` runs every 5 minutes and when the panel opens; the local check (the script's dry run plus `git status`) every 20 seconds.
+## When it syncs
 
-Sync removes files from Herdr only inside mod folders the repo owns, and always keeps a backup.
+A sync runs the picked folder's own `mods/sync/sync.sh` (repo to Herdr, files in repo-owned mod folders that the repo no longer has are removed, no backups), then asks the running Herdr whether it loaded the result: `herdr-app check` for each mod and `herdr-app status` must list no errors.
+
+A watcher on the picked folder starts a sync once nothing has changed for 3 seconds, so a checkout, a save-all or a rebase is one sync. It ignores `.git/` and anything git ignores, and a change that leaves the file's content as it was does not count. A sync's own writes into the repo (it rewrites `skillshare/config.yaml`, and Skillshare reinstalls into `skillshare/skills/`) do not start another sync. Real changes that arrive during a sync cause exactly one more sync after it.
+
+Running the script from a worktree of the linked repo rewrites `sync.json` to that worktree; the mod keeps the repo it already had, and your picked worktree, as long as `sync.json` names that repo or one of its worktrees. Running it from a different clone links that clone.
+
+The mod never fetches, pulls, pushes or commits. Edits made on the Herdr side are overwritten without a backup.
 
 ## Files
 
-- `model.js` pure logic: settings, parsing what the scripts print, the badge, the main-only rule
-- `ops.js` the check, sync, push, list and switch shell scripts and the functions that run them
-- `channel.js` how the panel hands work to the button (shared values, one lock per machine); `jobs.js` runs slow work as detached, polled jobs
-- `details.js` the panel frame; `repo-ui.js` the Repo section; `settings-ui.js` the Settings section; `ui.js` the shared look
-- `main.js` the views: the button and the Details panel
-- `*.test.js` run with `node --test mods/sync` (`ops.test.js` uses throwaway git repositories from `scratch-repos.js`, this repo's `scripts/sync/sync.sh`, and a stub `herdr-app`)
+- `sync.sh` the script (`sync.test.sh` is its test); `RECIPE.md` has its contract
+- `model.js` pure logic: `sync.json`, what the scripts print, what the panel shows
+- `queue.js` pure logic: when to sync (the 3 s quiet period, follow-ups, Force sync)
+- `ops.js` the shell scripts the mod runs (link, sync, snapshot, ignore check, list, switch) and the functions that run them
+- `channel.js` how the panel hands work to the button; `jobs.js` runs the sync as a detached, polled job
+- `details.js` the panel frame; `repo-ui.js` the panel content; `picker-ui.js` the branch / worktree list; `ui.js` the shared look
+- `main.js` the views: the button (link, watcher, syncs) and the Details panel
+- `*.test.js` run with `node --test mods/sync` (`ops.test.js` uses throwaway git repositories from `scratch-repos.js`, the real `sync.sh` and a stub `herdr-app`)

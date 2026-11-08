@@ -1,30 +1,27 @@
 # Sync
 
-A Herdr tab-bar button and side panel that keep a Git configuration repository and `~/.config/herdr-app` in step. **Sync** brings Herdr in line with the repository (one way) and checks the running Herdr loaded it; **Push** sends Herdr's changes to the repository (from `main` only). A picker chooses which worktree or branch is synced.
+A Herdr tab-bar button and side panel that keep `~/.config/herdr-app` in step with a clone of this repo, one way and automatically. Running `mods/sync/sync.sh` from a clone installs the repo into Herdr and links that clone to the mod through `sync.json`; the mod then syncs the clone's picked branch or worktree on its own once files stop changing, or on **Force sync**. There are no settings, no Push, and no git network calls.
 
 ![Sync](preview.png)
 
 ## What you see
 
-- The default role is a right-aligned 34×30px button with 6px corners in a `theme().chrome` tab-bar strip. Its 16px circular-arrow icon is dimmed until a repository is configured, muted normally, foreground when its panel is selected, `theme().blocked` on an error, and spins once every 900ms while busy. A 9px yellow down arrow means the repository is behind its upstream; an up arrow counts changed files. Both sit at the button's top-right, with no numbers.
-- Clicking the button opens **Sync · <machine>** in the host layout's shared side panel: a full-size `theme().background` card with 10px corners, a 1px `theme().border`, a 42px title bar with Close, and a scrolling body with 14px horizontal padding. Sections: **Repo**, then a collapsible **Settings** (the only section, forced open, until a repository is set).
-- Repo shows, top to bottom: the branch and folder being synced (expands to the repo's worktrees and local branches; picking a worktree changes the folder, picking a branch runs `git switch` in it), a **Sync** row, and a **Push** row that expands to the changed files and an editable commit message. Disabled actions are dimmed and inert.
+- The default role is a right-aligned 34×30px button with 6px corners in a `theme().chrome` tab-bar strip. Its 16px circular-arrow icon is `theme().dim` when no repo is linked, muted normally, foreground when its panel is selected, `theme().blocked` when the last sync failed, and spins once every 900ms while syncing. It has no badge or arrows.
+- Clicking the button opens **Sync** in the host layout's shared side panel: a full-size `theme().background` card with 10px corners, a 1px `theme().border`, a 42px title bar with Close, and a scrolling body with 14px horizontal padding.
+- With no repo linked the body is exactly one line: "No repo linked. Run mods/sync/sync.sh from your clone."
+- Otherwise it shows, top to bottom: the branch row (chevron, `Branch <name>`, or `Detached HEAD`), with a **Force sync** button on its right; the picked folder (`~` for home); `origin: <remote>` (omitted when `sync.json` has no remote); and a status line: `Synced 12s ago · watching for changes`, `Syncing…`, `Not synced yet · watching for changes`, `not watching (<reason>)` if the watcher cannot start, or the last error in `theme().blocked`.
+- Expanding the branch row shows the picker: every worktree of the repo (picking one syncs that checkout) and every local branch (picking one runs `git switch` in the picked folder and syncs; a branch checked out in another worktree is greyed out). The picker is drawn by `picker-ui.js` alone.
 
 ## How it behaves
 
-- The button follows the active space's machine; repository path, sync script, picked worktree, state and locks are per machine. The button role owns all polling and work; the Details panel sends requests through persisted shared state.
-- The local check runs every 20 seconds and `git fetch` every five minutes, plus on opening the panel or switching machine. It reads branch/upstream, up to 200 incoming and outgoing commits, uncommitted files, and a two-way sync-script dry run. Files the dry run would copy to the repository count as Herdr changes; files it would copy to Herdr are repository-newer and block Push. `.sync-backup/` is excluded.
-- **Sync** is one way, repository to Herdr: fast-forward the repository to its upstream if behind (`--autostash`), run the sync script with `--push --prune` (files in a repo-owned mod folder that the repo lacks are moved to the backup folder), then `herdr-app check mods/<mod>` for each mod the repository owns and `herdr-app status` must show no errors. It never commits or pushes.
-- **Push** runs only on `main` (checked in the UI and in the script). It refuses while repository-newer files exist, runs the script with `--pull`, restores and refuses if that would overwrite an uncommitted repository edit, commits everything except `.sync-backup`, fetches, rebases onto the upstream (aborting and pushing nothing if it does not apply cleanly), re-runs `--push` if commits came in, and pushes. There is no conflict resolution.
-- The one setting is **Config repo** (empty by default; Browse is local-only). The script is always `./scripts/sync/sync.sh` in the repository. When it is missing and the repository has `scripts/sync/RECIPE.md`, **Generate sync.sh** opens an agent in a new tab to write it from that recipe.
-
-### Sync script contract
-
-The script is one quoted path, not a command line: absolute, `~/…`, or relative to the repository (`scripts/sync/sync.sh` and `./scripts/sync/sync.sh` are equivalent); spaces are allowed, arguments are not. It runs from the repository's top-level folder and must accept:
-
-- `--push`: copy repository files to Herdr, with the repository winning.
-- `--pull`: copy Herdr files to the repository, with Herdr winning.
-- `--dry-run`: write nothing. With no direction flag, perform a two-way comparison and print one line per pending copy: `to repo: <path>` or `to repo (new): <path>` for Herdr-to-repository copies, and `to Herdr: <path>` or `to Herdr (new): <path>` for repository-to-Herdr copies. The mod parses those exact prefixes.
+- **This computer only.** The button role reads `<appHome()>/sync.json` (`$HERDR_APP_HOME` or `~/.config/herdr-app`) every 5 seconds and when the panel opens. It follows no space's machine and has no per-machine state. `{"repo": "<clone>", "remote": "<origin url or empty>"}` is written by `sync.sh`; a missing, unreadable or repo-less file, or a `repo` folder that is gone (or is not a git repository), means unlinked: the icon is dim, the watcher is off and Force sync does nothing.
+- **The link.** The linked repo is the one the mod remembers, as long as `sync.json` names it or one of its worktrees (also one the repo still lists but whose folder has been deleted). Running the script from a worktree rewrites `sync.json` to that worktree, and this keeps the link, and the picked worktree, intact. `sync.json` naming any other clone moves the link to that clone and resets the pick. `ops.js` `LINK` decides this with `git worktree list`.
+- **The pick.** The picked worktree is shared state (`sync.pick.v2`, `{repo, dir}`; `dir` empty means the repo itself), reset when the linked repo changes, and ignored once it is no longer a worktree of the repo. The worktree and branch lists are read from the linked repo every 20 seconds while the panel is shown.
+- **Sync** runs the picked folder's `mods/sync/sync.sh` from that folder as a detached, polled job (an exec stops after 30 s), then `herdr-app check mods/<mod>` for every mod the folder owns and `herdr-app status` must show no errors (a missing `herdr-app`, or one that is not answering, only says the check was skipped). Success updates "Synced … ago"; failure turns the icon red, shows the script's last words in the panel and raises an error notification. A successful Force sync raises a success notification; automatic ones are silent.
+- **The watcher** is `watchFolder(<picked folder>)` on this computer, restarted when the picked folder changes (retrying every 15 s if it rejects). Batches go through three filters before they count: paths inside any `.git` are dropped; paths git ignores are dropped (`git check-ignore`, one batch at a time); and when the quiet period ends, the folder's content fingerprint (`cksum` of every file git would not ignore) must differ from the one taken at the end of the last sync, so touching a file or saving it unchanged syncs nothing. `queue.js` (pure, tested with fake time) does the rest: each change restarts a 3 second timer; when it fires, one sync runs. A burst is one sync.
+- **No self-trigger.** The script writes into the repo only under `skillshare/` (it rewrites `$HOME/` to `~/` in `skillshare/config.yaml`, and Skillshare reinstalls recorded skills into `skillshare/skills/<name>/` and rewrites `.metadata.json`). Changes under `skillshare/` that arrive while a sync runs cause no follow-up, and the fingerprint taken right after each sync already contains whatever the script wrote, so late watcher events for those files find nothing changed.
+- **Follow-ups.** A real change that arrives while a sync (or the quiet-period check) runs causes exactly one more sync after it, once 3 seconds have passed since that last change. Force sync pressed during a sync does the same at once, however often it is pressed. Syncs never run in parallel. Switching branch or worktree starts a sync of the new checkout directly (and the watcher moves to it), not twice.
+- The picker's `git switch` is the only git command the mod runs that writes anything, and only on the person's click.
 
 ## Sync script
 
@@ -61,7 +58,7 @@ Then summary lines: `copied: <n> to Herdr, <m> removed from Herdr; <k> already t
 - The root `preview.png` to `layouts/Tony.png`: Tony's preview, which Herdr's layout picker shows.
 - `personal/herdr-app/themes/<file>` to `themes/<file>`, and `personal/herdr-app/workflows/<file>` to `workflows/<file>`: only files the repo has.
 - Never copied: each mod's `RECIPE.md` and `preview.png`, `keys.json` and `settings.json` (Herdr writes them), `.DS_Store`, `gpui-kit.d.ts`, `jsconfig.json`, `layouts/.state/*`.
-- The repo always wins: a differing file in Herdr is overwritten, whichever is newer. Nothing is ever written to the repo, and nothing is backed up (no `.workstation-backup/`, no `.sync-backup/`).
+- The repo always wins: a differing file in Herdr is overwritten, whichever is newer. Nothing is copied from Herdr to the repo (the one write into the repo is the `~/` normalising of `skillshare/config.yaml`, below), and nothing is backed up (no `.workstation-backup/`, no `.sync-backup/`).
 - Prune: a file inside a repo-owned mod folder in Herdr (`mods/<mod>/` for a mod the repo has) that the repo does not have is deleted, and a folder that leaves empty goes with it. Other Herdr files, themes, workflows and mods the repo does not own are never removed.
 
 ### sync.json
@@ -88,27 +85,30 @@ To reinstall one entry by hand: `skillshare install <repo_url-without-https-and-
 
 ## Built from
 
-- Install `mods/sync/`. `RECIPE.md` and `preview.png` sit inside `mods/sync/`, and an installing agent leaves them out. Its `mod.json` is `{ "place": "none", "title": "sync" }`; there are no key bindings. The host layout must mount the always-present default/`button` role and should place a `details` role as child `sync` in stack `panel-body` inside column `panel`. The button calls `layout.select`, `layout.show` and `layout.hide` on those ids. Other props roles are `text`, `upgrade` and `srcboth` dialogs, opened by the mod itself.
-- `main.js` owns roles, machine context, polling, shared state, locks and operations. `model.js` contains settings, output parsers, badge/count logic and the main-only rule. `ops.js` contains the check, sync, push, list and switch shell scripts. `jobs.js` runs slow work as detached, polled jobs; `channel.js` serializes work per machine.
-- `details.js` composes `repo-ui.js` and `settings-ui.js`. `ui.js` supplies the themed controls.
-- Herdr APIs include `exec`, `run`, `spaces`, `machines`, `focused`, `layout`, `theme`, `shared`/`setShared`, `knownAgents`, `pickFolder`, `openOverlay`/`closeOverlay`, `notify`, `readTextFile`, timers and `props`. App actions include `layout.select`, `layout.show`, `layout.hide` and `tab.new`.
-- Programs and shell utilities include `sh`, `git`, `herdr-app`, `hostname`, `mktemp`, `rm`, `cp`, `mkdir`, `find`, `cat`, `grep`, `sed`, `awk`, `cut`, `paste`, `head`, `tail`, `tr`, `cmp`, `ps`, `kill`, `sleep` and `date`. Long jobs detach with `setsid` where available or shell job control otherwise, clear `HC_SCOPE`, poll files in a temporary directory, and time out after 15 minutes.
-- Network access is through `git fetch`, `git pull` and `git push`. It reads and writes the chosen config repository and causes `scripts/sync/sync.sh` to read/write `~/.config/herdr-app`; it also writes temporary job files.
-- Art is `icons/sync.svg`, `arrow-up.svg`, `arrow-down.svg`, `ring.svg`, `alert.svg`, `check.svg`, `chevron-down.svg`, `chevron-right.svg`, `close.svg`, `folder.svg` and `settings.svg`, referenced as `mods/sync/icons/<name>.svg` and tinted with theme colors.
+- Install `mods/sync/`. `RECIPE.md` and `preview.png` sit inside `mods/sync/`, and an installing agent leaves them out. Its `mod.json` is `{ "place": "none", "title": "sync" }`; there are no key bindings. The host layout must mount the always-present default/`button` role and should place a `details` role as child `sync` in stack `panel-body` inside column `panel`. The button calls `layout.select`, `layout.show` and `layout.hide` on those ids.
+- `main.js` owns the roles, the link, the watcher, shared state and every sync. `model.js` contains `sync.json` parsing, the pick rule, the status line and path helpers. `queue.js` is the pure debounce/follow-up logic. `ops.js` contains the link, sync, snapshot, ignore-check, list and switch shell scripts. `jobs.js` runs the sync as a detached, polled job; `channel.js` carries the panel's requests (`force`, `pick`, `switch`) to the button.
+- `details.js` composes `repo-ui.js` (the panel) and `picker-ui.js` (the list under the branch row). `ui.js` supplies the themed controls.
+- Shared state: `sync.link.v2` (`{linked, repo, remote, dir, branch}`), `sync.pick.v2`, `sync.run.v2` (`{syncing, ok, message, at, watching, watchError}`) and the request value `sync.request.v2`.
+- Herdr APIs include `exec`, `run`, `layout`, `theme`, `shared`/`setShared`, `notify`, `readTextFile`, `watchFolder`, `appHome`, `home`, timers (`cx.timer.every`, `cx.sleep`, `cx.spawn`) and `props`. App actions include `layout.select`, `layout.show` and `layout.hide`.
+- Programs and shell utilities include `sh`, `git` (`rev-parse`, `worktree list`, `symbolic-ref`, `ls-files`, `check-ignore`, `for-each-ref`, `switch`), `herdr-app`, `mktemp`, `rm`, `xargs`, `cksum`, `grep`, `awk`, `tail`, `basename`, `find`, `cat`, `ps`, `kill`, `sleep`. Long jobs detach with `setsid` where available or shell job control otherwise, clear `HC_SCOPE`, poll files in a temporary directory, and time out after 15 minutes.
+- Network access: none. The mod makes no `git fetch`, `pull` or `push` calls, and `sync.sh` does not either (Skillshare reinstalls of recorded skills may reach their sources). It reads the linked repo, runs `mods/sync/sync.sh` in the picked folder (which writes `~/.config/herdr-app` and `sync.json`), and writes temporary job files.
+- Art is `icons/sync.svg`, `alert.svg`, `check.svg`, `chevron-down.svg`, `chevron-right.svg` and `close.svg`, referenced as `mods/sync/icons/<name>.svg` and tinted with theme colors.
 
 ## Watch out
 
-- **Real side effects:** Sync and Push run the configured script and perform Git commits, rebases, network fetches and pushes. None of these is a simulated gallery preview.
-- The button role must remain mounted even while the panel is closed; it owns the locks, timers and background work. A Details panel by itself is not enough. The `panel`/`panel-body`/`sync` ids must match the host layout or the toggle must be adapted.
-- The sync script's dry-run output is an interface, not incidental logging. Missing prefixes or a script that writes during `--dry-run` produce wrong badges or unsafe Push decisions. The repository branch needs an upstream for Push.
-- Sync removes files only inside repo-owned mod folders (to the backup folder); other Herdr files, mods and layouts are never removed.
-- The check reads at most 200 commits in each direction; expanded UI lists are capped at 50 pull entries and 100 push files. Source state retains at most 300 uncommitted files and displays 40. Renaming the mod requires updating all `mods/sync/` asset paths and its self-opened mod name.
-- `git`, `sh` and the sync script are required; `herdr-app` is needed for the loaded-in-Herdr check (Sync still runs without it and says it did not check).
+- **Real side effects:** every sync runs the picked folder's `mods/sync/sync.sh` for real: Herdr files are overwritten and pruned without a backup, Skillshare links are changed and recorded skills are reinstalled. A watched folder syncs by itself; the mod does not stop at a draft.
+- The button role must remain mounted even while the panel is closed; it owns the link, the watcher and the syncs. A Details panel by itself is not enough. The `panel`/`panel-body`/`sync` ids must match the host layout or the toggle must be adapted.
+- The script is run from the picked folder, so a worktree on an old branch runs its own (possibly old) `sync.sh`; a folder without `mods/sync/sync.sh` fails with "mods/sync/sync.sh was not found".
+- `sync.json` is rewritten by every sync to the picked folder's top level, so it names a worktree after a worktree is synced; the mod's link logic (above) is what keeps the repo linked. A worktree that is deleted and no longer listed by the repo leaves `sync.json` pointing at nothing: the panel says no repo is linked until the script is run from a clone again.
+- On Linux the watcher skips ignored directories and rejects trees of more than 4096 folders; the status line then says "not watching (…)" and Force sync still works. macOS watches ignored directories too, which is why ignored paths are filtered here.
+- The content fingerprint reads every non-ignored file in the folder after each sync and before each quiet-period sync; a repo with very large tracked files makes that slow.
+- `git`, `sh` and `mods/sync/sync.sh` are required; `herdr-app` is needed for the loaded-in-Herdr check (a sync still runs without it and says it did not check). Renaming the mod requires updating all `mods/sync/` asset paths and `SCRIPT` in `model.js`.
 
 ## Done when
 
-- `herdr-app check mods/sync` passes. With no repository configured, only open Settings appears; saving a test repository path, script and agent enables the button and panel for that machine.
-- A two-way `--dry-run` produces the exact four recognized line prefixes, and the down/up arrows track incoming commits and changed files without numbers. Opening the panel fetches; closing it stops the panel-only reads.
-- In throwaway repositories, Sync makes Herdr match the repository, backing up replacements through the script. Push copies Herdr changes, commits, rebases and pushes; repository-newer files block it, and it is refused off `main`.
-- A push that cannot rebase or would overwrite an uncommitted repository edit pushes nothing and says why. Picking a worktree or switching a branch changes which folder Sync, Push and the check use.
-- `node --test mods/sync` passes after a rebuild.
+- `herdr-app check mods/sync` passes.
+- With no `sync.json`, or one whose `repo` folder is gone, the panel shows only "No repo linked. Run mods/sync/sync.sh from your clone.", the icon is dim, and nothing syncs. After running `mods/sync/sync.sh` from a clone, the panel shows that clone's branch, folder and `origin` with no setup.
+- Editing a file in a repo mod shows up in Herdr about 3 seconds after the last save; a burst of edits is one sync; saving a file unchanged, changing only git-ignored files, or the script's own `skillshare/` writes start no sync. Force sync works at any time and, pressed during a sync, runs exactly one more after it.
+- Picking a worktree or switching a branch syncs that checkout once. Running the script from a worktree keeps the repo linked and the pick.
+- The panel never fetches, pulls, pushes or commits, and shows no behind/up arrows, Settings, Push row or Generate button.
+- `node --test mods/sync`, `sh mods/sync/sync.test.sh` and `sh tests/entries.test.sh` pass.

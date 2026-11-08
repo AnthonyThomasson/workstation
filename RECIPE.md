@@ -309,7 +309,7 @@ All six custom mods have their own recipes and previews in the same folders that
 - [`mods/status-bar/RECIPE.md`](mods/status-bar/RECIPE.md) fills the 28px bottom status block.
 - [`mods/skills/RECIPE.md`](mods/skills/RECIPE.md) supplies the `toggle` and default panel roles.
 - [`mods/github-tasks/RECIPE.md`](mods/github-tasks/RECIPE.md) covers tickets plus workflow editing and run pages. Tony mounts Tasks' default ticket sidebar and its `settings` role in the right panel; there is no Tasks toggle and no separate Workflows mod. Bug and Story starter files live under `mods/github-tasks/starters/`.
-- [`mods/sync/RECIPE.md`](mods/sync/RECIPE.md) supplies the always-running `button` role and its `details` panel. Its repository path and sync script are configured per machine in the panel.
+- [`mods/sync/RECIPE.md`](mods/sync/RECIPE.md) supplies the always-running `button` role and its `details` panel. It has no settings: running `mods/sync/sync.sh` from a clone links that clone, and the mod syncs it to Herdr by itself.
 - [`mods/tabs-icons/RECIPE.md`](mods/tabs-icons/RECIPE.md) is mounted in the flexible tab-row block with no props.
 
 No `keys.json` belongs to the Tony layout: it supplies no layout-specific key bindings. Individual mods ship no key bindings the layout needs; the one exception is GitHub Tasks, whose `mods/github-tasks/keys.json` (a `layout:Tony` `cmd-w` guard for closing a running workflow's tab) the person merges into their own `keys.json` by hand, because `scripts/sync` never syncs `keys.json`.
@@ -318,7 +318,7 @@ No `keys.json` belongs to the Tony layout: it supplies no layout-specific key bi
 
 - Install all six custom mod folders, and the six listed built-ins must be available. A missing custom panel leaves a toggle without its intended content.
 - The panel toggles depend on the exact ids `panel` and `panel-body`, and child ids `files`, `changes`, `skills`, `github-tasks` and `sync`. Changing them requires changing the custom mods too.
-- The layout itself runs no external programs, reads no files outside Herdr's mod state and makes no network requests. Custom mod capabilities vary: Usage contacts Kimi on explicit refresh, Skills and GitHub Tasks (including workflows) run their CLIs and agents, and Sync runs Git, Skillshare and the configured sync script. Read their recipes before enabling those actions.
+- The layout itself runs no external programs, reads no files outside Herdr's mod state and makes no network requests. Custom mod capabilities vary: Usage contacts Kimi on explicit refresh, Skills and GitHub Tasks (including workflows) run their CLIs and agents, and Sync runs Git (read-only, plus the branch switch you click) and the picked folder's `mods/sync/sync.sh`, which also drives Skillshare. Read their recipes before enabling those actions.
 - Tony deliberately leaves theme and font choices unset. Do not add hard-coded colors where the source uses theme tokens. The preview image is a wireframe of the window (sidebar lists and usage meter, tab bar, terminal pane, right panel, status bar); it is a picker picture only, installed as `layouts/Tony.png` and not used by the layout itself.
 - The sidebar's own `resizable: false` does not remove Herdr commands that hide or resize it. Tony's root sets the macOS traffic-light position to `[12, 16]`.
 - Renaming any custom mod requires changing its layout reference and following the asset/self-overlay changes described in its own recipe.
@@ -329,4 +329,4 @@ No `keys.json` belongs to the Tony layout: it supplies no layout-specific key bi
 - The window matches the tree and dimensions above, follows the selected theme/fonts, shows the six built-in mod roles, and frames even a lone terminal pane with its 30px header and focus border.
 - Tabs Icons passes its own recipe checks.
 - Tony's Sync and Skills toggles open their matching `panel-body` children; **Task settings** opens only from the Tasks sidebar gear.
-- Usage and Status Bar render in their assigned blocks. Skills, Tasks (with workflows) and Sync pass their own recipes' checks, including Sync's always-mounted button and Settings flow. No extra key bindings are required.
+- Usage and Status Bar render in their assigned blocks. Skills, Tasks (with workflows) and Sync pass their own recipes' checks, including Sync's always-mounted button and its "No repo linked" panel. No extra key bindings are required.
