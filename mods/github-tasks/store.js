@@ -7,10 +7,37 @@
 //   { global?, repo? }
 // a scope without a folder is not available (global always has one; repo has none when the selected space
 // is not in a repo), and nothing is listed from it or written to it. Nothing here runs git.
-import { parse, serialize, slug, validate, SCOPES, SCOPE_LABELS } from "./workflow-model.js";
+import { parse, serialize, slug, normalize, validate, SCOPES, SCOPE_LABELS } from "./workflow-model.js";
 
 export class StoreError extends Error {
   constructor(kind, message) { super(message); this.kind = kind; } // "conflict" | "invalid" | "missing" | "unavailable" | "other"
+}
+
+// A copy keeps its contents and scope; its name is changed until the slug it produces is not an existing id.
+export function cloneWorkflow(workflow, existingIds) {
+  const copy = normalize(workflow), base = `${copy.name} copy`, taken = new Set(existingIds);
+  let name = base, number = 2;
+  while (taken.has(slug(name))) name = `${base} ${number++}`;
+  return { ...copy, id: slug(name), name };
+}
+
+// Clipboard YAML becomes the replacement's contents, never its id: that still belongs to the destination file.
+export function replacementFromYaml(source, id) {
+  let replacement;
+  try { replacement = { ...parse(source), id }; }
+  catch (e) { throw new StoreError("invalid", `Clipboard is not a valid workflow: ${e?.message ?? e}`); }
+  const problems = validate(replacement);
+  if (problems.length) throw Object.assign(new StoreError("invalid", problems[0].message), { problems });
+  return replacement;
+}
+
+// Project resets only the repo; Global only the global files; All removes both but puts the starters in Global.
+// With no repo there is only Global, whatever tab was last selected while a repo was open.
+export function restorePlan(items, tab, hasRepo) {
+  const scope = hasRepo ? tab : "global";
+  const deletions = items.filter((item) => scope === "all" || item.scope === scope)
+    .map(({ id, name, scope }) => ({ id, name, scope }));
+  return { deletions, createScope: scope === "repo" ? "repo" : "global" };
 }
 
 // Workflows are YAML files. Ones saved as JSON before that still load, and are rewritten as YAML when saved.
@@ -64,13 +91,19 @@ export function makeStore({ io, dirs }) {
     };
   }
 
-  // One workflow and the text it was read as: { workflow, text, scope, legacy }, or null when there is none.
-  // legacy: it was read from an old JSON file.
-  async function load(scope, id) {
+  // The exact file text, without parsing it: Copy can therefore copy even a file whose error is listed.
+  async function loadText(scope, id) {
     const dir = folder(scope);
     let text = await io.read(fileOf(dir, id)), legacy = false;
     if (text == null) { text = await io.read(legacyOf(dir, id)); legacy = text != null; }
-    return text == null ? null : { workflow: { ...parse(text), id }, text, scope, legacy };
+    return text == null ? null : { text, scope, legacy };
+  }
+
+  // One workflow and the text it was read as: { workflow, text, scope, legacy }, or null when there is none.
+  // legacy: it was read from an old JSON file.
+  async function load(scope, id) {
+    const found = await loadText(scope, id);
+    return found && { ...found, workflow: { ...parse(found.text), id } };
   }
 
   // A write that fails because the file changed since it was read is a conflict; anything else is not.
@@ -107,11 +140,48 @@ export function makeStore({ io, dirs }) {
     return { workflow: { ...parse(text), id }, text, scope, legacy: false };
   }
 
+  async function clone(scope, id) {
+    const found = await load(scope, id);
+    if (!found) throw new StoreError("missing", "That workflow is already gone.");
+    const copy = cloneWorkflow(found.workflow, (await list()).map((item) => item.id));
+    return save(copy, scope);
+  }
+
+  async function paste(scope, id, source) {
+    const previous = await loadText(scope, id);
+    if (!previous) throw new StoreError("missing", "That workflow is already gone.");
+    const destination = { ...previous, workflow: { id } }; // the old file need not be valid for Paste to repair it
+    return save(replacementFromYaml(source, id), scope, destination);
+  }
+
+  async function restore(plan, starterTexts) {
+    // Read and check every starter before the first deletion. Restore copies their text, including their own ids,
+    // directly: the same Bug and Story may intentionally remain in the other scope.
+    const starters = starterTexts.map((source) => {
+      let workflow;
+      try { workflow = parse(source); }
+      catch (e) { throw new StoreError("invalid", `A shipped starter is invalid: ${e?.message ?? e}`); }
+      const problems = validate(workflow);
+      if (problems.length) throw Object.assign(new StoreError("invalid", `A shipped starter is invalid: ${problems[0].message}`), { problems });
+      return { id: workflow.id || slug(workflow.name), text: source };
+    });
+    for (const item of plan.deletions) {
+      // The plan also names unreadable files, which remove() cannot load. Both extensions go so a hidden
+      // legacy JSON file cannot survive beside a YAML file with the same id.
+      const dir = folder(item.scope);
+      await io.remove(fileOf(dir, item.id));
+      await io.remove(legacyOf(dir, item.id));
+    }
+    const dir = folder(plan.createScope);
+    await io.mkdir(dir);
+    for (const starter of starters) await write(fileOf(dir, starter.id), starter.text, null);
+  }
+
   async function remove(scope, id) {
     const found = await load(scope, id);
     if (!found) throw new StoreError("missing", "That workflow is already gone.");
     await io.remove((found.legacy ? legacyOf : fileOf)(folder(scope), id));
   }
 
-  return { list, loadAll, load, save, remove, available };
+  return { list, loadAll, loadText, load, save, clone, paste, restore, remove, available };
 }

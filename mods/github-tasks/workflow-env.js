@@ -30,6 +30,16 @@ export const globalDir = () => globalWorkflowsDir(appHome());
 // That folder as people write it, for messages: ~/.config/herdr-app/workflows.
 export const globalDirText = () => tildePath(globalDir(), home());
 
+// The shipped starters, read from this installed mod rather than embedded a second time in its code.
+export async function starterWorkflows() {
+  return Promise.all(["bug", "story"].map(async (name) => {
+    const path = `${appHome()}/mods/github-tasks/starters/${name}.yaml`;
+    const text = await readTextFile(path);
+    if (text == null) throw new Error(`Could not read the shipped ${name} starter at ${path}.`);
+    return text;
+  }));
+}
+
 // The git repo a folder is in: its top folder, or null (not a repo, or git cannot run there).
 const repoOfFolder = (folder) => sh('git -C "$1" rev-parse --show-toplevel 2>/dev/null', folder)
   .then((r) => (r.code === 0 ? firstLine(r.stdout) : null), () => null);

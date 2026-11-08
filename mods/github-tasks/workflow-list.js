@@ -3,11 +3,12 @@
 // (workflow-editor.js). Not a View of its own: main.js builds one for the settings role and settings.js draws it.
 // Works with no linked project: it needs only the folder of the selected space, which the sidebar publishes.
 import { div } from "gpui-kit";
-import { v_flex, h_flex } from "gpui-base";
+import { v_flex, h_flex, Popover } from "gpui-base";
 import { run, shared, setShared, theme } from "herdr";
-import { S, icon, stop, note, iconButton, segmented, later } from "./ui.js";
+import { S, icon, stop, note, iconButton, segmented, later, action, scrim } from "./ui.js";
 import { SCOPE_LABELS } from "./workflow-model.js";
-import { WORKFLOWS_CHANGED, store, repoRootOf } from "./workflow-env.js";
+import { restorePlan } from "./store.js";
+import { WORKFLOWS_CHANGED, store, repoRootOf, starterWorkflows } from "./workflow-env.js";
 
 // The tabs over the list: everything, the selected space's repo, or the global ones.
 export const TABS = [["all", "All"], ["repo", "Project"], ["global", "Global"]];
@@ -26,6 +27,8 @@ export class WorkflowList {
     this.repoRoot = null; // the repo of the selected space, whose .herdr workflows are listed
     this.placeKey = null;
     this.confirming = null; // the workflow whose trash was pressed once; a second press deletes it
+    this.menu = null; // scope/id of the row whose ⋯ menu is open
+    this.restoring = null; // { plan, working, error } while the Restore defaults confirmation is open
     this.changedAt = shared(WORKFLOWS_CHANGED) ?? null; // a save in an editor tab refreshes the list
     this.lastDrawn = Date.now();
     this.refresh(cx);
@@ -62,6 +65,86 @@ export class WorkflowList {
       props: { role: "workflow-editor", id: item?.id ?? null, scope: item?.scope ?? "global", where: this.place() ?? {}, repoRoot: this.repoRoot } });
   }
 
+  // A clone or paste that succeeds announces it to every list; a failure stays on screen instead of being
+  // cleared by a refresh, and the store has already refused an invalid paste before writing.
+  change(cx, operation) {
+    cx.spawn(async (cx) => {
+      try {
+        await operation(store({ repo: this.repoRoot }));
+        this.error = null;
+        setShared(WORKFLOWS_CHANGED, Date.now());
+        this.refresh(cx);
+      } catch (e) {
+        this.error = String(e?.message ?? e);
+        cx.notify();
+      }
+    });
+  }
+
+  clone(item, cx) {
+    this.menu = null;
+    this.error = null;
+    cx.notify();
+    this.change(cx, (s) => s.clone(item.scope, item.id));
+  }
+
+  copy(item, cx) {
+    this.menu = null;
+    this.error = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const found = await store({ repo: this.repoRoot }).loadText(item.scope, item.id);
+        if (!found) throw new Error("That workflow is already gone.");
+        cx.write_to_clipboard(found.text); // exactly as stored, not a normalized re-serialization
+      } catch (e) {
+        this.error = String(e?.message ?? e);
+        cx.notify();
+      }
+    });
+  }
+
+  paste(item, cx) {
+    const source = cx.read_from_clipboard();
+    this.menu = null;
+    this.error = source == null ? "The clipboard has no text to paste." : null;
+    cx.notify();
+    if (source != null) this.change(cx, (s) => s.paste(item.scope, item.id, source));
+  }
+
+  openRestore(cx) {
+    this.restoring = { plan: restorePlan(this.items, this.scope, Boolean(this.repoRoot)), working: false, error: null };
+    this.menu = null;
+    cx.notify();
+  }
+
+  closeRestore(cx) {
+    if (this.restoring?.working) return;
+    this.restoring = null;
+    cx.notify();
+  }
+
+  restoreDefaults(cx) {
+    const current = this.restoring;
+    if (!current || current.working) return;
+    current.working = true;
+    current.error = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const starters = await starterWorkflows();
+        await store({ repo: this.repoRoot }).restore(current.plan, starters);
+        this.restoring = null;
+        setShared(WORKFLOWS_CHANGED, Date.now());
+        this.refresh(cx);
+      } catch (e) {
+        current.working = false;
+        current.error = String(e?.message ?? e);
+        cx.notify();
+      }
+    });
+  }
+
   // First press arms the trash, the second deletes; the arming lapses after a few seconds.
   trash(item, cx) {
     const key = `${item.scope}/${item.id}`;
@@ -93,6 +176,9 @@ export class WorkflowList {
     if (hidden && this.loaded) later(cx, (cx) => this.refresh(cx));
 
     return v_flex().id("workflows").flex_none().gap(10)
+      .on_key_down((e, cx) => {
+        if (e.key === "escape" && this.restoring) { this.closeRestore(cx); cx.stop_propagation(); }
+      })
       .child(v_flex().gap(2)
         .child(div().text_size(S().title).font_semibold().child("Workflows"))
         .child(note(t, "How work gets done: the labels that start each one, and how its orchestrator, worker and reviewer run.")))
@@ -102,12 +188,13 @@ export class WorkflowList {
           .hover((s) => s.opacity(0.88)).on_mouse_down("left", stop).on_click(() => this.openWorkflow(null))
           .child(icon("plus", 14, t.solid_foreground))
           .child("New workflow"))
-        .child(h_flex().id("built-in-prompts").h(30).px(12).items_center().rounded(6).cursor_pointer()
+        .child(h_flex().id("restore-defaults").h(30).px(12).items_center().rounded(6).cursor_pointer()
           .border_1().border_color(t.border).text_color(t.foreground).text_size(S().secondary)
           .hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
-          .on_click(() => run("tab.new", { name: "Built-in prompts", mod: "github-tasks", props: { role: "prompts" } }))
-          .child("Built-in prompts")))
-      .child(this.renderList(t, where));
+          .on_click((_e, cx) => this.openRestore(cx))
+          .child("Restore defaults")))
+      .child(this.renderList(t, where))
+      .when(Boolean(this.restoring), (el) => el.child(this.renderRestore(t)));
   }
 
   renderList(t, where) {
@@ -131,6 +218,49 @@ export class WorkflowList {
     return v_flex().flex_none().gap(10).child(header).child(v_flex().id("workflow-list").gap(2).children(rows));
   }
 
+  // The row's small anchored menu. Popover owns outside-press and Escape dismissal; the list owns which row is open.
+  workflowMenu(t, item, key) {
+    const option = (name, label, choose) => h_flex().id(`workflow-${name}-${item.scope}-${item.id}`).h(30).px(8).flex_none().items_center().rounded(6)
+      .cursor_pointer().text_size(S().body).text_color(t.foreground).hover((s) => s.bg(t.hover))
+      .on_mouse_down("left", stop).on_click((_e, cx) => choose(item, cx));
+    return Popover.new(`workflow-actions-${key}`)
+      .open(this.menu === key)
+      .on_open_change((open, cx) => { this.menu = open ? key : null; cx.notify(); })
+      .anchor("bottom_right")
+      .trigger(iconButton(`workflow-menu-${item.scope}-${item.id}`, "more", t, () => {}, false, "Workflow actions"))
+      .content(v_flex().w(140).p(4).gap(2).rounded(8).border_1().border_color(t.border).bg(t.popover).shadow_lg()
+        .child(option("clone", "Clone", (item, cx) => this.clone(item, cx)))
+        .child(option("copy", "Copy", (item, cx) => this.copy(item, cx)))
+        .child(option("paste", "Paste", (item, cx) => this.paste(item, cx))));
+  }
+
+  // Confirm in the panel, naming every file that will go and where the two shipped starters will be created.
+  renderRestore(t) {
+    const current = this.restoring, plan = current.plan;
+    const destination = plan.createScope === "repo" ? "Project" : "Global";
+    const deletion = (item) => h_flex().gap(8).items_center().flex_none()
+      .child(div().flex_1().min_w(0).child(item.name))
+      .child(div().flex_none().text_size(S().label).text_color(t.muted).child(item.scope === "repo" ? "Project" : "Global"));
+    const dialog = v_flex().id("restore-defaults-dialog").w(420).max_h(560).flex_none().p(16).gap(12).rounded(12)
+      .border_1().border_color(t.border).bg(t.popover).shadow_lg().text_color(t.foreground).text_size(S().body)
+      .on_mouse_down("left", stop)
+      .child(h_flex().flex_none().items_center().gap(8)
+        .child(div().flex_1().min_w(0).text_size(S().title).font_semibold().child("Restore defaults?"))
+        .child(div().text_size(S().label).text_color(t.muted).child("Esc"))
+        .when(!current.working, (el) => el.child(iconButton("restore-defaults-close", "close", t, (_e, cx) => this.closeRestore(cx)))))
+      .child(note(t, plan.deletions.length ? "These workflows will be deleted:" : "There are no workflows here to delete."))
+      .when(Boolean(plan.deletions.length), (el) => el.child(div().id("restore-defaults-deletions").max_h(240).overflow_y_scrollbar()
+        .child(v_flex().gap(4).children(plan.deletions.map(deletion)))))
+      .child(note(t, `Bug and Story will be re-created in ${destination}.`))
+      .when(Boolean(current.error), (el) => el.child(note(t, current.error, t.ansi1)))
+      .child(h_flex().flex_none().justify_end().gap(8)
+        .child(action("restore-defaults-cancel", "Cancel", t, (_e, cx) => this.closeRestore(cx), true, current.working))
+        .child(action("restore-defaults-confirm", current.working ? "Restoring…" : "Restore defaults", t, (_e, cx) => this.restoreDefaults(cx), false, current.working)));
+    return div().id("restore-defaults-backdrop").absolute().inset_0().flex().items_center().justify_center().bg(scrim(t))
+      .on_mouse_down("left", (_e, cx) => { this.closeRestore(cx); cx.stop_propagation(); })
+      .child(dialog);
+  }
+
   row(t, item, showWhere) {
     const key = `${item.scope}/${item.id}`, armed = this.confirming === key;
     // Where it is kept, when the list mixes both: Global, or the repo's name.
@@ -143,6 +273,7 @@ export class WorkflowList {
       .when(Boolean(where), (el) => el.child(div().flex_none().max_w(110).truncate().px(6).h(18).flex().items_center().rounded(9).border_1().border_color(t.border)
         .text_size(S().label).text_color(t.muted).child(where)))
       .when(armed, (el) => el.child(div().flex_none().text_size(S().label).text_color(t.ansi1).child("Delete?")))
+      .child(this.workflowMenu(t, item, key))
       .child(iconButton(`delete-${item.scope}-${item.id}`, "trash", t, (_e, cx) => this.trash(item, cx), false, armed ? "Press again to delete" : "Delete", armed ? t.ansi1 : t.muted));
   }
 }

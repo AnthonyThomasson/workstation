@@ -1,8 +1,8 @@
 import test from "node:test";
 import { parse as parseYaml } from "./yaml.js";
 import assert from "node:assert/strict";
-import { makeStore, StoreError } from "./store.js";
-import { blank, ROLES } from "./workflow-model.js";
+import { makeStore, StoreError, cloneWorkflow, replacementFromYaml, restorePlan } from "./store.js";
+import { blank, ROLES, serialize } from "./workflow-model.js";
 
 const GLOBAL = "/home/me/.config/herdr-app/workflows", REPO = "/proj/.herdr/workflows";
 const ALL = { global: GLOBAL, repo: REPO };
@@ -34,6 +34,137 @@ const wf = (name, over = {}) => {
   return { ...w, ...over };
 };
 const setup = (dirs = ALL, files = {}) => { const d = disk(files); return { d, store: makeStore({ io: d.io, dirs }) }; };
+
+test("cloneWorkflow gives a copy a unique name and slug id", () => {
+  const original = wf("Bug", { id: "bug" });
+  assert.deepEqual(cloneWorkflow(original, ["bug"]), { ...original, id: "bug-copy", name: "Bug copy" });
+  assert.deepEqual(cloneWorkflow(original, ["bug", "bug-copy"]), { ...original, id: "bug-copy-2", name: "Bug copy 2" });
+  assert.deepEqual(cloneWorkflow(original, ["bug", "bug-copy", "bug-copy-2"]), { ...original, id: "bug-copy-3", name: "Bug copy 3" });
+  assert.equal(original.name, "Bug");
+});
+
+test("clone saves copies in the source scope without changing the source", async () => {
+  const { store } = setup();
+  await store.save(wf("Bug", { worker: { ...wf().worker, model: "sonnet" } }), "repo");
+  const first = await store.clone("repo", "bug"), second = await store.clone("repo", "bug");
+  assert.deepEqual([first.workflow.id, first.workflow.name, first.scope], ["bug-copy", "Bug copy", "repo"]);
+  assert.deepEqual([second.workflow.id, second.workflow.name, second.scope], ["bug-copy-2", "Bug copy 2", "repo"]);
+  assert.equal(first.workflow.worker.model, "sonnet");
+  assert.equal((await store.load("repo", "bug")).workflow.name, "Bug");
+  assert.deepEqual((await store.list()).map((i) => i.id).sort(), ["bug", "bug-copy", "bug-copy-2"]);
+});
+
+test("replacementFromYaml takes the clipboard workflow but keeps the destination id", () => {
+  const pasted = wf("Pasted", { id: "clipboard-id", trigger: { labels: ["pasted"], match: "all" } });
+  const replacement = replacementFromYaml(serialize(pasted), "destination-id");
+  assert.equal(replacement.id, "destination-id");
+  assert.equal(replacement.name, "Pasted");
+  assert.deepEqual(replacement.trigger, { labels: ["pasted"], match: "all" });
+});
+
+test("replacementFromYaml refuses invalid YAML as an invalid paste", () => {
+  assert.throws(() => replacementFromYaml("name: [", "destination"), (e) => e instanceof StoreError && e.kind === "invalid" && /not valid YAML/.test(e.message));
+});
+
+test("replacementFromYaml refuses a workflow that fails validation", () => {
+  assert.throws(() => replacementFromYaml("name: Bad\nworker:\n  effort: extreme\n", "destination"), (e) =>
+    e instanceof StoreError && e.kind === "invalid" && e.problems?.[0]?.field === "worker.effort" && /low, medium, high, xhigh, max/.test(e.message));
+});
+
+test("paste replaces the workflow in place, keeping its id and scope", async () => {
+  const { d, store } = setup();
+  await store.save(wf("Original"), "repo");
+  const pasted = wf("From clipboard", { id: "different", worker: { ...wf().worker, model: "pasted-model" } });
+  const saved = await store.paste("repo", "original", serialize(pasted));
+  assert.deepEqual([saved.workflow.id, saved.workflow.name, saved.scope], ["original", "From clipboard", "repo"]);
+  assert.equal(saved.workflow.worker.model, "pasted-model");
+  assert.deepEqual([...d.fs.keys()], [`${REPO}/original.yaml`]);
+});
+
+test("invalid clipboard YAML or workflow content writes nothing", async () => {
+  const { d, store } = setup();
+  await store.save(wf("Original"), "global");
+  const before = new Map(d.fs);
+  d.calls.length = 0;
+  await assert.rejects(store.paste("global", "original", "name: ["), (e) => e.kind === "invalid");
+  await assert.rejects(store.paste("global", "original", "name: Bad\nworker:\n  effort: extreme\n"), (e) => e.kind === "invalid");
+  assert.deepEqual(d.fs, before);
+  assert.deepEqual(d.calls, []);
+});
+
+test("restorePlan deletes the selected tab's workflows and chooses where Bug and Story go", () => {
+  const global = { id: "global-one", name: "Global one", scope: "global" };
+  const repo = { id: "repo-one", name: "Repo one", scope: "repo" };
+  const otherRepo = { id: "broken", name: "broken", scope: "repo", error: "bad YAML" };
+  assert.deepEqual(restorePlan([global, repo, otherRepo], "repo", true), { deletions: [repo, otherRepo].map(({ id, name, scope }) => ({ id, name, scope })), createScope: "repo" });
+  assert.deepEqual(restorePlan([global, repo], "global", true), { deletions: [{ ...global }], createScope: "global" });
+  assert.deepEqual(restorePlan([global, repo], "all", true), { deletions: [{ ...global }, { ...repo }], createScope: "global" });
+  assert.deepEqual(restorePlan([global], "all", false), { deletions: [{ ...global }], createScope: "global" });
+});
+
+test("restore replaces Project workflows with the shipped starter text, even when Global has Bug and Story", async () => {
+  const { d, store } = setup();
+  await store.save(wf("Bug"), "global");
+  await store.save(wf("Story"), "global");
+  await store.save(wf("Old project"), "repo");
+  const bug = serialize(wf("Bug", { id: "bug" })), story = serialize(wf("Story", { id: "story" }));
+  const items = await store.list();
+  await store.restore(restorePlan(items, "repo", true), [bug, story]);
+  assert.deepEqual([...d.fs.keys()].sort(), [`${GLOBAL}/bug.yaml`, `${GLOBAL}/story.yaml`, `${REPO}/bug.yaml`, `${REPO}/story.yaml`].sort());
+  assert.equal(d.fs.get(`${REPO}/bug.yaml`), bug);
+  assert.equal(d.fs.get(`${REPO}/story.yaml`), story);
+});
+
+test("restore Global leaves Project alone, and All leaves starters in Global only", async () => {
+  const starters = [serialize(wf("Bug", { id: "bug" })), serialize(wf("Story", { id: "story" }))];
+  for (const tab of ["global", "all"]) {
+    const { d, store } = setup();
+    await store.save(wf("Old global"), "global");
+    await store.save(wf("Old project"), "repo");
+    await store.restore(restorePlan(await store.list(), tab, true), starters);
+    const expected = tab === "all" ? [`${GLOBAL}/bug.yaml`, `${GLOBAL}/story.yaml`]
+      : [`${GLOBAL}/bug.yaml`, `${GLOBAL}/story.yaml`, `${REPO}/old-project.yaml`];
+    assert.deepEqual([...d.fs.keys()].sort(), expected.sort());
+  }
+});
+
+test("an invalid starter is refused before restore deletes anything", async () => {
+  const { d, store } = setup();
+  await store.save(wf("Keep me"), "global");
+  const before = new Map(d.fs);
+  d.calls.length = 0;
+  const plan = restorePlan(await store.list(), "global", true);
+  await assert.rejects(store.restore(plan, ["name: [", serialize(wf("Story", { id: "story" }))]), (e) => e.kind === "invalid");
+  await assert.rejects(store.restore(plan, ["name: Bad\nworker:\n  effort: extreme\n", serialize(wf("Story", { id: "story" }))]), (e) => e.kind === "invalid");
+  assert.deepEqual(d.fs, before);
+  assert.deepEqual(d.calls, []);
+});
+
+test("restore wipes malformed and legacy workflow files too", async () => {
+  const { d, store } = setup(ALL, {
+    [`${GLOBAL}/broken.yaml`]: "name: [",
+    [`${GLOBAL}/old.json`]: JSON.stringify({ name: "Old" }),
+    [`${REPO}/keep.yaml`]: serialize(wf("Keep", { id: "keep" })),
+  });
+  const plan = restorePlan(await store.list(), "global", true);
+  assert.deepEqual(plan.deletions.map((item) => item.id).sort(), ["broken", "old"]);
+  await store.restore(plan, [serialize(wf("Bug", { id: "bug" })), serialize(wf("Story", { id: "story" }))]);
+  assert.deepEqual([...d.fs.keys()].sort(), [`${GLOBAL}/bug.yaml`, `${GLOBAL}/story.yaml`, `${REPO}/keep.yaml`].sort());
+});
+
+test("loadText returns the exact stored file even when its workflow is malformed", async () => {
+  const source = "name: [\n# kept exactly\n";
+  const { store } = setup(ALL, { [`${GLOBAL}/broken.yaml`]: source });
+  assert.deepEqual(await store.loadText("global", "broken"), { text: source, scope: "global", legacy: false });
+  assert.equal(await store.loadText("global", "absent"), null);
+});
+
+test("a valid paste can replace a malformed listed file without taking its id from the clipboard", async () => {
+  const { d, store } = setup(ALL, { [`${REPO}/broken.yaml`]: "name: [" });
+  await store.paste("repo", "broken", serialize(wf("Fixed", { id: "other" })));
+  assert.deepEqual([...d.fs.keys()], [`${REPO}/broken.yaml`]);
+  assert.equal((await store.load("repo", "broken")).workflow.name, "Fixed");
+});
 
 test("a new workflow is written under its slug in the folder of the scope it is saved to", async () => {
   for (const [scope, dir] of Object.entries(ALL)) {
