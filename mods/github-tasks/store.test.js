@@ -102,14 +102,15 @@ test("invalid clipboard YAML or workflow content writes nothing", async () => {
   assert.deepEqual(d.calls, []);
 });
 
-test("restorePlan deletes the selected tab's workflows and chooses where Bug and Story go", () => {
+test("restorePlan captures the repo and deletes the selected tab's workflows", () => {
   const global = { id: "global-one", name: "Global one", scope: "global" };
   const repo = { id: "repo-one", name: "Repo one", scope: "repo" };
   const otherRepo = { id: "broken", name: "broken", scope: "repo", error: "bad YAML" };
-  assert.deepEqual(restorePlan([global, repo, otherRepo], "repo", true), { deletions: [repo, otherRepo].map(({ id, name, scope }) => ({ id, name, scope })), createScope: "repo" });
-  assert.deepEqual(restorePlan([global, repo], "global", true), { deletions: [{ ...global }], createScope: "global" });
-  assert.deepEqual(restorePlan([global, repo], "all", true), { deletions: [{ ...global }, { ...repo }], createScope: "global" });
-  assert.deepEqual(restorePlan([global], "all", false), { deletions: [{ ...global }], createScope: "global" });
+  const repoRoot = "/proj";
+  assert.deepEqual(restorePlan([global, repo, otherRepo], "repo", repoRoot), { repoRoot, deletions: [repo, otherRepo].map(({ id, name, scope }) => ({ id, name, scope })), createScope: "repo" });
+  assert.deepEqual(restorePlan([global, repo], "global", repoRoot), { repoRoot, deletions: [{ ...global }], createScope: "global" });
+  assert.deepEqual(restorePlan([global, repo], "all", repoRoot), { repoRoot, deletions: [{ ...global }, { ...repo }], createScope: "global" });
+  assert.deepEqual(restorePlan([global], "all", null), { repoRoot: null, deletions: [{ ...global }], createScope: "global" });
 });
 
 test("restore replaces Project workflows with the shipped starter text, even when Global has Bug and Story", async () => {
@@ -119,7 +120,7 @@ test("restore replaces Project workflows with the shipped starter text, even whe
   await store.save(wf("Old project"), "repo");
   const bug = serialize(wf("Bug", { id: "bug" })), story = serialize(wf("Story", { id: "story" }));
   const items = await store.list();
-  await store.restore(restorePlan(items, "repo", true), [bug, story]);
+  await store.restore(restorePlan(items, "repo", "/proj"), [bug, story]);
   assert.deepEqual([...d.fs.keys()].sort(), [`${GLOBAL}/bug.yaml`, `${GLOBAL}/story.yaml`, `${REPO}/bug.yaml`, `${REPO}/story.yaml`].sort());
   assert.equal(d.fs.get(`${REPO}/bug.yaml`), bug);
   assert.equal(d.fs.get(`${REPO}/story.yaml`), story);
@@ -131,7 +132,7 @@ test("restore Global leaves Project alone, and All leaves starters in Global onl
     const { d, store } = setup();
     await store.save(wf("Old global"), "global");
     await store.save(wf("Old project"), "repo");
-    await store.restore(restorePlan(await store.list(), tab, true), starters);
+    await store.restore(restorePlan(await store.list(), tab, "/proj"), starters);
     const expected = tab === "all" ? [`${GLOBAL}/bug.yaml`, `${GLOBAL}/story.yaml`]
       : [`${GLOBAL}/bug.yaml`, `${GLOBAL}/story.yaml`, `${REPO}/old-project.yaml`];
     assert.deepEqual([...d.fs.keys()].sort(), expected.sort());
@@ -143,11 +144,41 @@ test("an invalid starter is refused before restore deletes anything", async () =
   await store.save(wf("Keep me"), "global");
   const before = new Map(d.fs);
   d.calls.length = 0;
-  const plan = restorePlan(await store.list(), "global", true);
+  const plan = restorePlan(await store.list(), "global", "/proj");
   await assert.rejects(store.restore(plan, ["name: [", serialize(wf("Story", { id: "story" }))]), (e) => e.kind === "invalid");
   await assert.rejects(store.restore(plan, ["name: Bad\nworker:\n  effort: extreme\n", serialize(wf("Story", { id: "story" }))]), (e) => e.kind === "invalid");
   assert.deepEqual(d.fs, before);
   assert.deepEqual(d.calls, []);
+});
+
+test("restore puts the original files back when a remove fails", async () => {
+  const { d, store } = setup();
+  await store.save(wf("First"), "global");
+  await store.save(wf("Second"), "global");
+  const before = new Map(d.fs), remove = d.io.remove;
+  d.io.remove = async (path) => {
+    if (path === `${GLOBAL}/second.yaml`) throw new Error("remove failed");
+    await remove(path);
+  };
+  const plan = restorePlan(await store.list(), "global", "/proj");
+  const starters = [serialize(wf("Bug", { id: "bug" })), serialize(wf("Story", { id: "story" }))];
+  await assert.rejects(store.restore(plan, starters), /remove failed/);
+  assert.deepEqual(d.fs, before);
+});
+
+test("restore removes partial starters and puts originals back when a write fails", async () => {
+  const { d, store } = setup();
+  await store.save(wf("Old global"), "global");
+  await store.save(wf("Keep project"), "repo");
+  const before = new Map(d.fs), writeFile = d.io.write;
+  d.io.write = async (path, text, expected) => {
+    if (path === `${GLOBAL}/story.yaml`) throw new Error("write failed");
+    await writeFile(path, text, expected);
+  };
+  const plan = restorePlan(await store.list(), "global", "/proj");
+  const starters = [serialize(wf("Bug", { id: "bug" })), serialize(wf("Story", { id: "story" }))];
+  await assert.rejects(store.restore(plan, starters), /write failed/);
+  assert.deepEqual(d.fs, before);
 });
 
 test("restore wipes malformed and legacy workflow files too", async () => {
@@ -156,7 +187,7 @@ test("restore wipes malformed and legacy workflow files too", async () => {
     [`${GLOBAL}/old.json`]: JSON.stringify({ name: "Old" }),
     [`${REPO}/keep.yaml`]: serialize(wf("Keep", { id: "keep" })),
   });
-  const plan = restorePlan(await store.list(), "global", true);
+  const plan = restorePlan(await store.list(), "global", "/proj");
   assert.deepEqual(plan.deletions.map((item) => item.id).sort(), ["broken", "old"]);
   await store.restore(plan, [serialize(wf("Bug", { id: "bug" })), serialize(wf("Story", { id: "story" }))]);
   assert.deepEqual([...d.fs.keys()].sort(), [`${GLOBAL}/bug.yaml`, `${GLOBAL}/story.yaml`, `${REPO}/keep.yaml`].sort());
@@ -167,6 +198,17 @@ test("loadText returns the exact stored file even when its workflow is malformed
   const { store } = setup(ALL, { [`${GLOBAL}/broken.yaml`]: source });
   assert.deepEqual(await store.loadText("global", "broken"), { text: source, scope: "global", legacy: false });
   assert.equal(await store.loadText("global", "absent"), null);
+});
+
+test("copyText keeps YAML exact but converts a legacy JSON workflow to YAML", async () => {
+  const exact = `${serialize(wf("Exact", { id: "exact" }))}# kept exactly\n`;
+  const legacy = wf("Legacy", { id: "legacy" });
+  const { store } = setup(ALL, {
+    [`${GLOBAL}/exact.yaml`]: exact,
+    [`${GLOBAL}/legacy.json`]: JSON.stringify(legacy),
+  });
+  assert.equal(await store.copyText("global", "exact"), exact);
+  assert.equal(await store.copyText("global", "legacy"), serialize(legacy));
 });
 
 test("a valid paste can replace a malformed listed file without taking its id from the clipboard", async () => {

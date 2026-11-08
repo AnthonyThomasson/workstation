@@ -46,7 +46,10 @@ export class WorkflowList {
     const where = this.place();
     cx.spawn(async (cx) => {
       try {
-        this.repoRoot = await repoRootOf(where);
+        const repoRoot = await repoRootOf(where);
+        // A refresh that finds another repo invalidates the confirmation, including one already working.
+        if (this.restoring && this.restoring.plan.repoRoot !== (repoRoot ?? null)) this.restoring = null;
+        this.repoRoot = repoRoot;
         this.items = await store({ repo: this.repoRoot }).list();
         this.error = null;
       } catch (e) {
@@ -94,9 +97,9 @@ export class WorkflowList {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const found = await store({ repo: this.repoRoot }).loadText(item.scope, item.id);
-        if (!found) throw new Error("That workflow is already gone.");
-        cx.write_to_clipboard(found.text); // exactly as stored, not a normalized re-serialization
+        const text = await store({ repo: this.repoRoot }).copyText(item.scope, item.id);
+        if (text == null) throw new Error("That workflow is already gone.");
+        cx.write_to_clipboard(text); // exact stored YAML; a legacy JSON file is converted to YAML
       } catch (e) {
         this.error = String(e?.message ?? e);
         cx.notify();
@@ -113,7 +116,9 @@ export class WorkflowList {
   }
 
   openRestore(cx) {
-    this.restoring = { plan: restorePlan(this.items, this.scope, Boolean(this.repoRoot)), working: false, error: null };
+    const plan = restorePlan(this.items, this.scope, this.repoRoot);
+    // Both the plan and its store belong to the repo whose workflows the dialog names, even if the place changes.
+    this.restoring = { plan, store: store({ repo: plan.repoRoot }), working: false, error: null };
     this.menu = null;
     cx.notify();
   }
@@ -133,7 +138,7 @@ export class WorkflowList {
     cx.spawn(async (cx) => {
       try {
         const starters = await starterWorkflows();
-        await store({ repo: this.repoRoot }).restore(current.plan, starters);
+        await current.store.restore(current.plan, starters);
         this.restoring = null;
         setShared(WORKFLOWS_CHANGED, Date.now());
         this.refresh(cx);
@@ -167,7 +172,11 @@ export class WorkflowList {
     const t = theme(), where = this.place();
     // Another space, or another folder in it, may be in another repo: its workflows come and the last one's go.
     const key = where ? `${where.on ?? ""}|${where.cwd ?? ""}` : "";
-    if (key !== this.placeKey) { this.placeKey = key; later(cx, (cx) => this.refresh(cx)); }
+    if (key !== this.placeKey) {
+      this.placeKey = key;
+      this.restoring = null; // the dialog names the old place's workflows; never carry it across places
+      later(cx, (cx) => this.refresh(cx));
+    }
     // An editor tab saved something, or the page was just shown after a while hidden: the list may be stale.
     const changed = shared(WORKFLOWS_CHANGED) ?? null;
     if (changed !== this.changedAt) { this.changedAt = changed; later(cx, (cx) => this.refresh(cx)); }

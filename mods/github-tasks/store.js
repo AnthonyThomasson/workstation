@@ -35,12 +35,13 @@ export function replacementFromYaml(source, id) {
 }
 
 // Project resets only the repo; Global only the global files; All removes both but puts the starters in Global.
-// With no repo there is only Global, whatever tab was last selected while a repo was open.
-export function restorePlan(items, tab, hasRepo) {
-  const scope = hasRepo ? tab : "global";
+// Capture the repo root so a place change while confirming cannot redirect the restore. With no repo there is
+// only Global, whatever tab was last selected while a repo was open.
+export function restorePlan(items, tab, repoRoot) {
+  const scope = repoRoot ? tab : "global";
   const deletions = items.filter((item) => scope === "all" || item.scope === scope)
     .map(({ id, name, scope }) => ({ id, name, scope }));
-  return { deletions, createScope: scope === "repo" ? "repo" : "global" };
+  return { repoRoot: repoRoot ?? null, deletions, createScope: scope === "repo" ? "repo" : "global" };
 }
 
 // Workflows are YAML files. Ones saved as JSON before that still load, and are rewritten as YAML when saved.
@@ -100,6 +101,12 @@ export function makeStore({ io, dirs }) {
     let text = await io.read(fileOf(dir, id)), legacy = false;
     if (text == null) { text = await io.read(legacyOf(dir, id)); legacy = text != null; }
     return text == null ? null : { text, scope, legacy };
+  }
+
+  // Clipboard text: YAML stays byte-for-byte, while a legacy JSON file is parsed and serialized as YAML.
+  async function copyText(scope, id) {
+    const found = await loadText(scope, id);
+    return found && (found.legacy ? serialize(parse(found.text)) : found.text);
   }
 
   // One workflow and the text it was read as: { workflow, text, scope, legacy }, or null when there is none.
@@ -168,16 +175,44 @@ export function makeStore({ io, dirs }) {
       if (problems.length) throw Object.assign(new StoreError("invalid", `A shipped starter is invalid: ${problems[0].message}`), { problems });
       return { id: workflow.id || slug(workflow.name), text: source };
     });
+    // Snapshot both possible files before changing anything, including malformed YAML and hidden legacy JSON.
+    const originals = [];
     for (const item of plan.deletions) {
-      // The plan also names unreadable files, which remove() cannot load. Both extensions go so a hidden
-      // legacy JSON file cannot survive beside a YAML file with the same id.
       const dir = folder(item.scope);
-      await io.remove(fileOf(dir, item.id));
-      await io.remove(legacyOf(dir, item.id));
+      for (const path of [fileOf(dir, item.id), legacyOf(dir, item.id)]) {
+        const text = await io.read(path);
+        if (text != null) originals.push({ path, text });
+      }
     }
-    const dir = folder(plan.createScope);
-    await io.mkdir(dir);
-    for (const starter of starters) await write(fileOf(dir, starter.id), starter.text, null);
+    const originalPaths = new Set(originals.map((file) => file.path)), starterWrites = [];
+    try {
+      for (const file of originals) await io.remove(file.path);
+      const dir = folder(plan.createScope);
+      await io.mkdir(dir);
+      for (const starter of starters) {
+        const path = fileOf(dir, starter.id);
+        starterWrites.push({ path, text: starter.text }); // include an attempted write: the I/O may fail after writing
+        await write(path, starter.text, null);
+      }
+    } catch (error) {
+      const rollbackErrors = [];
+      // Remove only starter text that this operation wrote; a conflicting file from elsewhere is not ours to delete.
+      for (const starter of starterWrites.reverse()) {
+        if (originalPaths.has(starter.path)) continue;
+        try {
+          if (await io.read(starter.path) === starter.text) await io.remove(starter.path);
+        } catch (e) { rollbackErrors.push(e); }
+      }
+      // Read the current bytes for the expected-value check, then put every original file back exactly as it was.
+      for (const file of originals) {
+        try {
+          const current = await io.read(file.path);
+          if (current !== file.text) await io.write(file.path, file.text, current);
+        } catch (e) { rollbackErrors.push(e); }
+      }
+      if (rollbackErrors.length) throw new StoreError("other", `${error?.message ?? error}; Restore also could not put every original file back: ${rollbackErrors.map((e) => e?.message ?? e).join("; ")}`);
+      throw error;
+    }
   }
 
   async function remove(scope, id) {
@@ -186,5 +221,5 @@ export function makeStore({ io, dirs }) {
     await io.remove((found.legacy ? legacyOf : fileOf)(folder(scope), id));
   }
 
-  return { list, loadAll, loadText, load, save, clone, paste, restore, remove, available };
+  return { list, loadAll, loadText, copyText, load, save, clone, paste, restore, remove, available };
 }
