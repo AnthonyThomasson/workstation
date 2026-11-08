@@ -8,7 +8,8 @@ personal/herdr-app/installed.json
 # Generated files
 *.d.ts
 jsconfig.json
-# Skills Skillshare installs on this computer; they stay out of the repo
-skillshare/skills/synced/
-skillshare/skills/skillshare/
+# Only skillshare/skills/mine/ is committed. Every other top-level folder there (a skill Skillshare
+# installed, synced/) stays out of the repo; installed skills are recorded in .metadata.json.
+skillshare/skills/*/
+!skillshare/skills/mine/
 .sync-backup/
