@@ -22,7 +22,7 @@ test("slug makes a file name from a name", () => {
 test("a blank workflow has every role with a default agent and effort", () => {
   const w = blank();
   const role0 = { prompt: "", agent: "claude", command: "", model: "", effort: "medium" };
-  for (const role of ROLES) assert.deepEqual(w[role], role === "orchestrator" ? { ...role0, planning: "", retro: "" } : role === "worker" ? { ...role0, testing: "" } : { ...role0, tests: "" });
+  for (const role of ROLES) assert.deepEqual(w[role], role === "orchestrator" ? { ...role0, planning: "", retro: "" } : role === "worker" ? { ...role0, testing: "" } : { ...role0, tests: "node --test\nnpm test\nherdr-app check" });
   assert.deepEqual(w.trigger, { labels: [], match: "any" });
   assert.equal("global" in w, false); // where it is kept is the folder's business
   assert.equal("strategy" in w, false);
@@ -36,7 +36,7 @@ test("a file that still has a strategy loads, ignores it, and drops it on the ne
   assert.equal(isDirty(valid(), { ...valid(), strategy: "worktree" }), false);
 });
 
-test("the reviewer's test commands default to empty, are kept as written, and make a workflow dirty", () => {
+test("the reviewer's test commands are three lines in a new workflow, empty when a file lacks them, are kept as written, and make a workflow dirty", () => {
   assert.equal(normalize({}).reviewer.tests, "");
   assert.equal(normalize({ reviewer: { tests: 7 } }).reviewer.tests, "");
   assert.equal(normalize({ reviewer: { tests: "node --test\nnpm test" } }).reviewer.tests, "node --test\nnpm test");

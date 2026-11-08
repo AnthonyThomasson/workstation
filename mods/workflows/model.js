@@ -59,7 +59,8 @@ const text = (v) => (typeof v === "string" ? v : "");
 export const blankRole = () => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium" });
 export const blankOrchestrator = () => ({ ...blankRole(), planning: "", retro: "" });
 export const blankWorker = () => ({ ...blankRole(), testing: "" });
-export const blankReviewer = () => ({ ...blankRole(), tests: "" });
+export const REVIEWER_TESTS = "node --test\nnpm test\nherdr-app check"; // what a new workflow lets its reviewer run
+export const blankReviewer = () => ({ ...blankRole(), tests: REVIEWER_TESTS });
 export const blank = () => ({
   version: VERSION, id: "", name: "", trigger: { labels: [], match: "any" },
   orchestrator: blankOrchestrator(), worker: blankWorker(), reviewer: blankReviewer(),

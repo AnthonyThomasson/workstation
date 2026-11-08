@@ -37,28 +37,40 @@ export const statusArgs = ({ projectId, itemId, fieldId, optionId }) =>
 // "origin/main" -> "main"; null when git had nothing to say.
 export const defaultBranch = (symbolicRef) => String(symbolicRef ?? "").trim().replace(/^origin\//, "") || null;
 
-// Merge as a list of steps, in order. A step is { name, cmd, args, cwd?, fail, done?, abort?, dirty?, ifOutput?, warn? }:
-//   fail   what to say when it fails; done  what to call it once it has happened ("Already done: ...")
+// gh/git args that say whether the ticket worktree folder is still there, and whether the ticket branch still is
+// (exit code 0 means yes). Merge can be pressed again after a partial failure, so it asks before each part.
+export const worktreeArgs = (workDir) => ["-C", workDir, "rev-parse", "--git-dir"];
+export const branchArgs = (repoRoot, branch) => ["-C", repoRoot, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`];
+
+// A push that origin turned away because it has moved on.
+const PUSH_REJECTED = /rejected|non-fast-forward|fetch first|failed to push some refs/i;
+
+// Merge as a list of steps, in order. A step is { name, cmd, args, cwd?, fail, hint?, done?, abort?, dirty?, ifOutput?, warn? }:
+//   fail   what to say when it fails; hint { when, say }: also say this when its output matches when; done  what to call it once it has happened ("Already done: ...")
 //   abort  { cmd, args } to run when it fails    dirty  stop with this when its output is not empty (a check)
 //   ifOutput  steps to run only when its output is not empty    warn  not run: runSteps passes this on as a warning
 // The caller has already found the default branch (base). status: { args } to set the ticket Done, { warn } when the
 // project has no such option, or nothing when there is no project to set it in. number: the issue to close, if any.
-export function mergeSteps({ repoRoot, workDir, branch, base, number, status }) {
+// workDirExists / branchExists: false when an earlier Merge already removed the folder / merged and deleted the branch;
+// the steps for them are left out, so pressing Merge again finishes what was left.
+export function mergeSteps({ repoRoot, workDir, branch, base, number, status, workDirExists = true, branchExists = true }) {
   const git = (args) => ({ cmd: "git", args });
   return [
-    { name: "tree-status", ...git(["-C", workDir, "status", "--porcelain"]), fail: `Couldn't look at ${workDir}.`,
+    ...(workDirExists ? [{ name: "tree-status", ...git(["-C", workDir, "status", "--porcelain"]), fail: `Couldn't look at ${workDir}.`,
       ifOutput: [
         { name: "commit-add", ...git(["-C", workDir, "add", "-A"]), fail: `Couldn't stage the changes left in ${workDir}.` },
         { name: "commit", ...git(["-C", workDir, "commit", "-m", `Commit what was left in the worktree${number ? ` (#${number})` : ""}`]), fail: `Couldn't commit the changes left in ${workDir}.`, done: `committed what was left in ${workDir}` },
-      ] },
+      ] }] : []),
     { name: "repo-clean", ...git(["-C", repoRoot, "status", "--porcelain"]), fail: `Couldn't look at ${repoRoot}.`, dirty: `${repoRoot} has uncommitted changes, so ${branch} can't be merged into ${base} there.` },
     { name: "switch", ...git(["-C", repoRoot, "switch", base]), fail: `Couldn't switch ${repoRoot} to ${base}.`, done: `switched ${repoRoot} to ${base}` },
-    { name: "merge", ...git(["-C", repoRoot, "merge", "--no-edit", branch]), fail: `${branch} didn't merge into ${base} (the merge was aborted).`, abort: git(["-C", repoRoot, "merge", "--abort"]), done: `merged ${branch} into ${base}` },
-    { name: "push", ...git(["-C", repoRoot, "push", "origin", base]), fail: `${base} didn't push to origin.`, done: `pushed ${base} to origin` },
+    ...(branchExists ? [{ name: "merge", ...git(["-C", repoRoot, "merge", "--no-edit", branch]), fail: `${branch} didn't merge into ${base} (the merge was aborted).`, abort: git(["-C", repoRoot, "merge", "--abort"]), done: `merged ${branch} into ${base}` }] : []),
+    { name: "push", ...git(["-C", repoRoot, "push", "origin", base]), fail: `${base} didn't push to origin.`, done: `pushed ${base} to origin`,
+      hint: { when: PUSH_REJECTED, say: `The merge is done locally. Update ${base} from origin in ${repoRoot}, then press Merge again.` } },
     ...(status ? [status.warn ? { name: "status", warn: status.warn } : { name: "status", cmd: "gh", args: status.args, fail: "Couldn't set the ticket's status.", done: "set the ticket's status" }] : []),
     ...(number ? [{ name: "close-issue", cmd: "gh", args: ["issue", "close", String(number)], cwd: repoRoot, fail: `Couldn't close issue #${number}.`, done: `closed issue #${number}` }] : []),
-    { name: "remove-worktree", ...git(["-C", repoRoot, "worktree", "remove", workDir]), fail: `Couldn't remove the worktree ${workDir}.`, done: `removed the worktree ${workDir}` },
-    { name: "delete-branch", ...git(["-C", repoRoot, "branch", "-d", branch]), fail: `Couldn't delete the branch ${branch}.`, done: `deleted ${branch}` },
+    ...(workDirExists ? [{ name: "remove-worktree", ...git(["-C", repoRoot, "worktree", "remove", workDir]), fail: `Couldn't remove the worktree ${workDir}.`, done: `removed the worktree ${workDir}` }]
+      : [{ name: "prune-worktrees", ...git(["-C", repoRoot, "worktree", "prune"]), fail: `Couldn't clear the removed worktree ${workDir} from git's list.` }]),
+    ...(branchExists ? [{ name: "delete-branch", ...git(["-C", repoRoot, "branch", "-d", branch]), fail: `Couldn't delete the branch ${branch}.`, done: `deleted ${branch}` }] : []),
   ];
 }
 
@@ -75,7 +87,7 @@ export async function runSteps(steps, exec) {
       if (st.dirty) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim()); if (String(r.stdout ?? "").trim()) stop(st.dirty); continue; }
       if (r.code !== 0) {
         if (st.abort) await exec(st.abort.cmd, st.abort.args);
-        stop(`${st.fail} ${text(r)}`.trim());
+        stop(`${st.fail} ${text(r)} ${st.hint?.when.test(text(r)) ? st.hint.say : ""}`.replace(/ +/g, " ").trim());
       }
       if (st.done) done.push(st.done);
       if (st.ifOutput && String(r.stdout ?? "").trim()) await go(st.ifOutput);

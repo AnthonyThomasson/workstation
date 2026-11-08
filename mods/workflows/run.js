@@ -7,7 +7,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, notify, run, setShared, shared, terminals, theme } from "herdr";
 import { S, icon, note, stop } from "./ui.js";
 import { agentsOf, orchestratorOf, statusColor, statusLabel, withGone } from "./runview.js";
-import { canMerge, defaultBranch, finalSeen, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, stageOf, statusArgs } from "./finish.js";
+import { branchArgs, canMerge, defaultBranch, finalSeen, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, stageOf, statusArgs, worktreeArgs } from "./finish.js";
 
 const out = (r) => (r.stderr || r.stdout || "").trim();
 const RUN = "herdr.workflow.run";
@@ -67,7 +67,7 @@ export class RunPage {
       .child(h_flex().gap(7).items_center().text_size(S().secondary).text_color(ended ? t.muted : t.foreground)
         .child(div().w(8).h(8).flex_none().rounded_full().bg(color))
         .child(div().min_w(0).truncate().child(words)))
-      .when(!ended || this.pr, (el) => el.child(this.renderActions(t, lead, cx, workers, reviewers)));
+      .child(this.renderActions(t, lead, cx, workers, reviewers)); // also once the orchestrator has ended: the work stays on the branch, and Merge is still gated
   }
 
   // The final reviewer is seen once and remembered, so a restart of the page still lets Merge through.
@@ -161,12 +161,18 @@ export class RunPage {
     this.busy = "merge"; this.error = null; cx.notify();
     cx.spawn(async (cx) => {
       try {
+        // A Merge that stopped part way can be pressed again: leave out what is already gone (the folder, the branch).
+        const workDirExists = (await exec("git", worktreeArgs(this.folder))).code === 0;
+        const branchExists = (await exec("git", branchArgs(this.repoRoot, this.branch))).code === 0;
         const { warnings } = await runSteps(mergeSteps({
           repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, base: await this.baseBranch(),
-          number: this.ticket?.number, status: this.doneStatus(),
+          number: this.ticket?.number, status: this.doneStatus(), workDirExists, branchExists,
         }), exec);
         for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
-        await this.closeSession();
+        if (!(await this.closeSession())) {
+          this.error = "Merged. This tab couldn't be closed for you: close it yourself.";
+          this.busy = null; cx.notify();
+        }
       } catch (e) { this.error = String(e?.message ?? e); this.busy = null; cx.notify(); }
     });
   }
@@ -180,6 +186,7 @@ export class RunPage {
   }
 
   // Ends the run's workers and reviewers, then its tab, which ends the orchestrator and this page with it.
+  // Resolves false when the tab couldn't be found, so the page can say so instead of staying on "Merging…".
   async closeSession() {
     const all = terminals();
     for (const k of all.filter((x) => x.labels?.[RUN] === this.id && x.address !== this.orchestrator)) {
@@ -187,7 +194,9 @@ export class RunPage {
       await hc(["rm", k.address]).catch(() => {});
     }
     const tab = all.find((x) => x.address === this.orchestrator)?.labels?.["herdr.tab"];
-    if (tab) run("tab.close", { id: tab });
+    if (!tab) return false;
+    run("tab.close", { id: tab });
+    return true;
   }
 
   renderSection(t, title, rows, empty) {

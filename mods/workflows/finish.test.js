@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { canMerge, finalSeen, stageOf, optionFor, statusArgs, defaultBranch, mergeSteps, runSteps, prArgs, parsePrUrl, prNumber, parsePr } from "./finish.js";
+import { worktreeArgs, branchArgs, canMerge, finalSeen, stageOf, optionFor, statusArgs, defaultBranch, mergeSteps, runSteps, prArgs, parsePrUrl, prNumber, parsePr } from "./finish.js";
 
 test("canMerge needs the final reviewer seen and nobody live", () => {
   const ended = { live: false }, live = { live: true, status: "idle" };
@@ -95,6 +95,22 @@ test("mergeSteps leaves out the status and the issue when there is nothing to se
   assert.equal(warn.warn, "no Done option");
 });
 
+test("mergeSteps skips the worktree steps when the folder is already gone", () => {
+  const n = names(mergeSteps({ ...ctx, workDirExists: false }));
+  assert.deepEqual(n, ["repo-clean", "switch", "merge", "push", "status", "close-issue", "prune-worktrees", "delete-branch"]);
+});
+
+test("mergeSteps skips merge and branch delete when the branch is already gone", () => {
+  const n = names(mergeSteps({ ...ctx, workDirExists: false, branchExists: false }));
+  assert.deepEqual(n, ["repo-clean", "switch", "push", "status", "close-issue", "prune-worktrees"]);
+  assert.deepEqual(names(mergeSteps({ ...ctx, branchExists: false })), ["tree-status", ">commit-add", ">commit", "repo-clean", "switch", "push", "status", "close-issue", "remove-worktree"]);
+});
+
+test("worktreeArgs and branchArgs ask git whether the folder and the branch are still there", () => {
+  assert.deepEqual(worktreeArgs("/r-9-x"), ["-C", "/r-9-x", "rev-parse", "--git-dir"]);
+  assert.deepEqual(branchArgs("/r", "workflow/9-x"), ["-C", "/r", "rev-parse", "--verify", "--quiet", "refs/heads/workflow/9-x"]);
+});
+
 // A fake exec: answers by the step's args, records what ran.
 const fake = (answers = {}) => {
   const ran = [];
@@ -143,6 +159,13 @@ test("a failed push says the merge already happened locally", async () => {
   const f = fake({ "push origin main": { code: 1, stderr: "rejected" } });
   await assert.rejects(runSteps(mergeSteps(ctx), f.exec), (e) => /rejected/.test(e.message) && /merged workflow\/9-x into main/.test(e.message));
   assert.ok(!f.ran.some((l) => l.includes("issue close")));
+});
+
+test("a rejected push says what to do, and only a rejection gets the hint", async () => {
+  const f = fake({ "push origin main": { code: 1, stderr: "! [rejected] main -> main (fetch first)" } });
+  await assert.rejects(runSteps(mergeSteps(ctx), f.exec), (e) => /merge is done locally/.test(e.message) && /Update main from origin/.test(e.message) && /press Merge again/.test(e.message) && /Already done/.test(e.message));
+  const g = fake({ "push origin main": { code: 1, stderr: "Could not resolve host" } });
+  await assert.rejects(runSteps(mergeSteps(ctx), g.exec), (e) => /Could not resolve host/.test(e.message) && !/press Merge again/.test(e.message));
 });
 
 test("a missing Done option warns once and carries on", async () => {
@@ -207,4 +230,36 @@ test("merge steps, run for real: a conflict aborts and leaves the repo clean", a
   await assert.rejects(runSteps(mergeSteps(w.ctx), real), /didn't merge into main/);
   assert.equal(w.git(w.repoRoot, "status", "--porcelain").trim(), "");
   assert.ok(existsSync(w.workDir), "nothing was removed");
+});
+
+test("merge steps, run for real: a rejected push can be retried after updating from origin", async () => {
+  const w = repoWithTicket();
+  // origin moves on while the run is going
+  const other = join(w.repoRoot, "..", "other");
+  execFileSync("git", ["clone", "-q", w.origin, other]);
+  writeFileSync(join(other, "z.txt"), "z\n"); w.git(other, "add", "."); w.git(other, "commit", "-qm", "moved"); w.git(other, "push", "-q", "origin", "main");
+  await assert.rejects(runSteps(mergeSteps(w.ctx), real), (e) => /merge is done locally/.test(e.message));
+  assert.ok(existsSync(w.workDir), "cleanup has not happened yet");
+  w.git(w.repoRoot, "pull", "--no-rebase", "--no-edit", "origin", "main");
+  const r = await runSteps(mergeSteps({ ...w.ctx, workDirExists: true, branchExists: true }), real);
+  assert.ok(r.done.some((d) => /pushed main/.test(d)));
+  assert.ok(!existsSync(w.workDir));
+  assert.equal(w.git(w.repoRoot, "rev-parse", "HEAD").trim(), w.git(w.origin, "rev-parse", "main").trim());
+});
+
+test("merge steps, run for real: a second Merge after everything is done is harmless", async () => {
+  const w = repoWithTicket();
+  await runSteps(mergeSteps(w.ctx), real);
+  const again = await runSteps(mergeSteps({ ...w.ctx, workDirExists: false, branchExists: false }), real);
+  assert.deepEqual(again.warnings, []);
+  assert.equal(w.git(w.repoRoot, "rev-parse", "HEAD").trim(), w.git(w.origin, "rev-parse", "main").trim());
+});
+
+test("merge steps, run for real: a retry with the worktree gone but the branch kept", async () => {
+  const w = repoWithTicket();
+  w.git(w.workDir, "add", "."); w.git(w.workDir, "commit", "-qm", "left");
+  w.git(w.repoRoot, "worktree", "remove", w.workDir);
+  const r = await runSteps(mergeSteps({ ...w.ctx, workDirExists: false }), real);
+  assert.ok(r.done.some((d) => /merged/.test(d)) && r.done.some((d) => /deleted/.test(d)));
+  assert.equal(w.git(w.repoRoot, "branch", "--list", "workflow/9-x").trim(), "");
 });
