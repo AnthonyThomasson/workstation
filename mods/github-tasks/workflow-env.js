@@ -13,8 +13,14 @@ const io = {
   read: (path) => readTextFile(path),
   write: (path, text, expected) => writeTextFile(path, text, expected),
   list: async (dir) => (await sh('ls -1 "$1" 2>/dev/null', dir)).stdout.split("\n").filter(Boolean),
-  remove: async (path) => { await sh('rm -f "$1"', path); },
-  mkdir: async (dir) => { await sh('mkdir -p "$1"', dir); },
+  remove: async (path) => {
+    const r = await sh('rm -f "$1"', path);
+    if (r.code !== 0) throw new Error(r.stderr || `rm exited with code ${r.code}.`);
+  },
+  mkdir: async (dir) => {
+    const r = await sh('mkdir -p "$1"', dir);
+    if (r.code !== 0) throw new Error(r.stderr || `mkdir exited with code ${r.code}.`);
+  },
 };
 
 // Codex's own list of models, from the cache its CLI keeps. Empty when it has none, or it cannot be read.
