@@ -32,6 +32,7 @@ Then summary lines: `copied: <n> to Herdr, <m> to the repo; <k> already the same
 
 - `mods/<mod>/` to `mods/<mod>/` for every mod. A new file inside a mod folder on either side is carried over, except for the repository-only files below.
 - `layouts/Tony.json` to `layouts/Tony.json`.
+- The root `preview.png` to `layouts/Tony.png`: Tony's preview, which Herdr's layout picker shows. Unlike a mod's `preview.png`, it syncs like any other file.
 - `personal/herdr-app/themes/<file>` to `themes/<file>`: only the theme files the repo has.
 - `personal/herdr-app/workflows/` to `workflows/`: new files on either side are carried over.
 - Never synced: each mod's `RECIPE.md` and `preview.png`. These stay in the repo; a pull never removes them, and `--prune` never treats their Herdr-side namesakes as extra files.

@@ -21,7 +21,7 @@ Tony is a full Herdr window layout with a 268px navigation sidebar, icon-rich dr
 
 ### Layout tree
 
-Copy `layouts/Tony.json` and the mod code and assets from every folder under `mods/`. The repository root is the Tony layout: there is one copy of each mod and no nested Tony folder or duplicate mod tree. An installing agent leaves the root `RECIPE.md` and `preview.png` and every mod's own `RECIPE.md` and `preview.png` out of `~/.config/herdr-app`. The JSON records `cloned_from: { "name": "main", "version": "0.1.12" }` and has this exact structure:
+Copy `layouts/Tony.json` and the mod code and assets from every folder under `mods/`. The repository root is the Tony layout: there is one copy of each mod and no nested Tony folder or duplicate mod tree. An installing agent leaves the root `RECIPE.md` and every mod's own `RECIPE.md` and `preview.png` out of `~/.config/herdr-app`, and copies the root `preview.png` to `~/.config/herdr-app/layouts/Tony.png`, the picture Herdr's layout picker shows. The JSON records `cloned_from: { "name": "main", "version": "0.1.12" }` and has this exact structure:
 
 ```json
 {
@@ -318,7 +318,7 @@ No `keys.json` belongs to the Tony layout: it supplies no layout-specific key bi
 - Install all six custom mod folders, and the six listed built-ins must be available. A missing custom panel leaves a toggle without its intended content.
 - The panel toggles depend on the exact ids `panel` and `panel-body`, and child ids `files`, `changes`, `skills`, `github-tasks` and `sync`. Changing them requires changing the custom mods too.
 - The layout itself runs no external programs, reads no files outside Herdr's mod state and makes no network requests. Custom mod capabilities vary: Usage contacts Kimi on explicit refresh, Skills and GitHub Tasks (including workflows) run their CLIs and agents, and Sync runs Git, Skillshare and the configured sync script. Read their recipes before enabling those actions.
-- Tony deliberately leaves theme and font choices unset. Do not add hard-coded colors where the source uses theme tokens. The preview image is the supplied portrait, not an additional layout asset; it is not copied into `~/.config/herdr-app` during installation.
+- Tony deliberately leaves theme and font choices unset. Do not add hard-coded colors where the source uses theme tokens. The preview image is the supplied portrait blended into the dark framed-panel style; it is a picker picture only, installed as `layouts/Tony.png` and not used by the layout itself.
 - The sidebar's own `resizable: false` does not remove Herdr commands that hide or resize it. Tony's root sets the macOS traffic-light position to `[12, 16]`.
 - Renaming any custom mod requires changing its layout reference and following the asset/self-overlay changes described in its own recipe.
 

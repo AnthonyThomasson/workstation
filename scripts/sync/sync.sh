@@ -14,11 +14,12 @@
 # What goes where (repo -> the Herdr config folder, ~/.config/herdr-app):
 #   mods/<mod>/                        -> mods/<mod>/       every mod
 #   layouts/Tony.json                  -> layouts/Tony.json
+#   preview.png                        -> layouts/Tony.png   (the picture the layout picker shows)
 #   personal/herdr-app/themes/<file>   -> themes/<file>     only the theme files the repo has
 #   personal/herdr-app/workflows/      -> workflows/        new files on either side are carried over
 # Herdr does not load a mod's icons and other assets through a symlink, so both sides hold real
 # copies. A new file inside a mod folder, on either side, is carried over to the other. Each mod's
-# RECIPE.md and preview.png belong only to the repo: they are never copied to Herdr, pulled, or
+# RECIPE.md and preview.png (but not the root preview.png, which is Tony's) belong only to the repo: they are never copied to Herdr, pulled, or
 # pruned. Everything else in a mod folder, including mods/github-tasks/starters/, syncs like any
 # other mod file. keys.json and settings.json are not synced, because Herdr writes to them itself.
 # Generated files (gpui-kit.d.ts, jsconfig.json, .DS_Store) are skipped.
@@ -161,6 +162,8 @@ repo_mods | while IFS= read -r m; do
 done
 echo layouts/Tony.json >> "$roots"
 printf 'layouts/Tony.json\tlayouts/Tony.json\n' >> "$pairs"
+echo layouts/Tony.png >> "$roots"
+printf 'preview.png\tlayouts/Tony.png\n' >> "$pairs"
 map_tracked personal/herdr-app/themes themes
 map_dir personal/herdr-app/workflows workflows
 sort -u "$pairs" -o "$pairs"

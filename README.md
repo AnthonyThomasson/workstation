@@ -111,6 +111,7 @@ When you add a skill to `mine/`, add a row here with its one-line description an
 | --- | --- |
 | `mods/<mod>/`, excluding recipes and previews; this includes `mods/github-tasks/starters/` | `mods/<mod>/` |
 | `layouts/Tony.json` | `layouts/Tony.json` |
+| `preview.png` | `layouts/Tony.png` (the picture in Herdr's layout picker) |
 | Theme files stored under `personal/herdr-app/themes/`; only files already in the repo | `themes/` |
 | Workflow files stored under `personal/herdr-app/workflows/` | `workflows/` |
 

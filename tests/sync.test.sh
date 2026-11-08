@@ -94,6 +94,7 @@ new_world() {
   rm -rf "$T"
   mkdir -p "$R/scripts/sync" "$H" "$HOME_DIR"
   cp "$real_repo/scripts/sync/sync.sh" "$R/scripts/sync/sync.sh"
+  cp "$real_repo/preview.png" "$R/preview.png"
   cp -R "$real_repo/mods" "$real_repo/layouts" "$real_repo/personal" "$real_repo/skillshare" "$R/"
   find "$R" -name .DS_Store -delete
   # Workflow starters live in a mod folder and sync like any other mod file; make sure the scratch repo has one.
@@ -164,6 +165,7 @@ expected="$T/expected"
   cd "$R"
   find mods -type f ! -name RECIPE.md ! -name preview.png ! -name gpui-kit.d.ts ! -name jsconfig.json
   echo layouts/Tony.json
+  echo layouts/Tony.png
   (cd personal/herdr-app && find themes workflows -type f)
 ) | sort > "$expected"
 before=$(cd "$R" && find . -type f | sort | xargs cksum)
@@ -196,6 +198,7 @@ done
 assert_same_file "$R/mods/usage/main.js" "$H/mods/usage/main.js"
 assert_same_file "$R/mods/status-bar/icons/branch.svg" "$H/mods/status-bar/icons/branch.svg"
 assert_same_file "$R/layouts/Tony.json" "$H/layouts/Tony.json"
+assert_same_file "$R/preview.png" "$H/layouts/Tony.png"
 assert_same_tree "$R/personal/herdr-app/themes" "$H/themes"
 assert_same_tree "$R/personal/herdr-app/workflows" "$H/workflows"
 assert_absent "$H/mods/usage/RECIPE.md"
