@@ -1,7 +1,6 @@
 version: 1
 id: story-kimi
 name: Story - Kimi
-strategy: worktree
 
 trigger:
   labels: []
@@ -30,3 +29,7 @@ reviewer:
   model: kimi-k3.1-pro
   effort: high
   prompt: "Run `mattpocock-skills:code-review` with `origin/main` as the fixed point and the ticket's `## Agent Brief` as the spec. Report only; change nothing."
+  tests: |
+    node --test
+    npm test
+    herdr-app check

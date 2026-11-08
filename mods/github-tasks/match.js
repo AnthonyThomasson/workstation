@@ -1,6 +1,6 @@
 // Which workflows a ticket starts, with no Herdr in it. A workflow is a YAML file kept by the Workflows
 // mod (see mods/workflows/model.js): the labels that trigger it, and how its roles run. What is needed to
-// match is read here, along with the strategy and the roles, which start.js runs it with.
+// match is read here, along with the roles, which start.js runs it with.
 
 import { parse as parseYaml } from "./yaml.js";
 
@@ -16,13 +16,13 @@ function labelsOf(list) {
   return out;
 }
 
-// A role as it is run. A file without planning, retro or testing prompts has them empty.
+// A role as it is run. A file without planning, retro, testing or tests fields has them empty.
 function roleOf(raw) {
   const r = raw && typeof raw === "object" ? raw : {};
-  return { prompt: text(r.prompt), agent: text(r.agent) || "claude", command: text(r.command).trim(), model: text(r.model).trim(), effort: text(r.effort) || "medium", planning: text(r.planning), retro: text(r.retro), testing: text(r.testing) };
+  return { prompt: text(r.prompt), agent: text(r.agent) || "claude", command: text(r.command).trim(), model: text(r.model).trim(), effort: text(r.effort) || "medium", planning: text(r.planning), retro: text(r.retro), testing: text(r.testing), tests: text(r.tests) };
 }
 
-// A workflow file's text as { id, name, scope, strategy, trigger: { labels, match }, orchestrator, worker, reviewer }.
+// A workflow file's text as { id, name, scope, trigger: { labels, match }, orchestrator, worker, reviewer }.
 // Throws a plain Error on text that is not a map (YAML, or the JSON older files hold). A file from before triggers had several labels holds
 // one, as `label`.
 export function parseWorkflow(source, { id, scope }) {
@@ -35,7 +35,6 @@ export function parseWorkflow(source, { id, scope }) {
   return {
     id, scope,
     name: text(data.name).trim() || id,
-    strategy: data.strategy === "worktree" ? "worktree" : "branch",
     trigger: { labels: labels.length || typeof trigger.label !== "string" ? labels : labelsOf([trigger.label]), match: trigger.match === "all" ? "all" : "any" },
     orchestrator: roleOf(data.orchestrator), worker: roleOf(data.worker), reviewer: roleOf(data.reviewer),
   };

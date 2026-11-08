@@ -1,7 +1,7 @@
 import test from "node:test";
 import { parse as parseYaml } from "./yaml.js";
 import assert from "node:assert/strict";
-import { blank, normalize, validate, slug, snapshot, isDirty, serialize, parse, uniqueLabels, ROLES, EFFORTS, AGENTS, STRATEGIES, CUSTOM, AGENT_LABELS, MATCHES, SCOPES, SCOPE_LABELS, SCOPE_HINTS, isFallback } from "./model.js";
+import { blank, normalize, validate, slug, snapshot, isDirty, serialize, parse, uniqueLabels, ROLES, EFFORTS, AGENTS, CUSTOM, AGENT_LABELS, MATCHES, SCOPES, SCOPE_LABELS, SCOPE_HINTS, isFallback } from "./model.js";
 
 const valid = (over = {}) => {
   const w = blank();
@@ -22,29 +22,30 @@ test("slug makes a file name from a name", () => {
 test("a blank workflow has every role with a default agent and effort", () => {
   const w = blank();
   const role0 = { prompt: "", agent: "claude", command: "", model: "", effort: "medium" };
-  for (const role of ROLES) assert.deepEqual(w[role], role === "orchestrator" ? { ...role0, planning: "", retro: "" } : role === "worker" ? { ...role0, testing: "" } : role0);
+  for (const role of ROLES) assert.deepEqual(w[role], role === "orchestrator" ? { ...role0, planning: "", retro: "" } : role === "worker" ? { ...role0, testing: "" } : { ...role0, tests: "" });
   assert.deepEqual(w.trigger, { labels: [], match: "any" });
   assert.equal("global" in w, false); // where it is kept is the folder's business
-  assert.equal(w.strategy, "branch");
+  assert.equal("strategy" in w, false);
 });
 
-test("the work strategy is a branch or a worktree, and an older file without one is a branch", () => {
-  assert.deepEqual(STRATEGIES, ["branch", "worktree"]);
-  assert.equal(normalize({}).strategy, "branch");
-  assert.equal(normalize({ strategy: "worktree" }).strategy, "worktree");
-  assert.equal(normalize({ strategy: 7 }).strategy, "branch");
-  assert.equal(parse(JSON.stringify({ name: "Old" })).strategy, "branch");
+test("a file that still has a strategy loads, ignores it, and drops it on the next save", () => {
+  assert.equal("strategy" in normalize({ strategy: "worktree" }), false);
+  assert.equal("strategy" in parse(JSON.stringify({ name: "Old", strategy: "branch" })), false);
+  assert.deepEqual(validate(valid({ strategy: "fork" })), []);
+  assert.equal(/strategy/.test(serialize(valid({ strategy: "worktree" }))), false);
+  assert.equal(isDirty(valid(), { ...valid(), strategy: "worktree" }), false);
 });
 
-test("an unknown work strategy is a problem, and the two real ones are not", () => {
-  assert.deepEqual(validate(valid({ strategy: "worktree" })), []);
-  assert.deepEqual(validate(valid({ strategy: "branch" })), []);
-  assert.deepEqual(validate(valid({ strategy: "fork" })).map((p) => p.field), ["strategy"]);
-});
-
-test("changing the strategy makes a workflow dirty", () => {
+test("the reviewer's test commands default to empty, are kept as written, and make a workflow dirty", () => {
+  assert.equal(normalize({}).reviewer.tests, "");
+  assert.equal(normalize({ reviewer: { tests: 7 } }).reviewer.tests, "");
+  assert.equal(normalize({ reviewer: { tests: "node --test\nnpm test" } }).reviewer.tests, "node --test\nnpm test");
+  assert.equal(normalize({ worker: { tests: "x" } }).worker.tests, undefined);
   const base = valid();
-  assert.equal(isDirty(base, { ...base, strategy: "worktree" }), true);
+  assert.equal(isDirty(base, { ...base, reviewer: { ...base.reviewer, tests: "npm test" } }), true);
+  const text = serialize({ ...base, reviewer: { ...base.reviewer, tests: "node --test\nnpm test\nherdr-app check" } });
+  assert.equal(parse(text).reviewer.tests, "node --test\nnpm test\nherdr-app check");
+  assert.deepEqual(Object.keys(parseYaml(text).reviewer), ["agent", "command", "model", "effort", "prompt", "tests"]);
 });
 
 test("the agent and effort lists hold what Herdr and the editor offer", () => {
@@ -122,10 +123,10 @@ test("the orchestrator's planning and retro prompts are optional and survive a r
 });
 
 test("serialize and parse round-trip, in a fixed key order", () => {
-  const w = valid({ id: "feature-work", strategy: "worktree" });
+  const w = valid({ id: "feature-work" });
   const text = serialize(w);
   assert.ok(text.endsWith("\n") && !text.startsWith("{"));
-  assert.deepEqual(Object.keys(parseYaml(text)), ["version", "id", "name", "strategy", "trigger", "orchestrator", "worker", "reviewer"]);
+  assert.deepEqual(Object.keys(parseYaml(text)), ["version", "id", "name", "trigger", "orchestrator", "worker", "reviewer"]);
   assert.deepEqual(Object.keys(parseYaml(text).orchestrator), ["agent", "command", "model", "effort", "prompt", "planning", "retro"]);
   assert.deepEqual(Object.keys(parseYaml(text).worker), ["agent", "command", "model", "effort", "prompt", "testing"]);
   assert.deepEqual(parse(text), normalize(w));

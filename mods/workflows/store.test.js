@@ -180,13 +180,12 @@ test("remove deletes the file from its scope, and only that scope", async () => 
   await assert.rejects(store.remove("repo", "kept"), (e) => e.kind === "missing");
 });
 
-test("the strategy, a custom agent's command and the trigger labels are saved and read back", async () => {
+test("a custom agent's command and the trigger labels are saved and read back", async () => {
   const { d, store } = setup();
-  const w = wf("Everything", { strategy: "worktree", trigger: { labels: ["a", "b"], match: "all" } });
+  const w = wf("Everything", { trigger: { labels: ["a", "b"], match: "all" } });
   w.worker = { ...w.worker, agent: "custom", command: "my-agent --go" };
   await store.save(w, "repo");
   const back = (await store.load("repo", "everything")).workflow;
-  assert.equal(back.strategy, "worktree");
   assert.deepEqual(back.trigger, { labels: ["a", "b"], match: "all" });
   assert.equal(back.worker.command, "my-agent --go");
   assert.equal(parseYaml(d.fs.get(`${REPO}/everything.yaml`)).worker.command, "my-agent --go");
@@ -205,7 +204,7 @@ test("files saved before scopes and before several labels still load", async () 
   const { store } = setup(ALL, { [`${GLOBAL}/old.json`]: old });
   const found = await store.load("global", "old");
   assert.deepEqual(found.workflow.trigger, { labels: ["x"], match: "any" });
-  assert.equal(found.workflow.strategy, "branch");
+  assert.equal("strategy" in found.workflow, false);
   assert.equal("global" in found.workflow, false);
 });
 

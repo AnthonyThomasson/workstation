@@ -1,7 +1,6 @@
 version: 1
 id: story
 name: Story
-strategy: worktree
 
 trigger:
   labels: []
@@ -30,3 +29,7 @@ reviewer:
   model: sonnet
   effort: high
   prompt: "Run `mattpocock-skills:code-review` with `origin/main` as the fixed point and the ticket's `## Agent Brief` as the spec. Report only; change nothing."
+  tests: |
+    node --test
+    npm test
+    herdr-app check

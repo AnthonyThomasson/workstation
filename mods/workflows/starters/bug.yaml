@@ -1,7 +1,6 @@
 version: 1
 id: bug
 name: Bug
-strategy: worktree
 
 trigger:
   labels:
@@ -31,3 +30,7 @@ reviewer:
   model: haiku
   effort: low
   prompt: A bug has no audit. Report that and stop, changing nothing.
+  tests: |
+    node --test
+    npm test
+    herdr-app check

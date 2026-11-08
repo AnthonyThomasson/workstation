@@ -52,3 +52,14 @@ test("a YAML workflow file reads, and so does an old JSON one", () => {
   assert.deepEqual(y.trigger, { labels: ["feature"], match: "all" });
   assert.equal(y.worker.testing, "run it\n");
 });
+
+test("the reviewer's test commands are read, and a file without them has none", () => {
+  const y = parseWorkflow("name: F\nreviewer:\n  tests: |\n    node --test\n    npm test\n", { id: "f", scope: "global" });
+  assert.equal(y.reviewer.tests, "node --test\nnpm test\n");
+  assert.equal(parseWorkflow("name: F\n", { id: "f", scope: "global" }).reviewer.tests, "");
+});
+
+test("a file that still has a strategy is read and the strategy is ignored", () => {
+  const y = parseWorkflow("name: F\nstrategy: worktree\n", { id: "f", scope: "global" });
+  assert.equal("strategy" in y, false);
+});

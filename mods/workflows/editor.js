@@ -5,7 +5,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { run, setShared, theme } from "herdr";
-import { ROLES, ROLE_PROMPTS, ROLE_LABELS, AGENTS, AGENT_LABELS, CUSTOM, EFFORTS, STRATEGIES, STRATEGY_LABELS, STRATEGY_HINTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, SCOPES, SCOPE_LABELS, SCOPE_HINTS, blank, normalize, isDirty, uniqueLabels } from "./model.js";
+import { ROLES, ROLE_PROMPTS, ROLE_LABELS, AGENTS, AGENT_LABELS, CUSTOM, EFFORTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, SCOPES, SCOPE_LABELS, SCOPE_HINTS, blank, normalize, isDirty, uniqueLabels } from "./model.js";
 import { StoreError } from "./store.js";
 import { S, icon, stop, iconButton, action } from "./ui.js";
 import { CHANGED, store, gh, codexModels, kimiModels, globalDirText } from "./env.js";
@@ -26,7 +26,6 @@ export class WorkflowEditor {
     this.labelInput = InputState.new({ value: "", placeholder: "Type a label and press Enter" });
     this.triggerLabels = []; // the labels already added, shown as chips; the field holds the next one
     this.match = "any";
-    this.strategy = "branch";
     this.roles = {};
     for (const role of ROLES) {
       this.roles[role] = {
@@ -36,7 +35,7 @@ export class WorkflowEditor {
         prompt: TextareaState.new({ value: "", rows: 7 }),
       };
     }
-    // The extra prompts: the orchestrator's planning and retro, the worker's testing.
+    // The extra prompts: the orchestrator's planning and retro, the worker's testing, the reviewer's test commands.
     for (const role of ROLES) for (const { key } of ROLE_PROMPTS[role]) this.roles[role][key] = TextareaState.new({ value: "", rows: 5 });
     const touched = (_e, cx) => { if (this.notice?.kind === "saved") this.notice = null; cx.notify(); };
     const inputs = [this.nameInput, ...ROLES.flatMap((r) => [this.roles[r].prompt, this.roles[r].command]), ...ROLES.flatMap((r) => ROLE_PROMPTS[r].map((p) => this.roles[r][p.key]))];
@@ -161,7 +160,7 @@ export class WorkflowEditor {
 
   // The form as a workflow.
   current() {
-    const w = { ...blank(), id: this.id ?? "", name: this.nameInput.value(), strategy: this.strategy, trigger: { labels: [...this.triggerLabels, this.labelInput.value()], match: this.match } };
+    const w = { ...blank(), id: this.id ?? "", name: this.nameInput.value(), trigger: { labels: [...this.triggerLabels, this.labelInput.value()], match: this.match } };
     for (const role of ROLES) {
       const r = this.roles[role];
       w[role] = { prompt: r.prompt.value(), agent: r.agent, command: r.command.value(), model: r.model.value(), effort: r.effort };
@@ -176,7 +175,6 @@ export class WorkflowEditor {
     this.triggerLabels = [...workflow.trigger.labels];
     this.match = workflow.trigger.match;
     this.labelInput.set_value("");
-    this.strategy = workflow.strategy;
     for (const role of ROLES) {
       const r = this.roles[role], w = workflow[role];
       r.agent = w.agent;
@@ -301,12 +299,6 @@ export class WorkflowEditor {
     cx.notify();
   }
 
-  setStrategy(strategy, cx) {
-    this.strategy = strategy;
-    if (this.notice?.kind === "saved") this.notice = null;
-    cx.notify();
-  }
-
   setEffort(role, effort, cx) {
     this.roles[role].effort = effort;
     if (this.notice?.kind === "saved") this.notice = null;
@@ -363,17 +355,6 @@ export class WorkflowEditor {
     return v_flex().flex_none().gap(12)
       .child(v_flex().gap(4).child(this.heading(t, "Name")).child(this.field(t, "name", this.nameInput, 36)))
       .child(this.renderTrigger(t))
-      .child(v_flex().gap(4).child(this.heading(t, "Work strategy"))
-        .child(h_flex().flex_wrap().gap(4).children(STRATEGIES.map((strategy) => {
-          const on = strategy === this.strategy;
-          return h_flex().id(`strategy-${strategy}`).h(28).px(12).items_center().rounded(6).cursor_pointer()
-            .border_1().border_color(t.border).bg(on ? t.selected : t.background).text_size(S().secondary)
-            .text_color(on ? t.foreground : t.muted).when(on, (el) => el.font_semibold())
-            .hover((s) => s.bg(on ? t.selected : t.hover)).on_mouse_down("left", stop)
-            .on_click((_e, cx) => this.setStrategy(strategy, cx))
-            .child(STRATEGY_LABELS[strategy] ?? strategy);
-        })))
-        .child(div().text_size(S().label).text_color(t.muted).child(STRATEGY_HINTS[this.strategy] ?? "")))
       .child(v_flex().gap(4).child(this.heading(t, "Kept"))
         .child(h_flex().flex_wrap().gap(4).children(SCOPES.map((scope) => {
           const on = scope === this.scope, off = Boolean(this.unavailable(scope)) && !on;

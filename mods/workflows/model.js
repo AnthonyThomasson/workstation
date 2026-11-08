@@ -45,26 +45,24 @@ export const ORCHESTRATOR_PROMPTS = [
 export const WORKER_PROMPTS = [
   { key: "testing", label: "Testing rules", hint: "rules for how the worker tests its changes: commands to run, what must pass, what to cover. The worker must always test, and is told to follow these" },
 ];
+// The reviewer has one extra field: the commands it may run to check the work, one command prefix per line.
+// Each line becomes a permission for the reviewer (`Bash(<line>:*)`), so it can run exactly those.
+export const REVIEWER_PROMPTS = [
+  { key: "tests", label: "Test commands", hint: "the commands the reviewer may run to check the work, one command prefix per line (for example `npm test`). It can run nothing else besides read-only git" },
+];
 // The extra prompts each role has, besides its own.
-export const ROLE_PROMPTS = { orchestrator: ORCHESTRATOR_PROMPTS, worker: WORKER_PROMPTS, reviewer: [] };
+export const ROLE_PROMPTS = { orchestrator: ORCHESTRATOR_PROMPTS, worker: WORKER_PROMPTS, reviewer: REVIEWER_PROMPTS };
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
-// How the work is kept apart from the main checkout: a branch in the folder the space is in, or a git
-// worktree of its own, so several runs can go at once without sharing files.
-export const STRATEGIES = ["branch", "worktree"];
-export const STRATEGY_LABELS = { branch: "Branch", worktree: "Worktree" };
-export const STRATEGY_HINTS = {
-  branch: "Work on a new branch in the space's folder. One run at a time.",
-  worktree: "Work in a separate git worktree on its own branch. Runs can go in parallel.",
-};
 
 const text = (v) => (typeof v === "string" ? v : "");
 
 export const blankRole = () => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium" });
 export const blankOrchestrator = () => ({ ...blankRole(), planning: "", retro: "" });
 export const blankWorker = () => ({ ...blankRole(), testing: "" });
+export const blankReviewer = () => ({ ...blankRole(), tests: "" });
 export const blank = () => ({
-  version: VERSION, id: "", name: "", strategy: "branch", trigger: { labels: [], match: "any" },
-  orchestrator: blankOrchestrator(), worker: blankWorker(), reviewer: blankRole(),
+  version: VERSION, id: "", name: "", trigger: { labels: [], match: "any" },
+  orchestrator: blankOrchestrator(), worker: blankWorker(), reviewer: blankReviewer(),
 });
 
 // "Feature development!" -> "feature-development"; what a workflow's file is called.
@@ -110,11 +108,10 @@ export function normalize(raw) {
     version: VERSION,
     id: text(r.id),
     name: text(r.name).trim(),
-    strategy: text(r.strategy) || "branch", // an older file has none, and worked on a branch
     trigger: normalizeTrigger(r.trigger),
     orchestrator: normalizeOrchestrator(r.orchestrator),
     worker: normalizeRole(r.worker, WORKER_PROMPTS.map((p) => p.key)),
-    reviewer: normalizeRole(r.reviewer),
+    reviewer: normalizeRole(r.reviewer, REVIEWER_PROMPTS.map((p) => p.key)),
   };
 }
 
@@ -126,7 +123,6 @@ export function validate(workflow, takenIds = []) {
   if (!w.name) add("name", "Give the workflow a name.");
   else if (!slug(w.name)) add("name", "The name needs a letter or a number.");
   else if (!w.id && takenIds.includes(slug(w.name))) add("name", "A workflow with that name already exists.");
-  if (!STRATEGIES.includes(w.strategy)) add("strategy", `The work strategy must be one of ${STRATEGIES.join(", ")}.`);
   if (!MATCHES.includes(w.trigger.match)) add("match", `The trigger must match ${MATCHES.join(" or ")} of its labels.`);
   for (const role of ROLES) {
     const r = w[role], name = ROLE_LABELS[role];
@@ -150,10 +146,10 @@ export function serialize(workflow) {
     ...Object.fromEntries(extras.map((key) => [key, r[key]])),
   });
   return stringifyYaml({
-    version: w.version, id: w.id, name: w.name, strategy: w.strategy, trigger: { labels: w.trigger.labels, match: w.trigger.match },
+    version: w.version, id: w.id, name: w.name, trigger: { labels: w.trigger.labels, match: w.trigger.match },
     orchestrator: role(w.orchestrator, ORCHESTRATOR_PROMPTS.map((p) => p.key)),
     worker: role(w.worker, WORKER_PROMPTS.map((p) => p.key)),
-    reviewer: role(w.reviewer),
+    reviewer: role(w.reviewer, REVIEWER_PROMPTS.map((p) => p.key)),
   });
 }
 
