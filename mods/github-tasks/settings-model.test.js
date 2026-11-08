@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { markdownLiteral, normalizeSettingsSections, promptForRole } from "./settings-model.js";
 
 test("settings sections start collapsed and only saved booleans reopen them", () => {
-  const closed = { grooming: false, orchestrator: false, worker: false, reviewer: false };
+  const closed = { newTask: false, grooming: false, orchestrator: false, worker: false, reviewer: false };
   assert.deepEqual(normalizeSettingsSections(), closed);
   assert.deepEqual(normalizeSettingsSections(null), closed);
   assert.deepEqual(normalizeSettingsSections({ grooming: true, worker: true }), { ...closed, grooming: true, worker: true });
@@ -55,4 +55,12 @@ test("Markdown-ready prompts keep placeholders visible and leave code untouched"
     "printf '%s\\n' '<run folder>'",
     "```",
   ].join("\n"));
+});
+
+test("the New Task prompt waits for the person, grills on acceptance criteria and asks about status", () => {
+  const prompt = promptForRole("newTask", { repo: "me/app", project: { title: "Work" }, options: [{ name: "Todo" }, { name: "Up next" }] });
+  assert.match(prompt, /me\/app/);
+  assert.match(prompt, /acceptance criteria/);
+  assert.match(prompt, /"Up next" or "Todo"/);
+  assert.match(promptForRole("newTask"), /<project>/);
 });

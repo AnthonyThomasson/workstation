@@ -9,6 +9,7 @@ import { ROLE_LABELS } from "./workflow-model.js";
 import { S, note } from "./ui.js";
 
 const PAGES = [
+  ["newTask", "What the + beside Backlog tells the agent when it opens: wait for what you want to make, grill you on the acceptance criteria, then ask whether to create the ticket and in which status."],
   ["orchestrator", "Directs the work: plans it, starts workers and reviewers, and decides what to fix."],
   ["worker", "Does one job the orchestrator gives it."],
   ["reviewer", "Reads the finished work and reports findings. Read-only."],
@@ -23,7 +24,7 @@ export class PromptPage {
 
   render() {
     const t = theme();
-    const label = this.role === "grooming" ? "Grooming agent" : ROLE_LABELS[this.role];
+    const label = this.role === "grooming" ? "Grooming" : this.role === "newTask" ? "New Task" : ROLE_LABELS[this.role];
     const hint = this.role === "grooming"
       ? "What Start Grooming tells the agent when it opens, with this repo and project filled in (<repo> and <project> until they are known)."
       : PROMPT_HINTS[this.role];

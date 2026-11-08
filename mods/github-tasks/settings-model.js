@@ -1,16 +1,19 @@
 // Pure state and prompt selection for the Task settings sections and their read-only prompt tabs.
-import { groomPrompt, spelled, STATUSES } from "./model.js";
+import { groomPrompt, newTaskPrompt, spelled, STATUSES } from "./model.js";
 import { orchestratorPrompt, workerPrompt, reviewerPrompt } from "./run.js";
 
-// All four sections start closed; only explicit booleans for known sections survive a reload.
+// All five sections start closed; only explicit booleans for known sections survive a reload.
 export function normalizeSettingsSections(saved) {
   const value = saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {};
-  return Object.fromEntries(["grooming", "orchestrator", "worker", "reviewer"].map((role) => [role, value[role] === true]));
+  return Object.fromEntries(["newTask", "grooming", "orchestrator", "worker", "reviewer"].map((role) => [role, value[role] === true]));
 }
 
 export function promptForRole(role, { repo = "", project = null, options = [] } = {}) {
   if (role === "grooming") {
     return groomPrompt({ repo, project, backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) });
+  }
+  if (role === "newTask") {
+    return newTaskPrompt({ repo, project, backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) });
   }
   const build = { orchestrator: orchestratorPrompt, worker: workerPrompt, reviewer: reviewerPrompt }[role];
   return build ? clean(build(SAMPLE)).trim() : null;
