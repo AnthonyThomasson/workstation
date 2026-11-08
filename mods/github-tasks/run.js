@@ -1,10 +1,10 @@
 // What a started workflow runs and what its agents are told. Pure: no Herdr imports, so node --test runs it.
-// start.js writes these out and opens the tab; the agents do the rest. The Workflows mod's "run" role shows them.
+// start.js writes these out and opens the tab; the agents do the rest. The "run" role (run-page.js) shows them.
 
 export const TOKEN_LIMIT = "120k";
 export const SKILL = "hc --skill"; // the manual for the desktop app's herdr-core; the `herdr` skill is the older CLI's
 
-// Labels on a run's terminals. The Workflows mod's runview.js reads the same ones.
+// Labels on a run's terminals. runview.js reads the same ones.
 export const RUN_LABEL = "herdr.workflow.run"; // on every terminal of a run: its id
 export const TICKET_LABEL = "herdr.workflow.ticket"; // on the orchestrator: which ticket, so Start finds a run in progress
 export const FOLDER_LABEL = "herdr.workflow.folder"; // on every terminal: the folder it works in

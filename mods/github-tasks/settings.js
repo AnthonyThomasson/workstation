@@ -1,5 +1,6 @@
 // The Tasks settings page: the grooming agent (global, not per project) and the exact prompt Start Grooming gives it,
 // as it would be sent now. It works with no repo or project linked: the prompt then shows placeholders.
+// Below them, the workflows (workflow-list.js), which main.js builds once so they keep their place between renders.
 // Not a View of its own: main.js builds one and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
@@ -10,7 +11,8 @@ import { loadStatusField } from "./loader.js";
 import { S, stop, note, iconButton, gh } from "./ui.js";
 
 export class TaskSettings {
-  constructor(props, cx, onClose) {
+  constructor(props, cx, onClose, workflows) {
+    this.workflows = workflows ?? null; // the WorkflowList to draw under the grooming settings
     this.onClose = onClose ?? null; // set when the settings sit in the side panel, which needs a way to close
     this.repo = props?.repo ?? ""; // "" until a repo is known
     this.project = props?.project ?? null; // null until the repo has a linked project
@@ -49,7 +51,8 @@ export class TaskSettings {
       .child(div().id("task-settings-body").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(20).py(16).gap(20)
           .child(this.agentSection(t))
-          .child(this.promptSection(t, prompt))));
+          .child(this.promptSection(t, prompt))
+          .when(Boolean(this.workflows), (el) => el.child(this.workflows.render(cx)))));
   }
 
   agentSection(t) {

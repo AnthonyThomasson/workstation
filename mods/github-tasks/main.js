@@ -2,10 +2,12 @@
 // Spaces: Up Next, Backlog (collapsed), In Progress and In Review. Clicking a ticket
 // opens it in a tab of its own to edit (editor.js), and saving pushes the change to GitHub. Each row links
 // out to GitHub and has Start, which becomes View while its workflow runs.
-// Roles (props.role): "sidebar" (default), the list; "toggle", the tab-bar button that opens or closes the
-// layout's shared side panel, which holds the settings; "settings", the grooming agent and prompt, in that
-// side panel; "editor", one ticket in the center, opened by a click on a row.
-import { View, div, svg } from "gpui-kit";
+// Roles (props.role): "sidebar" (default), the list; "settings", the grooming agent and prompt and the list of
+// workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket in the center, opened
+// by a click on a row; "workflow-editor", one workflow in the center (workflow-editor.js); "run", a started
+// workflow's agents, beside its orchestrator (run-page.js); "prompts", the built-in prompts every run starts
+// from (prompts-page.js).
+import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
 import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, spelled, STATUSES, GROOMER_KEY, chooseProject } from "./model.js";
@@ -16,12 +18,17 @@ import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { TaskEditor, CHANGED } from "./editor.js";
 import { TaskSettings } from "./settings.js";
 import { matchWorkflows } from "./match.js";
-import { loadWorkflows } from "./workflows.js";
+import { WorkflowEditor } from "./workflow-editor.js";
+import { RunPage } from "./run-page.js";
+import { PromptsPage } from "./prompts-page.js";
+import { WorkflowList } from "./workflow-list.js";
+import { loadWorkflows } from "./workflow-env.js";
 import { startRun, liveRunFor, viewRun } from "./start.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
 const CONTEXT = "github-tasks.context"; // { repo, project, where }: what the sidebar looks at, for the settings in the side panel
+const PLACE = "github-tasks.place"; // { cwd, on }: where the selected space is, for the workflows in the settings. Set even with no repo
 const COLUMN = "sidebar"; // the layout column the list lives in: its width says how much of a name fits
 const SECTIONS = [ // the list's sections, top to bottom; open: whether each starts expanded
   { id: "next", label: "Up Next", open: true },
@@ -49,16 +56,6 @@ const activeSpace = () => spaces().find((s) => s.active) ?? null;
 // Shows the settings in the layout's shared side panel.
 const showSettings = () => { run("layout.select", { stack: STACK, child: SHOWN }); run("layout.show", { id: PANEL }); };
 
-function toggle() {
-  const t = theme(), on = shownHere();
-  return h_flex().size_full().pr(8).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border)
-    .child(h_flex().id("toggle-github-tasks").tooltip("Task settings").h(30).w(34).justify_center().flex_none().items_center().rounded(6)
-      .text_size(12).bg(on ? t.selected : t.chrome).text_color(on ? t.foreground : t.muted)
-      .hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
-      .on_click(() => { if (on) run("layout.hide", { id: PANEL }); else showSettings(); })
-      .child(svg("mods/github-tasks/icons/tasks.svg").size(16)));
-}
-
 // What a failure says, and the gh command that fixes it when Tasks can run it.
 function explain(error, folder) {
   const place = folder.split("/").filter(Boolean).pop() || "This space's folder";
@@ -74,9 +71,16 @@ function explain(error, folder) {
 export default class GitHubTasks extends View {
   init(_props, cx) {
     this.role = blockProps()?.role ?? "sidebar";
-    if (this.role === "toggle") return;
     if (this.role === "editor") { this.editor = new TaskEditor(blockProps(), cx); return; }
-    if (this.role === "settings") { this.settingsKey = null; this.page = null; return; }
+    if (this.role === "workflow-editor") { this.workflowEditor = new WorkflowEditor(blockProps(), cx); return; }
+    if (this.role === "run") { this.runPage = new RunPage(blockProps()); return; }
+    if (this.role === "prompts") { this.promptsPage = new PromptsPage(); return; }
+    if (this.role === "settings") {
+      this.settingsKey = null;
+      this.page = null;
+      this.workflowList = new WorkflowList(cx, { place: () => shared(PLACE) ?? null, shown: shownHere });
+      return;
+    }
     this.handle = cx.focus_handle();
     this.auth = new Auth();
     this.changedAt = shared(CHANGED) ?? null; // a save in an editor tab refreshes the list
@@ -166,8 +170,10 @@ export default class GitHubTasks extends View {
   }
 
   // Tells the settings, which live in the side panel, which repo and project this list is for. Null when there is no repo.
+  // The place goes out whether or not there is a repo: the workflows are kept per computer and per local repo.
   publish() {
     const ctx = this.ctx, project = this.project;
+    setShared(PLACE, ctx ? { cwd: ctx.folder, on: ctx.on } : null);
     setShared(CONTEXT, this.repo && ctx ? { repo: this.repo, project: project ? { id: project.id, title: project.title, url: project.url } : null, where: { cwd: ctx.folder, on: ctx.on } } : null);
   }
 
@@ -189,8 +195,10 @@ export default class GitHubTasks extends View {
   }
 
   render(cx) {
-    if (this.role === "toggle") return toggle();
     if (this.role === "editor") return this.editor.render(cx);
+    if (this.role === "workflow-editor") return this.workflowEditor.render(cx);
+    if (this.role === "run") return this.runPage.render(cx);
+    if (this.role === "prompts") return this.promptsPage.render(cx);
     if (this.role === "settings") return this.renderSettings(cx);
     const t = theme();
 
@@ -222,7 +230,7 @@ export default class GitHubTasks extends View {
     const t = theme(), ctx = shared(CONTEXT) ?? null, key = JSON.stringify(ctx); // no repo or project is still a page, with placeholders
     if (key !== this.settingsKey) {
       this.settingsKey = key;
-      later(cx, (cx) => { this.page = new TaskSettings(ctx, cx, () => run("layout.hide", { id: PANEL })); cx.notify(); });
+      later(cx, (cx) => { this.page = new TaskSettings(ctx, cx, () => run("layout.hide", { id: PANEL }), this.workflowList); cx.notify(); });
     }
     if (this.page && key === this.settingsKey) return this.page.render(cx);
     return v_flex().id("task-settings-empty").size_full().p(16).gap(10).bg(t.background).text_size(S().body)

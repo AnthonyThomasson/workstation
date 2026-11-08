@@ -369,7 +369,7 @@ export class TaskEditor {
       : several ? div().id("start-list").max_h(380).overflow_y_scrollbar().child(v_flex().gap(2).children(s.matches.map(row)))
       : v_flex().gap(6)
         .child(note(t, s.labels.length ? "No workflow matches this ticket's labels." : "This ticket has no labels, and no workflow is the fallback."))
-        .child(note(t, "Make one in the Workflows panel."));
+        .child(note(t, "Make one in the Task settings."));
     const labels = s.labels.length ? s.labels.join(", ") : "none";
     const dialog = v_flex().id("task-start").w(560).max_h(560).flex_none().p(16).gap(12).rounded(12).border_1().border_color(t.border)
       .bg(t.popover).shadow_lg().text_color(t.foreground).text_size(S().body)

@@ -6,11 +6,11 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, notify, run, setShared, shared, terminals, theme } from "herdr";
 import { S, icon, note, stop } from "./ui.js";
+import { RUN_LABEL as RUN } from "./run.js";
 import { agentsOf, orchestratorOf, statusColor, statusLabel, withGone } from "./runview.js";
 import { branchArgs, canMerge, defaultBranch, finalSeen, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, stageOf, statusArgs, worktreeArgs } from "./finish.js";
 
 const out = (r) => (r.stderr || r.stdout || "").trim();
-const RUN = "herdr.workflow.run";
 const stageKey = (id) => `github-tasks.run.${id}.stage`;
 const prKey = (id) => `github-tasks.run.${id}.pr`;
 const finalKey = (id) => `github-tasks.run.${id}.final`; // the final reviewer has been seen: Merge waits for that

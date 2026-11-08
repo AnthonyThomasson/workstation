@@ -1,6 +1,5 @@
 // The small part of YAML a workflow file uses: maps, lists of strings, strings (long ones as `|` blocks),
 // numbers, booleans and null. Pure, and written here because a mod has no packages to import.
-// github-tasks/yaml.js is a copy (a mod cannot import another mod): keep the two in step.
 // parse() also reads what a person writes by hand: comments, 'single' and "double" quotes, `>` folded
 // blocks, `[a, b]` lists, and a list at the same indent as its key.
 

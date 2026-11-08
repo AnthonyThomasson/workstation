@@ -1,14 +1,15 @@
-// The settings page: every instruction the orchestrator, worker and reviewer get in every run, whatever the
+// The built-in prompts page: every instruction the orchestrator, worker and reviewer get in every run, whatever the
 // workflow. These are built into the app (run.js writes them into each run's folder); a workflow's
-// own prompts, edited in its tab, are added under them. Read-only. Shown in a tab (props.role "settings").
+// own prompts, edited in its tab, are added under them. Read-only. Shown in a tab (props.role "prompts").
 // Not a View of its own: main.js builds one in init and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex } from "gpui-base";
 import { theme } from "herdr";
 import { orchestratorPrompt, workerPrompt, reviewerPrompt } from "./run.js";
 import { ROLE_LABELS } from "./workflow-model.js";
-const LABELS = ROLE_LABELS;
 import { S, note } from "./ui.js";
+
+const LABELS = ROLE_LABELS;
 
 // What a run fills in, shown as it is in the prompts' own words.
 const SAMPLE = {
@@ -29,18 +30,18 @@ const PAGES = [
   ["reviewer", "Reads the finished work and reports findings. Read-only.", reviewerPrompt],
 ];
 
-export class SettingsPage {
+export class PromptsPage {
   constructor() {
     this.sections = PAGES.map(([role, hint, build]) => ({ role, hint, text: clean(build(SAMPLE)).trim() }));
   }
 
   render() {
     const t = theme();
-    return v_flex().id("workflow-settings").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
+    return v_flex().id("built-in-prompts-page").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
       .child(v_flex().flex_none().px(20).py(14).gap(4).border_b(1).border_color(t.border)
-        .child(div().text_size(S().title).font_semibold().child("Workflow settings"))
+        .child(div().text_size(S().title).font_semibold().child("Built-in prompts"))
         .child(note(t, "What every run's orchestrator, workers and reviewers are told, in every workflow. A workflow's own prompts are added at the end of the workflow ones.")))
-      .child(div().id("workflow-settings-body").flex_1().min_h(0).overflow_y_scrollbar()
+      .child(div().id("built-in-prompts-body").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(20).py(16).gap(20).children(this.sections.map((s) => this.section(t, s)))));
   }
 
