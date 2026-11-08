@@ -80,6 +80,17 @@ Each skill in `skillshare/skills/mine/` installs by URL (add `-g` for the global
 | --- | --- | --- |
 | `add-own-skill` | Add a personal skill to this workstation's Skillshare source. | `skillshare install github.com/AnthonyThomasson/workstation/skillshare/skills/mine/add-own-skill` |
 
+To try an install without touching your real Skillshare folder, point Skillshare at a scratch one. It does not read `SKILLSHARE_HOME`; it reads `XDG_CONFIG_HOME` (or `SKILLSHARE_CONFIG`, but then give the config absolute scratch `sources`, because this repo's config points them at `~/.config/skillshare`):
+
+```sh
+scratch=$(mktemp -d)
+mkdir -p "$scratch/skillshare/skills"
+printf 'mode: merge\ntargets: {}\n' > "$scratch/skillshare/config.yaml"
+XDG_CONFIG_HOME=$scratch XDG_DATA_HOME=$scratch/data XDG_CACHE_HOME=$scratch/cache XDG_STATE_HOME=$scratch/state \
+  skillshare install github.com/AnthonyThomasson/workstation/skillshare/skills/mine/add-own-skill -g -y
+ls "$scratch/skillshare/skills"   # add-own-skill
+```
+
 When you add a skill to `mine/`, add a row here with its one-line description and its install command (`skillshare install github.com/AnthonyThomasson/workstation/skillshare/skills/mine/<name>`). The `add-own-skill` skill does this as one of its steps.
 
 ## `scripts/sync/sync.sh` reference
@@ -105,6 +116,6 @@ When you add a skill to `mine/`, add a row here with its one-line description an
 
 Set `HERDR_APP_HOME` to use a different Herdr config folder. Herdr's built-in mods and generated files are not pulled. Every replaced or pruned Herdr file is backed up under `~/.config/herdr-app/.workstation-backup/<timestamp>/`; replaced repo files go under `.sync-backup/<timestamp>/`. Nothing is deleted from the repo.
 
-**Skillshare.** The script links `~/.config/skillshare/config.yaml`, `agents` and `skills` to `skillshare/` in this repo. An existing real file/folder is first moved to `<name>.backup-<timestamp>`; an existing wrong link is repointed. Set `SKILLSHARE_HOME` to use a different Skillshare folder. After linking, it also reinstalls recorded skills whose folder is missing (see [Skillshare skills](#skillshare-skills)).
+**Skillshare.** The script links `~/.config/skillshare/config.yaml`, `agents` and `skills` to `skillshare/` in this repo. An existing real file/folder is first moved to `<name>.backup-<timestamp>`; an existing wrong link is repointed. Set `SKILLSHARE_HOME` to use a different Skillshare folder (the script then installs recorded skills into it through a temporary copy of its config). After linking, it also reinstalls recorded skills whose folder is missing (see [Skillshare skills](#skillshare-skills)).
 
 **Home paths stay private.** `skillshare/config.yaml` sets `preserve_tilde_on_save: true`, and each real run rewrites `$HOME/` to `~/` there. `--check` fails if an absolute home path remains. Commit after a pull or two-way run because pulled files are repository edits.

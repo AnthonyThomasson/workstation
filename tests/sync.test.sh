@@ -21,19 +21,29 @@ stub_bin="$base/bin"
 mkdir -p "$stub_bin"
 cat > "$stub_bin/skillshare" <<'STUB'
 #!/bin/sh
+# Where the real one would install: sources.skills of the config it is given (SKILLSHARE_CONFIG), else
+# ~/.config/skillshare/skills; a leading ~/ expands from HOME, as it does for the real one.
+target=""
+if [ -n "${SKILLSHARE_CONFIG:-}" ] && [ -f "$SKILLSHARE_CONFIG" ]; then
+  target=$(awk '/^sources:/ { s = 1; next } /^[^ ]/ { s = 0 } s && /^  skills:/ { sub(/^  skills: */, ""); print; exit }' "$SKILLSHARE_CONFIG")
+fi
+[ -n "$target" ] || target="~/.config/skillshare/skills"
+case "$target" in "~/"*) target=$HOME/${target#"~/"} ;; esac
 echo "args: $*" >> "$STUB_LOG"
-echo "config: ${SKILLSHARE_CONFIG:-}" >> "$STUB_LOG"
+echo "target: $target" >> "$STUB_LOG"
 name=""; prev=""
 for a in "$@"; do
   [ "$prev" = "--name" ] && name=$a
   prev=$a
 done
 case ",${STUB_FAIL:-}," in
-  *",$name,"*|*",all,"*) echo "network unreachable" >&2; exit 1 ;;
+  *",$name,"*|*",all,"*) printf '\033[31m\342\234\227 network unreachable\033[0m\r\n' >&2; exit 1 ;;
 esac
-mkdir -p "$STUB_SKILLS/$name"
-echo "# $name" > "$STUB_SKILLS/$name/SKILL.md"
-echo '{"rewritten": true}' > "$STUB_SKILLS/.metadata.json"
+mkdir -p "$target/$name"
+echo "# $name" > "$target/$name/SKILL.md"
+echo '{"rewritten": true}' > "$target/.metadata.json"
+# Simulate a Ctrl-C / timeout in the middle of the install: signal the script, then outlive it.
+if [ -n "${STUB_KILL_PARENT:-}" ]; then kill -TERM "$PPID"; sleep 2; fi
 STUB
 chmod +x "$stub_bin/skillshare"
 PATH="$stub_bin:$PATH"; export PATH
@@ -451,7 +461,9 @@ assert_has "reinstalled: skillshare"
 assert_eq 2 "$(log_count)" "one skillshare call per missing skill"
 grep -qxF -- "$herdr_args" "$STUB_LOG" && pass || fail "herdr was not installed at its commit: $(cat "$STUB_LOG")"
 grep -qxF -- "$shield_args" "$STUB_LOG" && pass || fail "skillshare was not installed at its commit: $(cat "$STUB_LOG")"
-grep -qxF -- "config: $S/config.yaml" "$STUB_LOG" && pass || fail "the stub did not get the linked config: $(cat "$STUB_LOG")"
+# the install lands in the Skillshare folder, not in ~/.config/skillshare under HOME
+grep -qxF -- "target: $S/skills" "$STUB_LOG" && pass || fail "the install target is not $S/skills: $(cat "$STUB_LOG")"
+assert_absent "$HOME_DIR/.config/skillshare"
 assert_exists "$S/skills/herdr/SKILL.md"
 assert_exists "$S/skills/skillshare/SKILL.md"
 assert_same_file "$T/metadata.orig" "$R/skillshare/skills/.metadata.json"
@@ -473,6 +485,23 @@ new_world "reinstall--push--prune"
 run_sync --push --prune
 assert_status 0 "$RC"
 assert_has "reinstalled: herdr"
+
+# without SKILLSHARE_HOME the folder is ~/.config/skillshare and the install goes there
+new_world "reinstall-default-home"
+mkdir -p "$HOME_DIR/.config"
+OUT=$(cd "$R" && env -u SKILLSHARE_HOME HOME="$HOME_DIR" HERDR_APP_HOME="$H" sh ./scripts/sync/sync.sh 2>&1); RC=$?
+assert_status 0 "$RC"
+assert_has "reinstalled: herdr"
+grep -qxF -- "target: $HOME_DIR/.config/skillshare/skills" "$STUB_LOG" && pass || fail "default install target: $(cat "$STUB_LOG")"
+assert_same_file "$T/metadata.orig" "$R/skillshare/skills/.metadata.json"
+
+# an interrupted install (SIGTERM mid-install) still puts .metadata.json back
+new_world "reinstall-interrupted"
+STUB_KILL_PARENT=1; export STUB_KILL_PARENT
+run_sync
+unset STUB_KILL_PARENT
+[ "$RC" -ne 0 ] && pass || fail "an interrupted run should not exit 0"
+assert_same_file "$T/metadata.orig" "$R/skillshare/skills/.metadata.json"
 
 # only the missing folder is reinstalled
 new_world "reinstall-only-missing"
@@ -496,7 +525,9 @@ new_world "reinstall-fails"
 STUB_FAIL=herdr; export STUB_FAIL
 run_sync
 assert_status 0 "$RC"
-assert_has "skillshare: could not reinstall herdr: network unreachable"
+assert_has "skillshare: could not reinstall herdr: ✗ network unreachable"
+assert_lacks "$(printf '\033')"
+assert_lacks "$(printf '\r')"
 assert_has "reinstalled: skillshare"
 assert_has "copied: "
 assert_has "skillshare: linked 3, 0 already linked"
@@ -507,8 +538,8 @@ STUB_FAIL=all; export STUB_FAIL
 rm -rf "$R/skillshare/skills/skillshare"
 run_sync --pull
 assert_status 0 "$RC"
-assert_has "could not reinstall herdr: network unreachable"
-assert_has "could not reinstall skillshare: network unreachable"
+assert_has "could not reinstall herdr: ✗ network unreachable"
+assert_has "could not reinstall skillshare: ✗ network unreachable"
 
 # no skillshare CLI at all: a warning per skill, exit 0
 new_world "reinstall-no-cli"
@@ -539,6 +570,9 @@ cat > "$R/skillshare/skills/.metadata.json" <<'JSON'
 JSON
 run_sync
 assert_status 0 "$RC"
+assert_has "skillshare: could not reinstall local-only: no repo_url is recorded for it"
+assert_absent "$STUB_LOG"
+run_sync --dry-run
 assert_has "skillshare: could not reinstall local-only: no repo_url is recorded for it"
 assert_absent "$STUB_LOG"
 rm "$R/skillshare/skills/.metadata.json"

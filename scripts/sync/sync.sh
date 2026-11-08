@@ -30,8 +30,9 @@
 # skillshare/config.yaml. Set SKILLSHARE_HOME to use a folder other than ~/.config/skillshare.
 # Only skillshare/skills/mine/ and skillshare/skills/.metadata.json are committed: every real run
 # also reinstalls each skill recorded in .metadata.json whose folder is missing (see below), at its
-# recorded commit. --dry-run prints "would reinstall: <name>"; --check never does it; a missing
-# skillshare CLI or a failed install (offline) is a warning, never an error.
+# recorded commit (with SKILLSHARE_HOME set, into that folder, through a temporary copy of its config).
+# --dry-run prints "would reinstall: <name>"; --check never does it; a missing skillshare CLI or a
+# failed install (offline) is a warning, never an error.
 #
 # Nothing is deleted from the repo, and Herdr loses files only with --push --prune (see above). A file you remove on one side comes back
 # from the other on the next run, so delete it on both. A file this run overwrites is first saved at
@@ -76,7 +77,15 @@ here=$(cd "$script_dir/../.." && pwd)
 [ -d "$here/mods" ] && [ -d "$here/layouts" ] || { echo "no mods/ or layouts/ folder at the repo root: $here" >&2; exit 1; }
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sync.XXXXXX")
-trap 'rm -rf "$tmp"' EXIT
+# cleanup: put .metadata.json back if a skill reinstall was interrupted (it rewrites the file), drop $tmp.
+meta_saved=""
+meta_file=""
+cleanup() {
+  if [ -n "$meta_saved" ] && [ -f "$meta_saved" ]; then cat "$meta_saved" > "$meta_file"; fi
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+trap 'exit 1' INT TERM HUP
 
 # skip REL: generated files and repository-only mod documentation/artwork, which are never synced.
 skip() {
@@ -283,13 +292,30 @@ if [ -f "$meta" ]; then
     fi
     set -- "$1" "$src" "$4"
     set -- install "$2" --name "$1" ${3:+--branch "$3"} -y -g
-    # An alternative Skillshare folder (SKILLSHARE_HOME) is used through its linked config.
-    if [ -n "${SKILLSHARE_HOME:-}" ] && [ -z "${SKILLSHARE_CONFIG:-}" ] && [ -f "$ss/config.yaml" ]; then
-      SKILLSHARE_CONFIG="$ss/config.yaml" skillshare "$@" > "$tmp/reinstall.out" 2>&1 < /dev/null
+    if [ -n "$skillshare_config" ]; then
+      SKILLSHARE_CONFIG="$skillshare_config" skillshare "$@" > "$tmp/reinstall.out" 2>&1 < /dev/null
     else
       skillshare "$@" > "$tmp/reinstall.out" 2>&1 < /dev/null
     fi
   }
+
+  # With SKILLSHARE_HOME set, Skillshare would still install where the config's sources say (the repo's
+  # config says ~/.config/skillshare/skills, which expands from HOME), so give it a copy of the config
+  # whose sources are this Skillshare folder. Without SKILLSHARE_HOME the folder is Skillshare's default.
+  skillshare_config=""
+  if [ -n "${SKILLSHARE_HOME:-}" ]; then
+    skillshare_config="$tmp/skillshare-config.yaml"
+    {
+      printf 'sources:\n  skills: %s/skills\n  agents: %s/agents\n' "$ss" "$ss"
+      if [ -f "$ss/config.yaml" ]; then
+        awk '
+          /^sources:/ { skip = 1; next }
+          skip && /^([ \t]|#|$)/ { next }
+          { skip = 0; print }
+        ' "$ss/config.yaml"
+      fi
+    } > "$skillshare_config"
+  fi
 
   # name|repo_url|subdir|commit for each recorded entry (entries are indented 4 spaces, their fields 6).
   awk '
@@ -313,17 +339,21 @@ if [ -f "$meta" ]; then
     elif ! command -v skillshare > /dev/null 2>&1; then
       echo "skillshare: could not reinstall $name: the skillshare CLI was not found"
     else
-      [ "$restored" -eq 1 ] || cp "$meta" "$tmp/metadata.json"
-      restored=1
+      if [ "$restored" -eq 0 ]; then
+        cp "$meta" "$tmp/metadata.json"
+        meta_file="$meta"; meta_saved="$tmp/metadata.json"
+        restored=1
+      fi
       if reinstall_skill "$name" "$url" "$dir" "$commit" && [ -e "$skills_dir/$name" ]; then
         echo "reinstalled: $name"
       else
-        reason=$(tr -d '\r' < "$tmp/reinstall.out" | grep -v '^[[:space:]]*$' | tail -n 1)
+        esc=$(printf '\033')
+        reason=$(tr -d '\r' < "$tmp/reinstall.out" | sed "s/${esc}\[[0-9;?]*[A-Za-z]//g" | grep -v '^[[:space:]]*$' | tail -n 1)
         echo "skillshare: could not reinstall $name: ${reason:-skillshare install failed}"
       fi
     fi
   done < "$tmp/recorded"
-  [ "$restored" -eq 0 ] || cat "$tmp/metadata.json" > "$meta"
+  if [ "$restored" -eq 1 ]; then cat "$tmp/metadata.json" > "$meta"; meta_saved=""; fi
 fi
 
 # Keep the config in ~/ form so the username never reaches a commit.
