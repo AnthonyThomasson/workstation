@@ -61,7 +61,7 @@ async function writeRunFolder(id, parts, argv) {
   const made = await exec("mkdir", ["-p", runDir]);
   if (made.code !== 0) throw new Error(`Couldn't make ${runDir}: ${out(made)}`);
   await Promise.all([
-    writeTextFile(`${runDir}/orchestrator.md`, orchestratorPrompt(parts), null),
+    writeTextFile(`${runDir}/orchestrator.md`, orchestratorPrompt({ ...parts, id }), null),
     writeTextFile(`${runDir}/worker.md`, workerPrompt(parts), null),
     writeTextFile(`${runDir}/reviewer.md`, reviewerPrompt(parts), null),
     writeTextFile(`${runDir}/ticket.md`, ticketFile(parts.ticket, parts.repo), null),
