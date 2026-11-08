@@ -4,11 +4,11 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentArgv, branchName, orchestratorPrompt, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt, worktreePath } from "./run.js";
+import { agentArgv, branchName, jobName, jobWorktree, orchestratorPrompt, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt, worktreePath } from "./run.js";
 
 const ticket = { number: 12, title: "Fix the login!", body: "It breaks.", labels: ["bug"], status: "Todo", url: "https://github.test/12" };
 const role = (extra = {}) => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium", ...extra });
-const workflow = (extra = {}) => ({ name: "Features", strategy: "branch", orchestrator: role(), worker: role(), reviewer: role(), ...extra });
+const workflow = (extra = {}) => ({ name: "Features", orchestrator: role(), worker: role(), reviewer: role(), ...extra });
 const place = { ticket, repo: "o/r", runDir: "/runs/1", workDir: "/src/app", branch: "workflow/12-fix-the-login" };
 
 test("branch names come from the number and title", () => {
@@ -19,6 +19,12 @@ test("branch names come from the number and title", () => {
 
 test("a worktree sits beside the repo", () => {
   assert.equal(worktreePath("/src/app", "workflow/12-fix"), "/src/app-12-fix");
+});
+
+test("a job worktree sits beside the ticket worktree, on a branch off the ticket's", () => {
+  assert.deepEqual(jobWorktree("/src/app", "workflow/12-fix", "Auth Fix!"), { path: "/src/app-12-fix--auth-fix", branch: "workflow/12-fix--auth-fix", job: "auth-fix" });
+  assert.equal(jobName("  --Build_1--  "), "build_1");
+  assert.equal(jobName("!!!"), "");
 });
 
 test("run ids and ticket keys", () => {
@@ -33,10 +39,23 @@ test("claude: a worker accepts edits and may reach the orchestrator", () => {
   assert.deepEqual(argv, ["claude", "--add-dir", "/runs/1", "--allowedTools", "Bash(hc send:*)", "--permission-mode", "acceptEdits", "--model", "opus", "--effort", "high"]);
 });
 
-test("claude: a reviewer is in plan mode", () => {
-  const argv = agentArgv("reviewer", role(), ["claude"], "/runs/1");
-  assert.equal(argv[argv.indexOf("--permission-mode") + 1], "plan");
+test("claude: a reviewer can't ask, can't edit, and may only run read-only git and the workflow's test commands", () => {
+  const argv = agentArgv("reviewer", role({ tests: "node --test\n  npm test \n\nherdr-app check" }), ["claude"], "/runs/1");
+  assert.equal(argv[argv.indexOf("--permission-mode") + 1], "dontAsk");
+  assert.equal(argv[argv.indexOf("--disallowedTools") + 1], "Edit,Write,NotebookEdit,MultiEdit");
+  assert.equal(argv[argv.indexOf("--allowedTools") + 1],
+    "Bash(hc send:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(node --test:*),Bash(npm test:*),Bash(herdr-app check:*)");
   assert.ok(!argv.includes("--model"));
+  assert.deepEqual(argv.slice(-2), ["--effort", "medium"]);
+});
+
+test("claude: a reviewer with no test commands (an older workflow file) gets only the read-only ones", () => {
+  const argv = agentArgv("reviewer", role(), ["claude"], "/runs/1");
+  assert.equal(argv[argv.indexOf("--allowedTools") + 1], "Bash(hc send:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)");
+});
+
+test("claude: workers don't get the reviewer's restrictions", () => {
+  assert.ok(!agentArgv("worker", role({ tests: "npm test" }), ["claude"], "/runs/1").includes("--disallowedTools"));
 });
 
 test("claude: the orchestrator keeps the person's permission mode and can't run hc run", () => {
@@ -45,6 +64,7 @@ test("claude: the orchestrator keeps the person's permission mode and can't run 
   const tools = argv[argv.indexOf("--allowedTools") + 1];
   assert.ok(tools.includes("Bash(/runs/1/spawn:*)"));
   assert.ok(tools.includes("Bash(hc wait:*)"));
+  assert.ok(tools.includes("Bash(hc kill:*)"));
   assert.ok(!tools.includes("hc run"));
   assert.ok(!tools.includes("Bash(hc:*)"));
 });
@@ -121,48 +141,129 @@ test("shQuote survives quotes", () => {
   assert.equal(out, `it's "x" $HOME`);
 });
 
-// The script for real, against a stand-in hc that records what it is asked.
-function runSpawn(args, { failSend = false } = {}) {
+// The script for real: a scratch git repo with the ticket's branch checked out in its worktree, and a stand-in hc
+// on PATH that records what it is asked. Returns where things are, so a test can look at what the script made.
+const git = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
+
+function scratch() {
   const dir = mkdtempSync(join(tmpdir(), "spawn-"));
+  const repo = join(dir, "my app"); // a space, to be sure everything is quoted
+  mkdirSync(repo);
+  git(repo, "init", "-q", "-b", "main");
+  git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "first");
+  const branch = "workflow/12-fix";
+  const ticketDir = worktreePath(repo, branch);
+  git(repo, "worktree", "add", "-q", "-b", branch, ticketDir);
   const bin = join(dir, "bin");
   mkdirSync(bin);
   const log = join(dir, "log");
-  writeFileSync(join(bin, "hc"), `#!/bin/sh\nfor a in "$@"; do printf '[%s]' "$a" >> ${shQuote(log)}; done; echo >> ${shQuote(log)}\n${failSend ? 'case "$1" in send) exit 1 ;; esac\n' : ""}exit 0\n`);
-  chmodSync(join(bin, "hc"), 0o755);
-  const script = join(dir, "spawn");
-  writeFileSync(script, spawnScript({ id: "12-abc", runDir: "/runs/it's", workDir: "/src/my app", argv: { worker: ["claude", "--model", "a b"], reviewer: ["codex"] } }));
-  chmodSync(script, 0o755);
-  const r = spawnSync(script, args, { env: { PATH: `${bin}:${process.env.PATH}`, HC_TERMINAL_ID: "t7" }, encoding: "utf8" });
-  let calls = [];
-  try { calls = readFileSync(log, "utf8").trim().split("\n"); } catch { /* it never called hc */ }
-  return { ...r, calls };
+  return { dir, repo, branch, ticketDir, bin, log };
 }
 
-test("spawn starts the role's agent with labels, waits, then sends the brief", () => {
-  const r = runSpawn(["worker", "Auth Fix!", "do 'this' $now"]);
+function runSpawn(args, { failSend = false, setup = () => {} } = {}) {
+  const w = scratch();
+  writeFileSync(join(w.bin, "hc"), `#!/bin/sh\nfor a in "$@"; do printf '[%s]' "$a" >> ${shQuote(w.log)}; done; echo >> ${shQuote(w.log)}\n${failSend ? 'case "$1" in send) exit 1 ;; esac\n' : ""}exit 0\n`);
+  chmodSync(join(w.bin, "hc"), 0o755);
+  setup(w);
+  const script = join(w.dir, "spawn");
+  writeFileSync(script, spawnScript({ id: "12-abc", runDir: "/runs/it's", workDir: w.ticketDir, repoRoot: w.repo, branch: w.branch, argv: { worker: ["claude", "--model", "a b"], reviewer: ["codex"] } }));
+  chmodSync(script, 0o755);
+  const r = spawnSync(script, args, { env: { PATH: `${w.bin}:${process.env.PATH}`, HC_TERMINAL_ID: "t7" }, encoding: "utf8" });
+  let calls = [];
+  try { calls = readFileSync(w.log, "utf8").trim().split("\n"); } catch { /* it never called hc */ }
+  return { ...r, calls, ...w, jobDir: jobWorktree(w.repo, w.branch, "auth").path };
+}
+
+test("spawn worker makes the job's worktree and branch off the ticket's, and works there", () => {
+  const r = runSpawn(["worker", "Auth!", "do 'this' $now"]);
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout.trim(), "12-abc-auth-fix");
+  assert.equal(r.stdout.trim(), "12-abc-auth");
+  const job = jobWorktree(r.repo, r.branch, "Auth!");
+  assert.equal(job.path, `${r.ticketDir}--auth`);
+  assert.equal(git(job.path, "branch", "--show-current"), "workflow/12-fix--auth");
+  assert.equal(git(job.path, "rev-parse", "HEAD"), git(r.ticketDir, "rev-parse", "HEAD")); // made off the ticket branch
   const [start, wait, send] = r.calls;
-  assert.match(start, /^\[run\]\[--bg\]\[--name\]\[12-abc-auth-fix\]\[--cwd\]\[\/src\/my app\]/);
+  assert.ok(start.startsWith(`[run][--bg][--name][12-abc-auth][--cwd][${job.path}]`), start);
   assert.ok(start.includes("[--label][herdr.workflow.run=12-abc]"));
   assert.ok(start.includes("[--label][herdr.role=worker]"));
+  assert.ok(start.includes("[--label][herdr.workflow.name=auth]"));
+  assert.ok(start.includes(`[--label][herdr.workflow.folder=${job.path}]`));
+  assert.ok(!start.includes("herdr.workflow.final"));
   assert.ok(start.endsWith("[--][claude][--model][a b]"));
-  assert.match(wait, /^\[wait\]\[12-abc-auth-fix\]/);
-  assert.match(send, /^\[send\]\[12-abc-auth-fix\]/);
-  assert.ok(r.calls.join("\n").includes("/runs/it's/worker.md"));
-  assert.ok(r.calls.join("\n").includes("do 'this' $now"));
-  assert.ok(r.calls.join("\n").includes("terminal t7"));
+  assert.match(wait, /^\[wait\]\[12-abc-auth\]/);
+  assert.match(send, /^\[send\]\[12-abc-auth\]/);
+  const all = r.calls.join("\n");
+  assert.ok(all.includes("/runs/it's/worker.md") && all.includes("do 'this' $now") && all.includes("terminal t7"));
+});
+
+test("spawn worker uses the job's worktree again, with what was committed in it", () => {
+  const r = runSpawn(["worker", "auth", "again"], {
+    setup: (w) => {
+      const job = jobWorktree(w.repo, w.branch, "auth");
+      git(w.ticketDir, "worktree", "add", "-q", "-b", job.branch, job.path);
+      git(job.path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "earlier work");
+    },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(git(r.jobDir, "log", "-1", "--format=%s"), "earlier work");
+  assert.ok(r.calls[0].includes(`[--cwd][${r.jobDir}]`));
+});
+
+test("spawn worker picks a job's branch back up when only its folder is gone", () => {
+  const r = runSpawn(["worker", "auth", "again"], { setup: (w) => git(w.ticketDir, "branch", "workflow/12-fix--auth") });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(git(r.jobDir, "branch", "--show-current"), "workflow/12-fix--auth");
+});
+
+test("spawn reviewer <name> <job> works in the job's worktree, which must already exist", () => {
+  const r = runSpawn(["reviewer", "Checker", "auth", "look"], {
+    setup: (w) => { const job = jobWorktree(w.repo, w.branch, "auth"); git(w.ticketDir, "worktree", "add", "-q", "-b", job.branch, job.path); },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), "12-abc-checker");
+  const start = r.calls[0];
+  assert.ok(start.startsWith(`[run][--bg][--name][12-abc-checker][--cwd][${r.jobDir}]`), start);
+  assert.ok(start.includes("[--label][herdr.role=reviewer]"));
+  assert.ok(start.includes(`[--label][herdr.workflow.folder=${r.jobDir}]`));
+  assert.ok(!start.includes("herdr.workflow.final"));
+  assert.ok(start.endsWith("[--][codex]"));
+  assert.ok(r.calls.join("\n").includes("/runs/it's/reviewer.md"));
+});
+
+test("spawn reviewer for a job with no worktree says so and starts nothing", () => {
+  const r = runSpawn(["reviewer", "checker", "auth", "look"]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /job auth has no worktree/);
+  assert.match(r.stderr, /spawn worker auth/);
+  assert.deepEqual(r.calls, []);
+});
+
+test("spawn reviewer <name> final works in the ticket's worktree and labels itself the final reviewer", () => {
+  const r = runSpawn(["reviewer", "last", "final", "look at it all"]);
+  assert.equal(r.status, 0, r.stderr);
+  const start = r.calls[0];
+  assert.ok(start.startsWith(`[run][--bg][--name][12-abc-last][--cwd][${r.ticketDir}]`), start);
+  assert.ok(start.includes("[--label][herdr.workflow.final=1]"));
+  assert.ok(start.includes(`[--label][herdr.workflow.folder=${r.ticketDir}]`));
+  assert.ok(start.includes("[--label][herdr.role=reviewer]"));
 });
 
 test("spawn refuses what it can't start", () => {
-  assert.equal(runSpawn(["boss", "x", "y"]).status, 2);
-  assert.equal(runSpawn(["worker", "x"]).status, 2);
-  const none = runSpawn(["boss", "x", "y"]);
-  assert.deepEqual(none.calls, []);
+  for (const args of [[], ["boss", "x", "y"], ["worker", "x"], ["worker", "x", "y", "z"], ["reviewer", "x", "y"], ["reviewer", "x", "y", "z", "w"], ["worker", "!!!", "y"], ["reviewer", "x", "!!!", "y"], ["worker", "final", "y"]]) {
+    const r = runSpawn(args);
+    assert.equal(r.status, 2, `${args.join(" ")}: ${r.stderr}`);
+    assert.deepEqual(r.calls, []);
+  }
+});
+
+test("spawn won't work in a ticket worktree that is gone", () => {
+  const r = runSpawn(["worker", "auth", "y"], { setup: (w) => execFileSync("rm", ["-rf", w.ticketDir]) });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /worktree .* is gone/);
 });
 
 test("spawn says so when the brief didn't go in", () => {
-  const r = runSpawn(["reviewer", "x", "y"], { failSend: true });
+  const r = runSpawn(["reviewer", "x", "final", "y"], { failSend: true });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /did not take its brief/);
 });
@@ -170,12 +271,14 @@ test("spawn says so when the brief didn't go in", () => {
 test("a name can't overflow a terminal's 32 characters", () => {
   const r = runSpawn(["worker", "a".repeat(60), "y"]);
   assert.equal(r.stdout.trim().length, 32);
+  assert.equal(git(jobWorktree(r.repo, r.branch, "a".repeat(60)).path, "branch", "--show-current"), `workflow/12-fix--${"a".repeat(40)}`);
+  assert.equal(runSpawn(["reviewer", "b".repeat(60), "final", "y"]).stdout.trim().length, 32);
 });
 
 test("a reopened run pane gets the full props saved when the run started", () => {
   const saved = { role: "run", id: "3-x", orchestrator: "old-term", title: "#3 T", workflow: "Story", branch: "workflow/3-t", folder: "/w", strategy: "worktree", repoRoot: "/src/app", ticket: { number: 3, key: null }, projectId: "P", statusField: { id: "F" } };
   const props = reopenProps(JSON.stringify(saved), { role: "run", id: "3-x", workflow: "" }, "new-term");
-  assert.equal(props.strategy, "worktree");
+  assert.ok(!("strategy" in props)); // a run saved before strategies went away
   assert.equal(props.repoRoot, "/src/app");
   assert.deepEqual(props.statusField, { id: "F" });
   assert.equal(props.workflow, "Story");

@@ -7,7 +7,8 @@ export const SKILL = "hc --skill"; // the manual for the desktop app's herdr-cor
 // Labels on a run's terminals. The Workflows mod's runview.js reads the same ones.
 export const RUN_LABEL = "herdr.workflow.run"; // on every terminal of a run: its id
 export const TICKET_LABEL = "herdr.workflow.ticket"; // on the orchestrator: which ticket, so Start finds a run in progress
-export const FOLDER_LABEL = "herdr.workflow.folder"; // on the orchestrator: the folder it works in
+export const FOLDER_LABEL = "herdr.workflow.folder"; // on every terminal: the folder it works in
+export const FINAL_LABEL = "herdr.workflow.final"; // "1" on the final reviewer, which reviews the whole ticket branch
 export const NAME_LABEL = "herdr.workflow.name"; // on a worker or reviewer: the name the orchestrator gave it
 export const ROLE_LABEL = "herdr.role"; // orchestrator | worker | reviewer
 
@@ -23,6 +24,16 @@ export function branchName(ticket) {
 // Beside the repo, named for the branch: ~/src/app -> ~/src/app-12-fix-login.
 export const worktreePath = (repoRoot, branch) => `${repoRoot}-${branch.replace(/^workflow\//, "").replace(/\//g, "-")}`;
 
+// A job's name as it goes in a branch and a folder: lower-case letters, digits, _ and -. "final" is the ticket's own review.
+export const jobName = (job) => String(job ?? "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+
+// Where a job's worktree and branch are: beside the ticket's worktree, on a branch made off the ticket's own.
+// ~/src/app-12-fix--auth on workflow/12-fix--auth. The spawn script makes the same names.
+export function jobWorktree(repoRoot, ticketBranch, job) {
+  const name = jobName(job);
+  return { job: name, path: `${worktreePath(repoRoot, ticketBranch)}--${name}`, branch: `${ticketBranch}--${name}` };
+}
+
 // Short, because it starts every terminal's name, which may only be 32 long.
 export const runId = (ticket, now = Date.now()) => `${ticket?.number ?? "draft"}-${now.toString(36)}`;
 export const ticketKey = (repo, ticket) => `${repo}#${ticket?.number ?? ticket?.key ?? slug(ticket?.title, 40)}`;
@@ -33,21 +44,27 @@ export const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 // What each role may do without asking, in Claude's terms. Bare `hc run` is left out: it would run anything.
 const PLUMBING = {
-  orchestrator: (runDir) => [`Bash(${runDir}/spawn:*)`, "Bash(hc --skill:*)", "Bash(hc send:*)", "Bash(hc wait:*)", "Bash(hc read:*)", "Bash(hc get:*)", "Bash(hc ls:*)", "Bash(hc interrupt:*)"],
+  orchestrator: (runDir) => [`Bash(${runDir}/spawn:*)`, "Bash(hc --skill:*)", "Bash(hc send:*)", "Bash(hc wait:*)", "Bash(hc read:*)", "Bash(hc get:*)", "Bash(hc ls:*)", "Bash(hc interrupt:*)", "Bash(hc kill:*)"],
   worker: () => ["Bash(hc send:*)"],
-  reviewer: () => ["Bash(hc send:*)"],
+  // Read-only git, and the workflow's test commands: one command prefix per line of its `tests`.
+  reviewer: (_runDir, tests) => ["Bash(hc send:*)", ...READ_ONLY_GIT.map((c) => `Bash(${c}:*)`), ...testLines(tests).map((c) => `Bash(${c}:*)`)],
 };
-const CLAUDE_MODE = { worker: "acceptEdits", reviewer: "plan" }; // the orchestrator keeps the person's own
+const READ_ONLY_GIT = ["git status", "git diff", "git log", "git show"];
+const testLines = (text) => String(text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
+// A reviewer never asks: what isn't allowed is refused (dontAsk), and it can't edit at all.
+const CLAUDE_MODE = { worker: "acceptEdits", reviewer: "dontAsk" }; // the orchestrator keeps the person's own
+const REVIEWER_DENIED = "Edit,Write,NotebookEdit,MultiEdit";
 
 // The command that opens a role's agent. settings: the workflow's { agent, command, model, effort }. base: the
-// agent's own command, from knownAgents(). Only Claude has the permission flags; other agents keep their defaults.
+// agent's own command, from knownAgents(). A reviewer's settings carry `tests`. Only Claude has the permission flags; other agents keep their defaults.
 export function agentArgv(role, settings, base, runDir) {
   const { agent, command, model, effort } = settings;
   if (agent === "custom") return ["sh", "-c", command];
   const argv = [...(base?.length ? base : [agent])];
   if (agent === "claude") {
     // --add-dir and --allowedTools take any number of values, so a single-value flag has to end them.
-    argv.push("--add-dir", runDir, "--allowedTools", PLUMBING[role](runDir).join(","));
+    argv.push("--add-dir", runDir, "--allowedTools", PLUMBING[role](runDir, settings.tests).join(","));
+    if (role === "reviewer") argv.push("--disallowedTools", REVIEWER_DENIED);
     if (CLAUDE_MODE[role]) argv.push("--permission-mode", CLAUDE_MODE[role]);
     if (model) argv.push("--model", model);
     argv.push("--effort", effort || "medium");
@@ -157,28 +174,79 @@ export function reviewerPrompt({ workflow, ticket, repo, runDir, workDir, branch
 
 // The only way a run's agents start, so each gets its role's agent, model, permissions and labels whatever the
 // orchestrator types. It waits for the agent to be ready before giving it its brief: a send to one still booting can be lost.
-export function spawnScript({ id, runDir, workDir, argv }) {
+// workDir: the ticket's worktree, on `branch`. repoRoot and branch also say where the jobs' worktrees go (jobWorktree).
+export function spawnScript({ id, runDir, workDir, repoRoot, branch, argv }) {
   const roleArgs = (role) => `  ${role}) set -- ${argv[role].map(shQuote).join(" ")} ;;`;
   const room = Math.max(1, 32 - id.length - 1); // a terminal's name is at most 32 long
   return `#!/bin/sh
-# Starts a worker or reviewer for workflow run ${id}. Usage: spawn worker|reviewer <short-name> <brief>
+# Starts a worker or reviewer for workflow run ${id}. Usage:
+#   spawn worker <job> <brief>              the job's own worktree and branch are made (or used again), and it works there
+#   spawn reviewer <name> <job> <brief>     reviews that job, in the worktree its worker used
+#   spawn reviewer <name> final <brief>     reviews the whole ticket branch, in the ticket's worktree
 set -u
 run_id=${shQuote(id)}
 run_dir=${shQuote(runDir)}
-work_dir=${shQuote(workDir)}
-if [ $# -ne 3 ]; then echo "usage: spawn worker|reviewer <short-name> <brief>" >&2; exit 2; fi
-role=$1
-name=$(printf '%s' "$2" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-' | cut -c1-${room} | sed 's/-*$//')
-brief=$3
-if [ -z "$name" ]; then echo "spawn: the name needs a letter or a number" >&2; exit 2; fi
+ticket_dir=${shQuote(workDir)}
+ticket_branch=${shQuote(branch)}
+job_base=${shQuote(worktreePath(repoRoot, branch))}
+usage() {
+  echo "usage: spawn worker <job> <brief>" >&2
+  echo "       spawn reviewer <name> <job|final> <brief>" >&2
+  exit 2
+}
+# lower-case letters, digits, _ and -, as jobName() in run.js makes them
+clean() { printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-' | sed 's/^-*//; s/-*$//'; }
+[ $# -ge 1 ] || usage
+argc=$# role=$1 a2=\${2-} a3=\${3-} a4=\${4-} # the agent's command below takes the place of the arguments
 case "$role" in
 ${roleArgs("worker")}
 ${roleArgs("reviewer")}
   *) echo "spawn: the role must be worker or reviewer, not $role" >&2; exit 2 ;;
 esac
+if [ "$role" = worker ]; then
+  [ "$argc" -eq 3 ] || usage
+  job=$(clean "$a2" | cut -c1-40 | sed 's/-*$//')
+  name=$(printf '%s' "$job" | cut -c1-${room} | sed 's/-*$//') # the terminal's name, which is shorter
+  brief=$a3
+else
+  [ "$argc" -eq 4 ] || usage
+  name=$(clean "$a2" | cut -c1-${room} | sed 's/-*$//')
+  job=$(clean "$a3" | cut -c1-40 | sed 's/-*$//')
+  brief=$a4
+fi
+if [ -z "$name" ]; then echo "spawn: the name needs a letter or a number" >&2; exit 2; fi
+if [ -z "$job" ]; then echo "spawn: the job needs a letter or a number" >&2; exit 2; fi
+if [ ! -e "$ticket_dir/.git" ]; then echo "spawn: the ticket's worktree $ticket_dir is gone" >&2; exit 1; fi
+job_dir="$job_base--$job"
+job_branch="$ticket_branch--$job"
+extra=
+if [ "$role" = worker ]; then
+  if [ "$job" = final ]; then echo "spawn: final is the name of the ticket's own review, so a job can't be called that" >&2; exit 2; fi
+  if [ -e "$job_dir/.git" ]; then
+    now=$(git -C "$job_dir" branch --show-current)
+    if [ "$now" != "$job_branch" ]; then echo "spawn: $job_dir is on '$now', not $job_branch" >&2; exit 1; fi
+  elif [ -e "$job_dir" ]; then
+    echo "spawn: $job_dir exists and is not a worktree" >&2; exit 1
+  elif git -C "$ticket_dir" show-ref --verify --quiet "refs/heads/$job_branch"; then
+    git -C "$ticket_dir" worktree add "$job_dir" "$job_branch" >&2 || { echo "spawn: could not make a worktree at $job_dir" >&2; exit 1; }
+  else
+    git -C "$ticket_dir" worktree add -b "$job_branch" "$job_dir" "$ticket_branch" >&2 || { echo "spawn: could not make a worktree at $job_dir" >&2; exit 1; }
+  fi
+  cwd=$job_dir
+elif [ "$job" = final ]; then
+  cwd=$ticket_dir
+  extra=1
+else
+  if [ ! -e "$job_dir/.git" ]; then
+    echo "spawn: job $job has no worktree at $job_dir. Start its worker first (spawn worker $job '<brief>'), or review the whole ticket with: spawn reviewer $name final '<brief>'" >&2; exit 1
+  fi
+  cwd=$job_dir
+fi
 term="$run_id-$name"
-if ! hc run --bg --name "$term" --cwd "$work_dir" --label "${RUN_LABEL}=$run_id" --label "${ROLE_LABEL}=$role" --label "${NAME_LABEL}=$name" -- "$@" >/dev/null; then
-  echo "spawn: could not start $term" >&2; exit 1
+if [ -n "$extra" ]; then
+  hc run --bg --name "$term" --cwd "$cwd" --label "${RUN_LABEL}=$run_id" --label "${ROLE_LABEL}=$role" --label "${NAME_LABEL}=$name" --label "${FOLDER_LABEL}=$cwd" --label "${FINAL_LABEL}=1" -- "$@" >/dev/null || { echo "spawn: could not start $term" >&2; exit 1; }
+else
+  hc run --bg --name "$term" --cwd "$cwd" --label "${RUN_LABEL}=$run_id" --label "${ROLE_LABEL}=$role" --label "${NAME_LABEL}=$name" --label "${FOLDER_LABEL}=$cwd" -- "$@" >/dev/null || { echo "spawn: could not start $term" >&2; exit 1; }
 fi
 hc wait "$term" --timeout 60 >/dev/null 2>&1 || true
 message="Read $run_dir/$role.md and follow it. Your orchestrator is the terminal \${HC_TERMINAL_ID:-that started you}; reach it with hc send.
@@ -194,9 +262,11 @@ echo "$term"
 }
 
 // The props to reopen a run's pane with: the full set saved when the run started (`saved`, the file's text), with
-// the orchestrator's current terminal. Without a usable save, `fallback`, which lacks strategy, repoRoot and the rest.
+// the orchestrator's current terminal. Without a usable save, `fallback`, which lacks repoRoot, statusField and the rest.
 export function reopenProps(saved, fallback, orchestrator) {
   let props = null;
   try { props = JSON.parse(saved); } catch { /* nothing saved */ }
-  return props && props.role === "run" ? { ...props, orchestrator } : fallback;
+  if (!props || props.role !== "run") return fallback;
+  const { strategy: _gone, ...current } = props; // runs started before every run got a ticket worktree saved one
+  return { ...current, orchestrator };
 }
