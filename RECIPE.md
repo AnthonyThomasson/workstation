@@ -294,7 +294,8 @@ Copy `layouts/Tony.json` and the mod code and assets from every folder under `mo
         }
       ]
     }
-  ]
+  ],
+  "preview": "layouts/Tony.png"
 }
 ```
 
