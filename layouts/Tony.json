@@ -145,36 +145,10 @@
               }
             },
             {
-              "id": "github-tasks-toggle",
-              "type": "block",
-              "content": {
-                "mod": "github-tasks",
-                "props": {
-                  "role": "toggle"
-                }
-              },
-              "size": {
-                "px": 42
-              }
-            },
-            {
               "id": "skills-toggle",
               "type": "block",
               "content": {
                 "mod": "skills",
-                "props": {
-                  "role": "toggle"
-                }
-              },
-              "size": {
-                "px": 42
-              }
-            },
-            {
-              "id": "workflows-toggle",
-              "type": "block",
-              "content": {
-                "mod": "workflows",
                 "props": {
                   "role": "toggle"
                 }
@@ -264,13 +238,6 @@
                         "props": {
                           "role": "settings"
                         }
-                      }
-                    },
-                    {
-                      "id": "workflows",
-                      "type": "block",
-                      "content": {
-                        "mod": "workflows"
                       }
                     },
                     {

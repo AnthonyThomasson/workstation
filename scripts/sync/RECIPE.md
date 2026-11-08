@@ -34,7 +34,7 @@ Then summary lines: `copied: <n> to Herdr, <m> to the repo; <k> already the same
 - `layouts/Tony.json` to `layouts/Tony.json`.
 - `personal/herdr-app/themes/<file>` to `themes/<file>`: only the theme files the repo has.
 - `personal/herdr-app/workflows/` to `workflows/`: new files on either side are carried over.
-- Never synced: each mod's `RECIPE.md` and `preview.png`, and `mods/workflows/starters/`. These stay in the repo; a pull never removes them, and `--prune` never treats their Herdr-side namesakes as extra files.
+- Never synced: each mod's `RECIPE.md` and `preview.png`. These stay in the repo; a pull never removes them, and `--prune` never treats their Herdr-side namesakes as extra files.
 - Never synced: `keys.json` and `settings.json` (Herdr writes them), `.DS_Store`, `gpui-kit.d.ts`, `jsconfig.json`, `layouts/.state/*`.
 - Herdr does not load a mod's assets through a symlink, so both sides hold real copies; replace any symlink left in the config folder with a real copy first.
 - With both directions, a differing file goes to whichever side is newer by modification time.

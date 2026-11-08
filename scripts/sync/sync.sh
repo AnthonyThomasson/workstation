@@ -18,8 +18,9 @@
 #   personal/herdr-app/workflows/      -> workflows/        new files on either side are carried over
 # Herdr does not load a mod's icons and other assets through a symlink, so both sides hold real
 # copies. A new file inside a mod folder, on either side, is carried over to the other. Each mod's
-# RECIPE.md and preview.png, and mods/workflows/starters/, belong only to the repo: they are never
-# copied to Herdr, pulled, or pruned. keys.json and settings.json are not synced, because Herdr
+# RECIPE.md and preview.png belong only to the repo: they are never copied to Herdr, pulled, or
+# pruned. Everything else in a mod folder, including mods/github-tasks/starters/, syncs like any
+# other mod file. keys.json and settings.json are not synced, because Herdr
 # writes to them itself. Generated files (gpui-kit.d.ts, jsconfig.json, .DS_Store) are skipped.
 #
 # Skillshare: ~/.config/skillshare/{config.yaml,agents,skills} become symlinks to skillshare/ in
@@ -91,7 +92,7 @@ trap 'exit 1' INT TERM HUP
 skip() {
   case "$1" in
     .DS_Store|*/.DS_Store|gpui-kit.d.ts|*/gpui-kit.d.ts|jsconfig.json|*/jsconfig.json|layouts/.state/*) return 0 ;;
-    mods/*/RECIPE.md|mods/*/preview.png|mods/workflows/starters/*) return 0 ;;
+    mods/*/RECIPE.md|mods/*/preview.png) return 0 ;;
   esac
   return 1
 }

@@ -11,8 +11,7 @@ The repository root is the Tony gallery layout:
 - **`mods/usage/`** — Claude and Kimi session/weekly usage in a compact sidebar block.
 - **`mods/status-bar/`** — repository, computer and workspace status along the bottom of the window.
 - **`mods/skills/`** — a Skillshare panel for resources, installs, updates, audits, hooks and doctor checks. It is a modified copy of runkids's MIT-licensed [skillshare mod](https://github.com/runkids/skillshare); its license is included with the mod and the runkids credit is preserved in its recipe.
-- **`mods/github-tasks/`** — GitHub Project tickets, editing, grooming and label-matched workflow starts.
-- **`mods/workflows/`** — workflow editing and run views, companion to GitHub Tasks. `starters/` contains Bug and Story starter YAML files for `~/.config/herdr-app/workflows/`.
+- **`mods/github-tasks/`** — GitHub Project tickets, editing, grooming, label-matched workflow starts, and workflow editing and run pages. `starters/` contains Bug and Story starter YAML files for `~/.config/herdr-app/workflows/`; they sync with the rest of the mod. Its settings open only from the gear in the Tasks sidebar.
 - **`mods/sync/`** — a tab-bar button and panel for one-way Sync with prune and main-only Push. See [its README](mods/sync/README.md) for the full interface.
 - **`mods/tabs-icons/`** — program icons, agent status and window controls in the tab bar.
 
@@ -33,13 +32,13 @@ For the complete Tony layout, give a Herdr agent this line:
 Read ~/.config/herdr-app/AGENTS.md, then add this layout: https://github.com/AnthonyThomasson/workstation
 ```
 
-For one mod, replace `<name>` with `usage`, `status-bar`, `skills`, `github-tasks`, `workflows`, `sync` or `tabs-icons`:
+For one mod, replace `<name>` with `usage`, `status-bar`, `skills`, `github-tasks`, `sync` or `tabs-icons`:
 
 ```text
 Read ~/.config/herdr-app/AGENTS.md, then add this mod: https://github.com/AnthonyThomasson/workstation/tree/main/mods/<name>
 ```
 
-The agent reads the recipe and source, explains any network/program/file access, installs without overwriting existing names, runs Herdr's checks, and leaves recipes, previews and workflow starters out of the installed mod folders.
+The agent reads the recipe and source, explains any network/program/file access, installs without overwriting existing names, runs Herdr's checks, and leaves recipes and previews out of the installed mod folders.
 
 ## Clone the whole setup
 
@@ -52,7 +51,7 @@ cd workstation
 ./scripts/sync/sync.sh             # synchronize with the installed config
 ```
 
-Herdr picks up changed layouts and mods without a restart. Choose **Tony** in the layout picker. The GitHub Tasks and Workflows features need `gh`; Skills and Sync's Skillshare features need the `skillshare` CLI.
+Herdr picks up changed layouts and mods without a restart. Choose **Tony** in the layout picker. The GitHub Tasks features (tickets and workflows) need `gh`; Skills and Sync's Skillshare features need the `skillshare` CLI.
 
 To use the **Sync** mod afterward, open its tab-bar button, expand **Settings**, and set **Config repo** to this clone's path on the current computer. See [the Sync mod README](mods/sync/README.md) for its panel and behavior.
 
@@ -110,7 +109,7 @@ When you add a skill to `mine/`, add a row here with its one-line description an
 
 | Repository source | Herdr destination (`~/.config/herdr-app`) |
 | --- | --- |
-| `mods/<mod>/`, excluding recipes, previews and `workflows/starters/` | `mods/<mod>/` |
+| `mods/<mod>/`, excluding recipes and previews; this includes `mods/github-tasks/starters/` | `mods/<mod>/` |
 | `layouts/Tony.json` | `layouts/Tony.json` |
 | Theme files stored under `personal/herdr-app/themes/`; only files already in the repo | `themes/` |
 | Workflow files stored under `personal/herdr-app/workflows/` | `workflows/` |

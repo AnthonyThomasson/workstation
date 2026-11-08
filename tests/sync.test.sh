@@ -96,6 +96,9 @@ new_world() {
   cp "$real_repo/scripts/sync/sync.sh" "$R/scripts/sync/sync.sh"
   cp -R "$real_repo/mods" "$real_repo/layouts" "$real_repo/personal" "$real_repo/skillshare" "$R/"
   find "$R" -name .DS_Store -delete
+  # Workflow starters live in a mod folder and sync like any other mod file; make sure the scratch repo has one.
+  mkdir -p "$R/mods/github-tasks/starters"
+  echo "name: scratch starter" > "$R/mods/github-tasks/starters/scratch-starter.yaml"
   # Installed skills are not in the repo: only mine/ and the file that records them.
   find "$R/skillshare/skills" -mindepth 1 -maxdepth 1 ! -name mine ! -name .metadata.json -exec rm -rf {} +
   write_metadata "$R/skillshare/skills/.metadata.json"
@@ -159,7 +162,7 @@ new_world "dry-run-lists-only-the-mappings"
 expected="$T/expected"
 (
   cd "$R"
-  find mods -type f ! -name RECIPE.md ! -name preview.png ! -name gpui-kit.d.ts ! -name jsconfig.json ! -path 'mods/workflows/starters/*'
+  find mods -type f ! -name RECIPE.md ! -name preview.png ! -name gpui-kit.d.ts ! -name jsconfig.json
   echo layouts/Tony.json
   (cd personal/herdr-app && find themes workflows -type f)
 ) | sort > "$expected"
@@ -170,7 +173,7 @@ printf '%s\n' "$OUT" | sed -n 's/^to Herdr (new): //p' | sort > "$T/listed"
 assert_same_file "$expected" "$T/listed"
 assert_lacks "RECIPE.md"
 assert_lacks "preview.png"
-assert_lacks "starters/"
+assert_has "to Herdr (new): mods/github-tasks/starters/scratch-starter.yaml"
 assert_lacks "Tony copy"
 assert_lacks "Tony's copies"
 assert_lacks "keys.json"
@@ -197,7 +200,7 @@ assert_same_tree "$R/personal/herdr-app/themes" "$H/themes"
 assert_same_tree "$R/personal/herdr-app/workflows" "$H/workflows"
 assert_absent "$H/mods/usage/RECIPE.md"
 assert_absent "$H/mods/usage/preview.png"
-assert_absent "$H/mods/workflows/starters"
+assert_same_file "$R/mods/github-tasks/starters/scratch-starter.yaml" "$H/mods/github-tasks/starters/scratch-starter.yaml"
 assert_absent "$H/keys.json"
 assert_absent "$H/settings.json"
 assert_has "copied: "
@@ -208,33 +211,42 @@ assert_status 0 "$RC"
 assert_has "copied: 0 to Herdr, 0 to the repo;"
 assert_lacks "to Herdr: "
 
-# 3. Recipes, previews and starters stay out of Herdr and are never pulled or pruned.
+# 3. Recipes and previews stay out of Herdr and are never pulled or pruned; starters sync like other mod files.
 new_world "repository-metadata-is-not-synced"
 run_sync
-mkdir -p "$H/mods/workflows/starters"
 echo herdr-recipe > "$H/mods/usage/RECIPE.md"
 echo herdr-preview > "$H/mods/usage/preview.png"
-echo herdr-starter > "$H/mods/workflows/starters/herdr-only.yaml"
 before=$(cd "$R" && find mods -type f | sort | xargs cksum)
 run_sync --pull
 assert_status 0 "$RC"
 assert_lacks "RECIPE.md"
 assert_lacks "preview.png"
-assert_lacks "starters/"
 assert_eq "herdr-recipe" "$(cat "$H/mods/usage/RECIPE.md")" "pull left Herdr recipe alone"
-assert_absent "$R/mods/workflows/starters/herdr-only.yaml"
 run_sync --push --prune --dry-run
 assert_status 0 "$RC"
 assert_lacks "RECIPE.md"
 assert_lacks "preview.png"
-assert_lacks "starters/"
 run_sync --push --prune
 assert_status 0 "$RC"
 assert_exists "$H/mods/usage/RECIPE.md"
 assert_exists "$H/mods/usage/preview.png"
-assert_exists "$H/mods/workflows/starters/herdr-only.yaml"
 after=$(cd "$R" && find mods -type f | sort | xargs cksum)
-assert_eq "$before" "$after" "pull and prune left repo metadata and starters untouched"
+assert_eq "$before" "$after" "pull and prune left repo metadata untouched"
+
+# 3b. Starters sync like any other mod file: pulled from Herdr, pushed to Herdr, and pruned when extra.
+new_world "starters-sync-like-mod-files"
+run_sync
+assert_exists "$H/mods/github-tasks/starters/scratch-starter.yaml"
+echo herdr-starter > "$H/mods/github-tasks/starters/herdr-only.yaml"
+run_sync --pull
+assert_status 0 "$RC"
+assert_has "to repo (new): mods/github-tasks/starters/herdr-only.yaml"
+assert_same_file "$H/mods/github-tasks/starters/herdr-only.yaml" "$R/mods/github-tasks/starters/herdr-only.yaml"
+rm "$R/mods/github-tasks/starters/herdr-only.yaml"
+run_sync --push --prune
+assert_status 0 "$RC"
+assert_has "removed from Herdr: mods/github-tasks/starters/herdr-only.yaml"
+assert_absent "$H/mods/github-tasks/starters/herdr-only.yaml"
 
 # 4. Generated files are skipped and --check only checks Skillshare's absolute home paths.
 new_world "generated-files-and-check"
