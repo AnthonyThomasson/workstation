@@ -21,9 +21,9 @@ Every mod has its own `RECIPE.md`, `preview.png` and `mod.json` beside its code.
 Other folders:
 
 - **`personal/`** — my own keys, settings, themes and workflows. Keys and settings are not synchronized because Herdr writes those files itself.
-- **`skillshare/`** — Skillshare's `config.yaml`, `agents/` and `skills/`. Installed skills live directly under `skills/` and are tracked in `.metadata.json`; my own skills live under `skills/mine/`.
+- **`skillshare/`** — Skillshare's `config.yaml`, `agents/` and `skills/`. Only `skills/mine/` (my own skills) and `skills/.metadata.json` are committed; installed skills are recorded in `.metadata.json` and reinstall from their source. See [Skillshare skills](#skillshare-skills).
 - **`scripts/sync/`** — the sync script and its rebuild recipe.
-- **`tests/`** — `sh tests/sync.test.sh` exercises synchronization in scratch folders; `sh tests/entries.test.sh` checks the Tony/mod gallery structure, mod references and Tony's preview dimensions.
+- **`tests/`** — `sh tests/sync.test.sh` exercises synchronization in scratch folders; `sh tests/entries.test.sh` checks the Tony/mod gallery structure, mod references and Tony's preview dimensions; `sh tests/skills.test.sh` checks that git tracks only `skillshare/skills/mine/` and `.metadata.json` there.
 
 ## Add the layout or one mod
 
@@ -56,6 +56,32 @@ Herdr picks up changed layouts and mods without a restart. Choose **Tony** in th
 
 To use the **Sync** mod afterward, open its tab-bar button, expand **Settings**, and set **Config repo** to this clone's path on the current computer. See [the Sync mod README](mods/sync/README.md) for its panel and behavior.
 
+## Skillshare skills
+
+**What is committed.** Under `skillshare/skills/` only `mine/` (my own skills) and `.metadata.json` are tracked. One `.gitignore` rule ignores every other top-level folder there (`skillshare/skills/*/` except `mine/`), so a skill that Skillshare installs, and `synced/` (skills synced from claude.ai), never reach a commit by accident. `git status` stays clean after an install except for `.metadata.json`, which records each installed skill's source and commit.
+
+**Restore on a fresh clone.** Installed skills (`herdr`, `skillshare`) are not in the clone. `./scripts/sync/sync.sh` reinstalls every recorded skill whose folder is missing, on each real run (two-way, `--push`, `--pull`), at the commit recorded in `.metadata.json`. `--dry-run` prints `would reinstall: <name>`; `--check` never does it. Without the `skillshare` CLI, or offline, it prints `skillshare: could not reinstall <name>: <reason>`, finishes the sync and exits 0. It leaves `.metadata.json` as committed; run `skillshare sync` afterwards to link the skills into your tools.
+
+To do the same by hand, once per entry in `skillshare/skills/.metadata.json` (its `repo_url`, `subdir` and `commit`):
+
+```sh
+skillshare install github.com/herdrdev/herdr/skills/herdr --name herdr --branch 2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01 -y -g
+skillshare install github.com/runkids/skillshare/skills/skillshare --name skillshare --branch c19ff80611c20e9b69392ad4e4aeaf491d5036b7 -y -g
+git checkout skillshare/skills/.metadata.json   # the installs rewrite each entry's source and branch fields
+```
+
+A plain `skillshare install -g` also restores every recorded skill, but one with no recorded branch (`skillshare`) comes back at its latest commit, not the recorded one.
+
+### My skills
+
+Each skill in `skillshare/skills/mine/` installs by URL (add `-g` for the global source):
+
+| Skill | What it does | Install |
+| --- | --- | --- |
+| `add-own-skill` | Add a personal skill to this workstation's Skillshare source. | `skillshare install github.com/AnthonyThomasson/workstation/skillshare/skills/mine/add-own-skill` |
+
+When you add a skill to `mine/`, add a row here with its one-line description and its install command (`skillshare install github.com/AnthonyThomasson/workstation/skillshare/skills/mine/<name>`). The `add-own-skill` skill does this as one of its steps.
+
 ## `scripts/sync/sync.sh` reference
 
 ```sh
@@ -79,6 +105,6 @@ To use the **Sync** mod afterward, open its tab-bar button, expand **Settings**,
 
 Set `HERDR_APP_HOME` to use a different Herdr config folder. Herdr's built-in mods and generated files are not pulled. Every replaced or pruned Herdr file is backed up under `~/.config/herdr-app/.workstation-backup/<timestamp>/`; replaced repo files go under `.sync-backup/<timestamp>/`. Nothing is deleted from the repo.
 
-**Skillshare.** The script links `~/.config/skillshare/config.yaml`, `agents` and `skills` to `skillshare/` in this repo. An existing real file/folder is first moved to `<name>.backup-<timestamp>`; an existing wrong link is repointed. Set `SKILLSHARE_HOME` to use a different Skillshare folder.
+**Skillshare.** The script links `~/.config/skillshare/config.yaml`, `agents` and `skills` to `skillshare/` in this repo. An existing real file/folder is first moved to `<name>.backup-<timestamp>`; an existing wrong link is repointed. Set `SKILLSHARE_HOME` to use a different Skillshare folder. After linking, it also reinstalls recorded skills whose folder is missing (see [Skillshare skills](#skillshare-skills)).
 
 **Home paths stay private.** `skillshare/config.yaml` sets `preserve_tilde_on_save: true`, and each real run rewrites `$HOME/` to `~/` there. `--check` fails if an absolute home path remains. Commit after a pull or two-way run because pulled files are repository edits.
