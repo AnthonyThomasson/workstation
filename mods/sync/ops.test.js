@@ -6,16 +6,11 @@ import assert from "node:assert/strict";
 import { execFileSync, execFile } from "node:child_process";
 import { realpathSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, rmSync, readdirSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
-import { checkRepo, syncHerdr, push, listTargets, switchBranch, CHECK } from "./ops.js";
+import { join, dirname } from "node:path";import { checkRepo, syncHerdr, push, listTargets, switchBranch, CHECK } from "./ops.js";
 import { syncWorld as world, cleanWorld as clean, laterMtime as later } from "./scratch-repos.js";
 import { badge, changedFiles, pushBlocked } from "./model.js";
 
 const pull = syncHerdr; // Sync: the repo to Herdr, one way
-
-const here = dirname(fileURLToPath(import.meta.url));
-const MOUNT = join(here, "../../../../sync.sh");
 
 
 test("a fresh clone with Herdr in step shows no badge", async () => {
@@ -35,7 +30,7 @@ test("a fresh clone with Herdr in step shows no badge", async () => {
 test("a commit from another clone shows as ↓1 after a fetch, not before", async () => {
   const w = world("behind");
   try {
-    w.put(w.b, "herdr/demo/mods/demo/main.js", "two\n");
+    w.put(w.b, "mods/demo/main.js", "two\n");
     w.git(w.b, "commit", "-q", "-am", "Change the demo"); w.git(w.b, "push", "-q");
     assert.equal(badge(await checkRepo(w.io, w.cfg)).text, "");
     const s = await checkRepo(w.io, w.cfg, { fetch: true });
@@ -48,8 +43,8 @@ test("a commit from another clone shows as ↓1 after a fetch, not before", asyn
 test("Sync brings the remote's commit into the repo and Herdr, backs up what it replaces, and the badge clears", async () => {
   const w = world("pull");
   try {
-    // As a Push from another machine leaves it: the entry folder and Tony's copy both changed.
-    for (const root of ["herdr/demo/mods/demo", "herdr/tony/mods/demo"]) { w.put(w.b, `${root}/main.js`, "two\n"); w.put(w.b, `${root}/icon.svg`, "<svg/>\n"); }
+    // As a Push from another machine leaves it: the root-level mod changed.
+    w.put(w.b, "mods/demo/main.js", "two\n"); w.put(w.b, "mods/demo/icon.svg", "<svg/>\n");
     w.git(w.b, "add", "-A"); w.git(w.b, "commit", "-q", "-m", "Change the demo"); w.git(w.b, "push", "-q");
     assert.equal(badge(await checkRepo(w.io, w.cfg, { fetch: true })).text, "↓1");
     const out = await pull(w.io, w.cfg);
@@ -62,7 +57,7 @@ test("Sync brings the remote's commit into the repo and Herdr, backs up what it 
   } finally { clean(w); }
 });
 
-test("Editing a Herdr mod shows as ↑1; Push copies it, refreshes Tony, commits, pushes, and the badge clears", async () => {
+test("Editing a Herdr mod shows as ↑1; Push copies it, commits, pushes, and the badge clears", async () => {
   const w = world("push");
   try {
     const f = join(w.herdr, "mods/demo/main.js");
@@ -73,11 +68,9 @@ test("Editing a Herdr mod shows as ↑1; Push copies it, refreshes Tony, commits
     const out = await push(w.io, w.cfg, "Sync 1 file from Herdr on test");
     assert.equal(out.result, "ok", out.message);
     assert.equal(out.extra.pushed, "1");
-    assert.equal(readFileSync(join(w.a, "herdr/demo/mods/demo/main.js"), "utf8"), "edited in Herdr\n");
-    assert.equal(readFileSync(join(w.a, "herdr/tony/mods/demo/main.js"), "utf8"), "edited in Herdr\n");
+    assert.equal(readFileSync(join(w.a, "mods/demo/main.js"), "utf8"), "edited in Herdr\n");
     w.git(w.b, "pull", "-q");
-    assert.equal(readFileSync(join(w.b, "herdr/demo/mods/demo/main.js"), "utf8"), "edited in Herdr\n");
-    assert.equal(readFileSync(join(w.b, "herdr/tony/mods/demo/main.js"), "utf8"), "edited in Herdr\n");
+    assert.equal(readFileSync(join(w.b, "mods/demo/main.js"), "utf8"), "edited in Herdr\n");
     assert.equal(w.git(w.b, "log", "-1", "--format=%s").trim(), "Sync 1 file from Herdr on test");
     assert.equal(badge(await checkRepo(w.io, w.cfg)).text, "");
     assert.equal(w.git(w.a, "status", "--porcelain", "--", ".", ":(exclude).sync-backup").trim(), "");
@@ -111,7 +104,7 @@ test("Push with nothing to push says so", async () => {
 test("Push when the remote also moved, without a conflict, rebases and then updates Herdr", async () => {
   const w = world("rebase");
   try {
-    w.put(w.b, "herdr/other/mods/other/main.js", "other changed remotely\n");
+    w.put(w.b, "mods/other/main.js", "other changed remotely\n");
     w.git(w.b, "commit", "-q", "-am", "Remote edit"); w.git(w.b, "push", "-q");
     const f = join(w.herdr, "mods/demo/main.js");
     writeFileSync(f, "edited in Herdr\n"); later(f);
@@ -125,7 +118,7 @@ test("Push when the remote also moved, without a conflict, rebases and then upda
 test("when the remote and Herdr change the same file, Push pushes nothing and says so", async () => {
   const w = world("conflict");
   try {
-    w.put(w.b, "herdr/demo/mods/demo/main.js", "remote version\n");
+    w.put(w.b, "mods/demo/main.js", "remote version\n");
     w.git(w.b, "commit", "-q", "-am", "Remote edit of the demo"); w.git(w.b, "push", "-q");
     const remoteTip = w.git(w.remote, "rev-parse", "main").trim();
     const f = join(w.herdr, "mods/demo/main.js");
@@ -145,14 +138,14 @@ test("when the remote and Herdr change the same file, Push pushes nothing and sa
 test("Push will not overwrite an uncommitted edit in the repo with Herdr's copy", async () => {
   const w = world("copy-conflict");
   try {
-    w.put(w.a, "herdr/demo/mods/demo/main.js", "repo edit, uncommitted\n");
+    w.put(w.a, "mods/demo/main.js", "repo edit, uncommitted\n");
     const f = join(w.herdr, "mods/demo/main.js");
     writeFileSync(f, "herdr edit\n"); later(f);
     const out = await push(w.io, w.cfg, "Sync");
     assert.equal(out.result, "error", out.message);
-    assert.match(out.message, /Nothing was pushed: Herdr and the repo both changed herdr\/demo\/mods\/demo\/main\.js/);
-    assert.equal(readFileSync(join(w.a, "herdr/demo/mods/demo/main.js"), "utf8"), "repo edit, uncommitted\n");
-    assert.equal(w.git(w.remote, "log", "-1", "--format=%s").trim(), "tony copies");
+    assert.match(out.message, /Nothing was pushed: Herdr and the repo both changed mods\/demo\/main\.js/);
+    assert.equal(readFileSync(join(w.a, "mods/demo/main.js"), "utf8"), "repo edit, uncommitted\n");
+    assert.equal(w.git(w.remote, "log", "-1", "--format=%s").trim(), "start");
   } finally { clean(w); }
 });
 
@@ -175,7 +168,7 @@ test("a repo path can start with ~", async () => {
   } finally { clean(w); }
 });
 
-const DEMO = "herdr/demo/mods/demo/main.js";
+const DEMO = "mods/demo/main.js";
 
 test("a repo that is ahead of Herdr blocks Push, does not count as ↑, and Pull brings Herdr up", async () => {
   const w = world("repo-ahead");
@@ -229,7 +222,7 @@ test("an edit made only in the repo is not a copy conflict: Pull applies it to H
 test("a push whose git pull fails without a conflict is an error and leaves nothing half done", async () => {
   const w = world("push-fails");
   try {
-    w.put(w.b, "herdr/other/mods/other/main.js", "other changed remotely\n");
+    w.put(w.b, "mods/other/main.js", "other changed remotely\n");
     w.git(w.b, "commit", "-q", "-am", "Remote edit"); w.git(w.b, "push", "-q");
     writeFileSync(join(w.a, ".git/hooks/pre-rebase"), "#!/bin/sh\necho 'no rebasing today' >&2\nexit 1\n", { mode: 0o755 });
     const f = join(w.herdr, "mods/demo/main.js");
@@ -253,16 +246,16 @@ test("paths with spaces and non-ASCII characters come through unquoted, and the 
     assert.deepEqual(s.uncommitted.map((f) => f.path).sort(), ["skillshare/skills/mine/café/SKILL.md", "skillshare/skills/mine/my skill/SKILL.md"]);
     assert.equal(badge(s).text, "↑2");
     // A mod file with a space: committed, synced to Herdr, then edited on both sides.
-    w.put(w.a, "herdr/demo/mods/demo/my file.js", "v1\n");
+    w.put(w.a, "mods/demo/my file.js", "v1\n");
     w.git(w.a, "add", "-A"); w.git(w.a, "commit", "-q", "-m", "spaces"); w.git(w.a, "push", "-q");
-    execFileSync("sh", [join(w.a, "sync.sh"), "--push"], { env: w.env, cwd: w.a });
-    w.put(w.a, "herdr/demo/mods/demo/my file.js", "repo edit\n");
+    execFileSync("sh", [join(w.a, "scripts/sync/sync.sh"), "--push"], { env: w.env, cwd: w.a });
+    w.put(w.a, "mods/demo/my file.js", "repo edit\n");
     const h = join(w.herdr, "mods/demo/my file.js");
     writeFileSync(h, "herdr edit\n"); later(h);
     const out = await push(w.io, w.cfg, "Sync");
     assert.equal(out.result, "error", out.message);
     assert.match(out.message, /my file\.js/);
-    assert.equal(readFileSync(join(w.a, "herdr/demo/mods/demo/my file.js"), "utf8"), "repo edit\n");
+    assert.equal(readFileSync(join(w.a, "mods/demo/my file.js"), "utf8"), "repo edit\n");
   } finally { clean(w); }
 });
 
@@ -286,11 +279,11 @@ test("sync never writes to .git/info/exclude and never commits its own backups",
 test("a script setting without ./ is looked up in the repo, and a path with spaces is not split", async () => {
   const w = world("script-path");
   try {
-    assert.equal((await checkRepo(w.io, { ...w.cfg, script: "sync.sh" })).error, null);
-    cpSync(join(w.a, "sync.sh"), join(w.a, "my sync.sh"));
+    assert.equal((await checkRepo(w.io, { ...w.cfg, script: "scripts/sync/sync.sh" })).error, null);
+    cpSync(join(w.a, "scripts/sync/sync.sh"), join(w.a, "scripts/sync/my sync.sh"));
     const f = join(w.herdr, "mods/demo/main.js");
     writeFileSync(f, "edited in Herdr\n"); later(f);
-    const s = await checkRepo(w.io, { ...w.cfg, script: "./my sync.sh" });
+    const s = await checkRepo(w.io, { ...w.cfg, script: "./scripts/sync/my sync.sh" });
     assert.equal(s.error, null);
     assert.deepEqual(s.herdr, ["mods/demo/main.js"]);
     assert.match((await checkRepo(w.io, { ...w.cfg, script: "nope.sh" })).error, /not found/);
@@ -311,8 +304,8 @@ test("Push is refused off main and nothing is copied or committed", async () => 
     const out = await push(w.io, w.cfg, "Sync");
     assert.equal(out.result, "error");
     assert.match(out.message, /only allowed from main \(this is feature\)/);
-    assert.equal(readFileSync(join(w.a, "herdr/demo/mods/demo/main.js"), "utf8"), "one\n");
-    assert.equal(w.git(w.remote, "log", "-1", "--format=%s").trim(), "tony copies");
+    assert.equal(readFileSync(join(w.a, "mods/demo/main.js"), "utf8"), "one\n");
+    assert.equal(w.git(w.remote, "log", "-1", "--format=%s").trim(), "start");
   } finally { clean(w); }
 });
 
@@ -324,8 +317,8 @@ test("Sync is one way: Herdr's own edit is replaced by the repo's file, with a b
     const out = await syncHerdr(w.io, w.cfg);
     assert.equal(out.result, "ok", out.message);
     assert.equal(readFileSync(f, "utf8"), "one\n");
-    assert.match(out.message, /loaded \d+ mods with no errors/);
-    assert.equal(w.git(w.a, "status", "--porcelain", "--", "herdr").trim(), "", "nothing in the repo changed");
+    assert.match(out.message, /loaded 2 mods with no errors/);
+    assert.equal(w.git(w.a, "status", "--porcelain", "--", "mods").trim(), "", "nothing in the repo changed");
   } finally { clean(w); }
 });
 
@@ -334,7 +327,7 @@ test("Sync works from a worktree on another branch, and lists worktrees and bran
   try {
     const wt = join(w.base, "wt");
     w.git(w.a, "worktree", "add", "-q", "-b", "feature", wt);
-    writeFileSync(join(wt, "herdr/demo/mods/demo/main.js"), "from the feature branch\n");
+    writeFileSync(join(wt, "mods/demo/main.js"), "from the feature branch\n");
     const list = await listTargets(w.io, w.a);
     assert.deepEqual(list.worktrees.map((x) => x.branch).sort(), ["feature", "main"]);
     assert.equal(list.branches.find((b) => b.name === "feature").path.endsWith("/wt"), true);
@@ -360,18 +353,18 @@ test("Sync removes files the repo no longer has from the repo's mods, keeping a 
     assert.equal(existsSync(extra), false);
     assert.ok(existsSync(other), "a mod the repo does not own is left alone");
     assert.ok(readdirSync(join(w.herdr, ".workstation-backup")).length > 0);
-    assert.equal(w.git(w.a, "status", "--porcelain", "--", "herdr").trim(), "");
+    assert.equal(w.git(w.a, "status", "--porcelain", "--", "mods").trim(), "");
   } finally { clean(w); }
 });
 
 test("a repo without sync.sh is reported with whether a RECIPE.md could generate it", async () => {
   const w = world("no-script");
   try {
-    rmSync(join(w.a, "sync.sh"));
+    rmSync(join(w.a, "scripts/sync/sync.sh"));
     let s = await checkRepo(w.io, w.cfg);
     assert.equal(s.noScript, true);
     assert.equal(s.recipe, false);
-    writeFileSync(join(w.a, "RECIPE.md"), "# recipe\n");
+    writeFileSync(join(w.a, "scripts/sync/RECIPE.md"), "# recipe\n");
     s = await checkRepo(w.io, w.cfg);
     assert.equal(s.recipe, true);
   } finally { clean(w); }

@@ -23,10 +23,10 @@ const base = (p) => String(p ?? "").split("/").filter(Boolean).pop() ?? p;
 export function renderRepo(ctx) {
   const { t, state: st, kind, cfg } = ctx;
   if (kind === "error" && st?.noScript) {
-    // sync.sh is not in the repo: an agent writes it from RECIPE.md.
+    // scripts/sync/sync.sh is not in the repo: an agent writes it from scripts/sync/RECIPE.md.
     return v_flex().gap(8)
-      .child(note(t, "sync.sh is not in this repo.", t.blocked))
-      .child(note(t, st.recipe ? "Generate it from RECIPE.md: an agent opens in a new tab and writes it." : "There is no RECIPE.md in the repo either, so it cannot be generated."))
+      .child(note(t, "scripts/sync/sync.sh is not in this repo.", t.blocked))
+      .child(note(t, st.recipe ? "Generate it from scripts/sync/RECIPE.md: an agent opens in a new tab and writes it." : "There is no scripts/sync/RECIPE.md in the repo either, so it cannot be generated."))
       .child(h_flex().gap(8)
         .when(Boolean(st.recipe), (el) => el.child(primary("generate", "Generate sync.sh", t, (_e, cx) => { ctx.request({ op: "generate" }); cx.notify(); })))
         .child(secondary("change-repo", "Open Settings", t, (_e, cx) => ctx.openSettings(cx))));

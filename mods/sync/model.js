@@ -1,8 +1,8 @@
 // What the sync mod knows, with no Herdr and no I/O: settings, the check script's output, the badge,
 // the badge. The tests (model.test.js) run under node.
 
-// The script is not a setting: it is always sync.sh at the top of the repo, generated from RECIPE.md when missing.
-export const SCRIPT = "./sync.sh";
+// The script is not a setting: it is always scripts/sync/sync.sh in the repo, generated from scripts/sync/RECIPE.md when missing.
+export const SCRIPT = "./scripts/sync/sync.sh";
 export const DEFAULTS = { repo: "", script: SCRIPT };
 export const PUSH_BRANCH = "main"; // the only branch Push is allowed from
 
@@ -76,7 +76,7 @@ export function parseOutcome(text) {
 
 // ---- The badge ----
 
-// A Herdr-relative path (mods/x/main.js) and the repo path it is copied to (herdr/entry/mods/x/main.js)
+// A Herdr-relative path (mods/x/main.js) and the repo path it is copied to (mods/x/main.js)
 // are the same file when the repo's path ends with the Herdr one.
 const sameFile = (herdrPath, repoPath) => repoPath === herdrPath || repoPath.endsWith(`/${herdrPath}`);
 

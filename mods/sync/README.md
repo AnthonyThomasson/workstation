@@ -20,9 +20,9 @@ Per machine (this computer, and each machine from `hc machine ls`); stored with 
 | --- | --- |
 | Config repo (folder path on that machine; this computer has a Browse button) | empty; the panel shows only Settings |
 
-The sync script is not a setting: it is always `./sync.sh` at the top of the repo. If it is missing, the panel says so and offers **Generate sync.sh**, which opens an agent (Claude Code) in a new tab in the repo to write it from the repo's `RECIPE.md` (this repo's describes the flags, output and layout the mod needs). Without a `RECIPE.md` there is nothing to generate from.
+The sync script is not a setting: it is always `./scripts/sync/sync.sh` in the repo. If it is missing, the panel says so and offers **Generate sync.sh**, which opens an agent (Claude Code) in a new tab in the repo to write it from `scripts/sync/RECIPE.md` (this repo's describes the flags, output and layout the mod needs). Without `scripts/sync/RECIPE.md` there is nothing to generate from.
 
-The picked worktree is remembered per machine and cleared when the repo path changes. `sync.sh` must take `--push`, `--pull` and `--dry-run`, and with `--dry-run` alone print `to repo: <path>` / `to repo (new): <path>` for each file it would copy to the repo and `to Herdr: <path>` / `to Herdr (new): <path>` for each it would copy to Herdr. This repo's `sync.sh` does.
+The picked worktree is remembered per machine and cleared when the repo path changes. `scripts/sync/sync.sh` must take `--push`, `--pull` and `--dry-run`, and with `--dry-run` alone print `to repo: <path>` / `to repo (new): <path>` for each file it would copy to the repo and `to Herdr: <path>` / `to Herdr (new): <path>` for each it would copy to Herdr. This repo's script does.
 
 `git fetch` runs every 5 minutes and when the panel opens; the local check (the script's dry run plus `git status`) every 20 seconds.
 
@@ -35,4 +35,4 @@ Sync removes files from Herdr only inside mod folders the repo owns, and always 
 - `channel.js` how the panel hands work to the button (shared values, one lock per machine); `jobs.js` runs slow work as detached, polled jobs
 - `details.js` the panel frame; `repo-ui.js` the Repo section; `settings-ui.js` the Settings section; `ui.js` the shared look
 - `main.js` the views: the button and the Details panel
-- `*.test.js` run with `node --test herdr/sync/mods/sync` (`ops.test.js` uses throwaway git repositories from `scratch-repos.js`, this repo's `sync.sh`, and a stub `herdr-app`)
+- `*.test.js` run with `node --test mods/sync` (`ops.test.js` uses throwaway git repositories from `scratch-repos.js`, this repo's `scripts/sync/sync.sh`, and a stub `herdr-app`)

@@ -18,7 +18,7 @@ import { createChannel } from "./channel.js";
 import { renderDetails } from "./details.js";
 import { icon, stop, later } from "./ui.js";
 
-const SETTINGS = "sync.settings.v1"; // { [machine]: { repo, script (always ./sync.sh), dir } }; "" is this computer
+const SETTINGS = "sync.settings.v1"; // { [machine]: { repo, script (always ./scripts/sync/sync.sh), dir } }; "" is this computer
 const STATE = "sync.state.v1"; // { [machine]: what the last check read }
 const BUMP = "sync.where.bump.v1"; // changes when the branch and worktree lists should be read again
 const CHECK_EVERY = 20 * 1000, FETCH_EVERY = 5 * 60 * 1000, WHERE_EVERY = 20 * 1000;
@@ -148,15 +148,15 @@ export default class Sync extends View {
     });
   }
 
-  // sync.sh is missing: the agent, in a new tab in the repo folder, writes it from RECIPE.md.
+  // scripts/sync/sync.sh is missing: the agent, in a new tab in the repo folder, writes it from scripts/sync/RECIPE.md.
   async generateScript(key, c, cx) {
     if (!c.cfg.repo) return;
     const list = await knownAgents({ on: c.on }).catch(() => []);
     const agent = list.find((a) => a.key === "claude" && a.installed) ?? list.find((a) => a.installed) ?? list.find((a) => a.key === "claude") ?? null;
     const space = spaces().find((s) => (s.machine ?? "") === key && s.active) ?? spaces().find((s) => (s.machine ?? "") === key);
-    const task = "Read RECIPE.md in this folder and write sync.sh to match it exactly (POSIX sh, executable). Then run ./sync.sh --check and ./sync.sh --push --dry-run and fix anything that fails. Do not run it for real or commit anything.";
+    const task = "Read scripts/sync/RECIPE.md in this repo and write scripts/sync/sync.sh to match it exactly (POSIX sh, executable). Then run ./scripts/sync/sync.sh --check and ./scripts/sync/sync.sh --push --dry-run and fix anything that fails. Do not run it for real or commit anything.";
     run("tab.new", { name: "Generate sync.sh", space: space?.id, folder: c.rcfg.repo, argv: agent?.run ?? ["claude"], task });
-    notify({ title: "Sync", body: "An agent is writing sync.sh from RECIPE.md in a new tab.", level: "info" });
+    notify({ title: "Sync", body: "An agent is writing scripts/sync/sync.sh from scripts/sync/RECIPE.md in a new tab.", level: "info" });
   }
 
   renderButton(cx) {

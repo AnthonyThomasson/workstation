@@ -16,11 +16,11 @@ A Herdr tab-bar button and side panel that keep a Git configuration repository a
 - The local check runs every 20 seconds and `git fetch` every five minutes, plus on opening the panel or switching machine. It reads branch/upstream, up to 200 incoming and outgoing commits, uncommitted files, and a two-way sync-script dry run. Files the dry run would copy to the repository count as Herdr changes; files it would copy to Herdr are repository-newer and block Push. `.sync-backup/` is excluded.
 - **Sync** is one way, repository to Herdr: fast-forward the repository to its upstream if behind (`--autostash`), run the sync script with `--push --prune` (files in a repo-owned mod folder that the repo lacks are moved to the backup folder), then `herdr-app check mods/<mod>` for each mod the repository owns and `herdr-app status` must show no errors. It never commits or pushes.
 - **Push** runs only on `main` (checked in the UI and in the script). It refuses while repository-newer files exist, runs the script with `--pull`, restores and refuses if that would overwrite an uncommitted repository edit, commits everything except `.sync-backup`, fetches, rebases onto the upstream (aborting and pushing nothing if it does not apply cleanly), re-runs `--push` if commits came in, and pushes. There is no conflict resolution.
-- The one setting is **Config repo** (empty by default; Browse is local-only). The script is always `./sync.sh` in the repository. When it is missing and the repository has a `RECIPE.md`, **Generate sync.sh** opens an agent in a new tab to write it from that recipe.
+- The one setting is **Config repo** (empty by default; Browse is local-only). The script is always `./scripts/sync/sync.sh` in the repository. When it is missing and the repository has `scripts/sync/RECIPE.md`, **Generate sync.sh** opens an agent in a new tab to write it from that recipe.
 
 ### Sync script contract
 
-The script is one quoted path, not a command line: absolute, `~/…`, or relative to the repository (`sync.sh` and `./sync.sh` are equivalent); spaces are allowed, arguments are not. It runs from the repository's top-level folder and must accept:
+The script is one quoted path, not a command line: absolute, `~/…`, or relative to the repository (`scripts/sync/sync.sh` and `./scripts/sync/sync.sh` are equivalent); spaces are allowed, arguments are not. It runs from the repository's top-level folder and must accept:
 
 - `--push`: copy repository files to Herdr, with the repository winning.
 - `--pull`: copy Herdr files to the repository, with Herdr winning.
@@ -28,12 +28,12 @@ The script is one quoted path, not a command line: absolute, `~/…`, or relativ
 
 ## Built from
 
-- Install `mods/sync/`. Its `mod.json` is `{ "place": "none", "title": "sync" }`; there are no key bindings. The host layout must mount the always-present default/`button` role and should place a `details` role as child `sync` in stack `panel-body` inside column `panel`. The button calls `layout.select`, `layout.show` and `layout.hide` on those ids. Other props roles are `text`, `upgrade` and `srcboth` dialogs, opened by the mod itself.
+- Install `mods/sync/`. `RECIPE.md` and `preview.png` sit inside `mods/sync/`, and an installing agent leaves them out. Its `mod.json` is `{ "place": "none", "title": "sync" }`; there are no key bindings. The host layout must mount the always-present default/`button` role and should place a `details` role as child `sync` in stack `panel-body` inside column `panel`. The button calls `layout.select`, `layout.show` and `layout.hide` on those ids. Other props roles are `text`, `upgrade` and `srcboth` dialogs, opened by the mod itself.
 - `main.js` owns roles, machine context, polling, shared state, locks and operations. `model.js` contains settings, output parsers, badge/count logic and the main-only rule. `ops.js` contains the check, sync, push, list and switch shell scripts. `jobs.js` runs slow work as detached, polled jobs; `channel.js` serializes work per machine.
 - `details.js` composes `repo-ui.js` and `settings-ui.js`. `ui.js` supplies the themed controls.
 - Herdr APIs include `exec`, `run`, `spaces`, `machines`, `focused`, `layout`, `theme`, `shared`/`setShared`, `knownAgents`, `pickFolder`, `openOverlay`/`closeOverlay`, `notify`, `readTextFile`, timers and `props`. App actions include `layout.select`, `layout.show`, `layout.hide` and `tab.new`.
 - Programs and shell utilities include `sh`, `git`, `herdr-app`, `hostname`, `mktemp`, `rm`, `cp`, `mkdir`, `find`, `cat`, `grep`, `sed`, `awk`, `cut`, `paste`, `head`, `tail`, `tr`, `cmp`, `ps`, `kill`, `sleep` and `date`. Long jobs detach with `setsid` where available or shell job control otherwise, clear `HC_SCOPE`, poll files in a temporary directory, and time out after 15 minutes.
-- Network access is through `git fetch`, `git pull` and `git push`. It reads and writes the chosen config repository and causes `sync.sh` to read/write `~/.config/herdr-app`; it also writes temporary job files.
+- Network access is through `git fetch`, `git pull` and `git push`. It reads and writes the chosen config repository and causes `scripts/sync/sync.sh` to read/write `~/.config/herdr-app`; it also writes temporary job files.
 - Art is `icons/sync.svg`, `arrow-up.svg`, `arrow-down.svg`, `ring.svg`, `alert.svg`, `check.svg`, `chevron-down.svg`, `chevron-right.svg`, `close.svg`, `folder.svg` and `settings.svg`, referenced as `mods/sync/icons/<name>.svg` and tinted with theme colors.
 
 ## Watch out

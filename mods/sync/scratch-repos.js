@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { createRunner } from "./jobs.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const MOUNT = join(here, "../../../../sync.sh");
+const MOUNT = join(here, "../../scripts/sync/sync.sh");
 
 export const world = () => {
   const base = mkdtempSync(join(tmpdir(), "sync-conf-"));
@@ -55,23 +55,22 @@ export const syncWorld = (name) => {
   execFileSync("git", ["init", "-q", "--bare", w.remote], { env });
   mkdirSync(w.a, { recursive: true });
   w.git(w.a, "init", "-q");
-  cpSync(MOUNT, join(w.a, "sync.sh"));
+  mkdirSync(join(w.a, "scripts/sync"), { recursive: true });
+  cpSync(MOUNT, join(w.a, "scripts/sync/sync.sh"));
   const put = (root, rel, text) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), text); };
-  put(w.a, "herdr/demo/mods/demo/main.js", "one\n");
-  put(w.a, "herdr/demo/mods/demo/mod.json", "{}\n");
-  put(w.a, "herdr/other/mods/other/main.js", "other\n");
+  put(w.a, "mods/demo/main.js", "one\n");
+  put(w.a, "mods/demo/mod.json", "{}\n");
+  put(w.a, "mods/other/main.js", "other\n");
   put(w.a, "skillshare/skills/mine/.keep", "");
-  put(w.a, "herdr/tony/layouts/Tony.json", "{}\n");
+  put(w.a, "layouts/Tony.json", "{}\n");
   w.put = put;
   w.git(w.a, "add", "-A"); w.git(w.a, "commit", "-q", "-m", "start");
   w.git(w.a, "remote", "add", "origin", w.remote);
   w.git(w.a, "push", "-q", "-u", "origin", "main");
   execFileSync("git", ["clone", "-q", w.remote, w.b], { env });
-  // Herdr starts out matching the repo, and Tony's copies exist.
-  execFileSync("sh", [join(w.a, "sync.sh")], { env, cwd: w.a });
-  w.git(w.a, "add", "-A"); w.git(w.a, "commit", "-q", "-m", "tony copies"); w.git(w.a, "push", "-q");
-  w.git(w.b, "pull", "-q");
-  w.cfg = { repo: w.a, script: "./sync.sh", agent: "claude" };
+  // Herdr starts out matching the repo.
+  execFileSync("sh", [join(w.a, "scripts/sync/sync.sh")], { env, cwd: w.a });
+  w.cfg = { repo: w.a, script: "./scripts/sync/sync.sh", agent: "claude" };
   return w;
 };
 export const cleanWorld = (w) => rmSync(w.base, { recursive: true, force: true });

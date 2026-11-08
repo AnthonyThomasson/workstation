@@ -2,7 +2,7 @@
 // run them through io.sh(script, args) and read what they print (model.js). No Herdr imports, so the
 // tests (ops.test.js) run them against real git repositories.
 //
-//   args: $1 repo path, $2 sync script (default ./sync.sh, relative to the repo), $3 per script.
+//   args: $1 repo path, $2 sync script (default ./scripts/sync/sync.sh, relative to the repo), $3 per script.
 //   Every script ends with "@result\t<ok|error>" and "@msg\t<text>" (sync and push) or "@end" (check).
 import { parseCheck, parseOutcome, parseTargets, PUSH_BRANCH } from "./model.js";
 
@@ -25,7 +25,7 @@ up=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
 tmp=$(mktemp -d "\${TMPDIR:-/tmp}/sync.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 tab=$(printf '\\t')
-# The sync script is a path: absolute, ~/..., or relative to the repo (./sync.sh and sync.sh are the same). It is
+# The sync script is a path: absolute, ~/..., or relative to the repo (./scripts/sync/sync.sh and scripts/sync/sync.sh are the same). It is
 # always quoted, so a path with spaces works and the setting is never split into words.
 case "$script" in
   "~/"*) sp=$HOME/\${script#"~/"} ;;
@@ -67,7 +67,7 @@ if [ -n "$up" ]; then
 fi
 [ -z "$inprog" ] || printf '@inprogress\\t%s\\n' "$inprog"
 status_lines | while IFS="$tab" read -r xy f; do printf '@file\\t%s\\t%s\\n' "$xy" "$f"; done
-[ -f RECIPE.md ] && printf '@recipe\\t1\\n' || printf '@recipe\\t0\\n'
+[ -f scripts/sync/RECIPE.md ] && printf '@recipe\\t1\\n' || printf '@recipe\\t0\\n'
 if [ "$script_missing" = 1 ]; then printf '@noscript\\t%s\\n' "$script"
 elif ! two_way; then printf '@scripterr\\t%s\\n' "$(tail -n 1 "$tmp/dry")"
 fi
@@ -93,11 +93,9 @@ status_lines | while IFS="$tab" read -r xy f; do
   mkdir -p "$tmp/pre/$(dirname "$f")"; cp -p "$f" "$tmp/pre/$f"
 done
 "$sp" --pull >"$tmp/script-out" 2>&1 || fail "The sync script failed: $(tail -n 1 "$tmp/script-out")"
-# The copy must not overwrite an uncommitted edit made in the repo. Tony's copies are regenerated, so skip them.
+# The copy must not overwrite an uncommitted edit made in the repo.
 if [ -d "$tmp/pre" ]; then
   (cd "$tmp/pre" && find . -type f | sed 's|^\\./||') | while IFS= read -r f; do
-    grep -qxF "Tony copy (changed): $f" "$tmp/script-out" && continue
-    grep -qxF "Tony copy (new): $f" "$tmp/script-out" && continue
     cmp -s "$tmp/pre/$f" "$f" || printf '%s\\n' "$f"
   done > "$tmp/clash"
   if [ -s "$tmp/clash" ]; then
@@ -151,7 +149,7 @@ if ! command -v herdr-app >/dev/null 2>&1; then
   printf '@msg\\tSynced; herdr-app was not found, so the running Herdr was not checked\\n@result\\tok\\n'; exit 0
 fi
 bad=""; n=0; seen=""
-for d in herdr/*/mods/*/; do
+for d in mods/*/; do
   m=$(basename "$d")
   [ -d "$home/mods/$m" ] || continue
   case " $seen " in *" $m "*) continue ;; esac

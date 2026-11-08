@@ -6,22 +6,22 @@ import {
   fetchBlocksCheck, FETCH_GUARD_MS,
 } from "./model.js";
 
-test("settings default to ./sync.sh, with no repo and no picked worktree", () => {
-  assert.deepEqual(normalizeSettings(undefined), { repo: "", script: "./sync.sh", dir: "" });
-  assert.deepEqual(normalizeSettings({ repo: "  ~/cfg ", script: " " }), { repo: "~/cfg", script: "./sync.sh", dir: "" });
-  assert.deepEqual(normalizeSettings({ repo: "/r", script: "sh sync.sh", dir: " /r-wt " }), { repo: "/r", script: "./sync.sh", dir: "/r-wt" });
-  assert.equal(DEFAULTS.script, "./sync.sh");
+test("settings default to ./scripts/sync/sync.sh, with no repo and no picked worktree", () => {
+  assert.deepEqual(normalizeSettings(undefined), { repo: "", script: "./scripts/sync/sync.sh", dir: "" });
+  assert.deepEqual(normalizeSettings({ repo: "  ~/cfg ", script: " " }), { repo: "~/cfg", script: "./scripts/sync/sync.sh", dir: "" });
+  assert.deepEqual(normalizeSettings({ repo: "/r", script: "sh sync.sh", dir: " /r-wt " }), { repo: "/r", script: "./scripts/sync/sync.sh", dir: "/r-wt" });
+  assert.equal(DEFAULTS.script, "./scripts/sync/sync.sh");
 });
 
-test("the sync script is not configurable: it is always ./sync.sh", () => {
-  assert.equal(normalizeSettings({ script: "./mount.sh" }).script, "./sync.sh");
-  assert.equal(normalizeSettings({ script: "sh other.sh" }).script, "./sync.sh");
-  assert.equal(settingsFor({ vps: { script: "x.sh" } }, "vps").script, "./sync.sh");
+test("the sync script is not configurable: it is always ./scripts/sync/sync.sh", () => {
+  assert.equal(normalizeSettings({ script: "./mount.sh" }).script, "./scripts/sync/sync.sh");
+  assert.equal(normalizeSettings({ script: "sh other.sh" }).script, "./scripts/sync/sync.sh");
+  assert.equal(settingsFor({ vps: { script: "x.sh" } }, "vps").script, "./scripts/sync/sync.sh");
 });
 test("settings are kept per machine, this computer under the empty key", () => {
   const all = { "": { repo: "/a" }, vps: { repo: "/b" } };
   assert.equal(settingsFor(all, "").repo, "/a");
-  assert.deepEqual(settingsFor(all, "vps"), { repo: "/b", script: "./sync.sh", dir: "" });
+  assert.deepEqual(settingsFor(all, "vps"), { repo: "/b", script: "./scripts/sync/sync.sh", dir: "" });
   assert.equal(settingsFor(all, "other").repo, "");
   assert.equal(settingsFor(null, "").repo, "");
 });
@@ -33,7 +33,7 @@ const CHECK = [
   "@behind\tabc1234\tFix the thing",
   "@behind\tdef5678\tAdd a mod",
   "@ahead\t9999999\tSync 1 file",
-  "@file\t M\therdr/sync/mods/sync/main.js",
+  "@file\t M\tmods/sync/main.js",
   "@file\t??\tskillshare/skills/mine/new/SKILL.md",
   "@file\tUU\tREADME.md",
   "@inprogress\trebase",
@@ -42,7 +42,6 @@ const CHECK = [
   "to repo: mods/sync/main.js",
   "to repo (new): layouts/Tony.json",
   "to Herdr: mods/usage/main.js",
-  "Tony copy (changed): herdr/tony/mods/sync/main.js",
   "@end",
 ].join("\n");
 
@@ -55,7 +54,7 @@ test("reads the check script's output", () => {
   assert.equal(s.upstream, "origin/main");
   assert.deepEqual(s.behind, [{ hash: "abc1234", subject: "Fix the thing" }, { hash: "def5678", subject: "Add a mod" }]);
   assert.deepEqual(s.unpushed, [{ hash: "9999999", subject: "Sync 1 file" }]);
-  assert.deepEqual(s.uncommitted.map((f) => f.path), ["herdr/sync/mods/sync/main.js", "skillshare/skills/mine/new/SKILL.md", "README.md"]);
+  assert.deepEqual(s.uncommitted.map((f) => f.path), ["mods/sync/main.js", "skillshare/skills/mine/new/SKILL.md", "README.md"]);
   assert.deepEqual(s.unmerged, ["README.md"]);
   assert.equal(s.inProgress, "rebase");
   assert.deepEqual(s.herdr, ["mods/sync/main.js", "layouts/Tony.json"]);
@@ -63,8 +62,8 @@ test("reads the check script's output", () => {
 
 test("a folder that is not a repo, or a missing script, is reported", () => {
   assert.deepEqual(parseCheck("@norepo\n"), { repo: false, error: null });
-  assert.equal(parseCheck("@top\t/x\n@noscript\t./sync.sh\n@end").error, "./sync.sh was not found in the repo");
-  assert.equal(parseCheck("@top\t/x\n@recipe\t1\n@noscript\t./sync.sh\n@end").noScript, true);
+  assert.equal(parseCheck("@top\t/x\n@noscript\t./scripts/sync/sync.sh\n@end").error, "./scripts/sync/sync.sh was not found in the repo");
+  assert.equal(parseCheck("@top\t/x\n@recipe\t1\n@noscript\t./scripts/sync/sync.sh\n@end").noScript, true);
   assert.equal(parseCheck("@top\t/x\n@recipe\t1\n@end").recipe, true);
   assert.equal(parseCheck("").error, "No answer from the repo");
 });
@@ -79,7 +78,7 @@ test("a failed script or fetch is reported without losing the rest", () => {
 test("a Herdr file already copied into the repo counts once", () => {
   const files = changedFiles({
     herdr: ["mods/sync/main.js", "layouts/Tony.json"],
-    uncommitted: [{ code: "M", path: "herdr/sync/mods/sync/main.js" }, { code: "??", path: "skillshare/skills/mine/x/SKILL.md" }],
+    uncommitted: [{ code: "M", path: "mods/sync/main.js" }, { code: "??", path: "skillshare/skills/mine/x/SKILL.md" }],
   });
   assert.deepEqual(files.map((f) => f.path), ["mods/sync/main.js", "layouts/Tony.json", "skillshare/skills/mine/x/SKILL.md"]);
   assert.deepEqual(files.map((f) => f.where), ["herdr", "herdr", "repo"]);
