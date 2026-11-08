@@ -18,6 +18,10 @@ export const liveRunIn = (tab, deps) => {
 export const ASKING = "github-tasks.closeAsking";
 export const isAsking = (map, tab) => Boolean(map && tab in map);
 
+// shared() survives a restart, so a crash with the dialog open leaves a mark that would swallow that tab's key for good.
+// No dialog can be open when the mod starts: it clears them all (deps.setShared).
+export const forgetAsking = (deps) => deps.setShared(ASKING, {});
+
 export const closeMessage = (name) => `${name} is still running. Closing its tab stops the orchestrator and all its workers and reviewers.`;
 
 const fail = (deps, e) => deps.notify({ title: "Couldn't close the tab", body: String(e?.message ?? e), level: "error" });

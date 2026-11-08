@@ -22,7 +22,7 @@ import { openOnce, ticketSubject } from "./open-tabs.js";
 import { RunPage } from "./run-page.js";
 import { PromptPage } from "./prompts-page.js";
 import { CloseConfirm } from "./close-confirm.js";
-import { closeFocusedTab, ASKING, isAsking } from "./close-tab.js";
+import { closeFocusedTab, forgetAsking, ASKING, isAsking } from "./close-tab.js";
 import { WorkflowList } from "./workflow-list.js";
 import { loadWorkflows } from "./workflow-env.js";
 import { startRun, liveRunFor, viewRun } from "./start.js";
@@ -104,6 +104,7 @@ export default class GitHubTasks extends View {
     this.doctor = startDoctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
     cx.timer.every(POLL, (cx) => this.refresh(cx));
     cx.timer.every(3000, (cx) => cx.notify()); // a run starting or ending turns a row's Start into View and back
+    forgetAsking({ setShared }); // no close-tab dialog is open at startup, so a mark saved before a crash is stale
     cx.spawn(async (cx) => {
       for (;;) {
         const command = await nextCommand();

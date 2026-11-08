@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { closeFocusedTab, closeConfirmed, confirmClose, cancelClose, closeMessage, isAsking } from "./close-tab.js";
+import { closeFocusedTab, closeConfirmed, confirmClose, cancelClose, closeMessage, isAsking, ASKING, forgetAsking } from "./close-tab.js";
 
 // A fake Herdr: tab "t-run" holds a run's orchestrator (terminal t1) beside its run page; tab "t-plain" holds a shell.
 const orchestrator = (state = "live", extra = {}) => ({ address: "t1", state, labels: { "herdr.role": "orchestrator", "herdr.workflow.run": "19-abc", "herdr.workflow.ticket": "o/r#19", ...extra } });
@@ -109,4 +109,16 @@ test("with no tab focused it says so instead of doing nothing", async () => {
 
 test("the warning names the task and what closing stops", async () => {
   assert.match(closeMessage("#19 View reopens"), /^#19 View reopens is still running\. Closing its tab stops the orchestrator and all its workers and reviewers\.$/);
+});
+
+test("a mark left by a crash before a restart no longer blocks the dialog once the mod starts", async () => {
+  const store = { [ASKING]: { "t-run": 1 } }; // saved in shared.json while the dialog was open
+  const { deps, asked } = setup();
+  deps.asking = (tab) => isAsking(store[ASKING], tab);
+  deps.setShared = (key, value) => { store[key] = value; };
+  await closeFocusedTab(deps);
+  assert.deepEqual(asked, []); // the stale mark swallows the key press
+  forgetAsking(deps);
+  await closeFocusedTab(deps);
+  assert.deepEqual(asked, [{ tab: "t-run", name: "#19 View reopens" }]);
 });
