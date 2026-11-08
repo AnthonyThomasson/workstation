@@ -101,6 +101,7 @@ To reinstall one entry by hand: `skillshare install <repo_url-without-https-and-
 - The script is run from the picked folder, so a worktree on an old branch runs its own (possibly old) `sync.sh`; a folder without `mods/sync/sync.sh` fails with "mods/sync/sync.sh was not found".
 - `sync.json` is rewritten by every sync to the picked folder's top level, so it names a worktree after a worktree is synced; the mod's link logic (above) is what keeps the repo linked. A worktree that is deleted and no longer listed by the repo leaves `sync.json` pointing at nothing: the panel says no repo is linked until the script is run from a clone again.
 - On Linux the watcher skips ignored directories and rejects trees of more than 4096 folders; the status line then says "not watching (…)" and Force sync still works. macOS watches ignored directories too, which is why ignored paths are filtered here.
+- A sync that changes this mod's own files makes Herdr reload the mod while the sync's job is still running. The new instance clears "Syncing…" (it cannot see that sync's result) and takes a new baseline, so at most one extra sync can follow.
 - The content fingerprint reads every non-ignored file in the folder after each sync and before each quiet-period sync; a repo with very large tracked files makes that slow.
 - `git`, `sh` and `mods/sync/sync.sh` are required; `herdr-app` is needed for the loaded-in-Herdr check (a sync still runs without it and says it did not check). Renaming the mod requires updating all `mods/sync/` asset paths and `SCRIPT` in `model.js`.
 

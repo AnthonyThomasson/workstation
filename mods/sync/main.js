@@ -81,6 +81,9 @@ export default class Sync extends View {
       },
       clearTimer: (id) => this.timers.delete(id),
     });
+    // A sync that copies this mod's own files makes Herdr reload the mod mid-sync; the new instance cannot see that sync's
+    // result, so it must not show "Syncing…" for ever.
+    if (obj(shared(RUN)).syncing) setRun({ syncing: false });
     later(cx, (cx) => this.refresh(cx));
     cx.timer.every(REFRESH_EVERY, (cx) => { this.cx = cx; this.refresh(cx); });
   }
