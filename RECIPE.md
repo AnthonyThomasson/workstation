@@ -312,7 +312,7 @@ All six custom mods have their own recipes and previews in the same folders that
 - [`mods/sync/RECIPE.md`](mods/sync/RECIPE.md) supplies the always-running `button` role and its `details` panel. Its repository path and sync script are configured per machine in the panel.
 - [`mods/tabs-icons/RECIPE.md`](mods/tabs-icons/RECIPE.md) is mounted in the flexible tab-row block with no props.
 
-No `keys.json` belongs to the Tony layout: it supplies no layout-specific key bindings. Individual mods also ship no key bindings.
+No `keys.json` belongs to the Tony layout: it supplies no layout-specific key bindings. Individual mods ship no key bindings the layout needs; the one exception is GitHub Tasks, whose `mods/github-tasks/keys.json` (a `layout:Tony` `cmd-w` guard for closing a running workflow's tab) the person merges into their own `keys.json` by hand, because `scripts/sync` never syncs `keys.json`.
 
 ## Watch out
 

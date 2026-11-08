@@ -22,7 +22,7 @@ import { openOnce, ticketSubject } from "./open-tabs.js";
 import { RunPage } from "./run-page.js";
 import { PromptPage } from "./prompts-page.js";
 import { CloseConfirm } from "./close-confirm.js";
-import { closeFocusedTab } from "./close-tab.js";
+import { closeFocusedTab, ASKING, isAsking } from "./close-tab.js";
 import { WorkflowList } from "./workflow-list.js";
 import { loadWorkflows } from "./workflow-env.js";
 import { startRun, liveRunFor, viewRun } from "./start.js";
@@ -52,7 +52,8 @@ const shownHere = () => {
 const CLOSE_DEPS = {
   focused, panes, terminals, notify, run: app,
   tabName: (id) => spaces().flatMap((s) => s.tabs ?? []).find((x) => x.id === id)?.name ?? "This task",
-  ask: ({ tab, name }) => openOverlay({ mod: "github-tasks", props: { role: "close-confirm", tab, name }, kind: "dialog", modal: true, width: 420 }),
+  asking: (tab) => isAsking(shared(ASKING), tab),
+  ask: ({ tab, name }) => { setShared(ASKING, { ...(shared(ASKING) ?? {}), [tab]: Date.now() }); openOverlay({ mod: "github-tasks", props: { role: "close-confirm", tab, name }, kind: "dialog", modal: true, width: 420 }); },
 };
 const activeSpace = () => spaces().find((s) => s.active) ?? null;
 

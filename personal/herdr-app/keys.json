@@ -58,6 +58,9 @@
     "ctrl-8": "space.select:8",
     "ctrl-9": "space.select:9"
   },
+  "layout:Tony": {
+    "cmd-w": "github-tasks.close_tab"
+  },
   "terminal": {
     "cmd-f": "terminal.search",
     "cmd-c": "terminal.copy",
