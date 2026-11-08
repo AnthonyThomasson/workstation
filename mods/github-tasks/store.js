@@ -37,6 +37,11 @@ export function replacementFromYaml(source, id) {
 // Restore needs a real snapshot of the current place, not the initial empty list or the previous place's items.
 export const canRestoreDefaults = ({ loaded, placeChanged }) => loaded && !placeChanged;
 
+// A failed read still ends the skeleton, but only a successful one marks its place's items as safe to restore.
+export const workflowRefreshState = ({ loadedPlaceKey }, placeKey, succeeded) => ({
+  loaded: true, loadedPlaceKey: succeeded ? placeKey : loadedPlaceKey,
+});
+
 // Project resets only the repo; Global only the global files; All removes both but puts the starters in Global.
 // Capture the repo root so a place change while confirming cannot redirect the restore. With no repo there is
 // only Global, whatever tab was last selected while a repo was open.

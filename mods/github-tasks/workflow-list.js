@@ -7,7 +7,7 @@ import { v_flex, h_flex, Popover } from "gpui-base";
 import { run, shared, setShared, theme } from "herdr";
 import { S, icon, stop, note, iconButton, segmented, later, action, scrim } from "./ui.js";
 import { SCOPE_LABELS } from "./workflow-model.js";
-import { restorePlan, canRestoreDefaults } from "./store.js";
+import { restorePlan, canRestoreDefaults, workflowRefreshState } from "./store.js";
 import { WORKFLOWS_CHANGED, store, repoRootOf, starterWorkflows } from "./workflow-env.js";
 
 // The tabs over the list: everything, the selected space's repo, or the global ones.
@@ -47,6 +47,7 @@ export class WorkflowList {
     this.again = false;
     const where = this.place(), placeKey = placeKeyOf(where);
     cx.spawn(async (cx) => {
+      let succeeded = false;
       try {
         const repoRoot = await repoRootOf(where);
         // A refresh that finds another repo invalidates the confirmation, including one already working.
@@ -54,11 +55,13 @@ export class WorkflowList {
         this.repoRoot = repoRoot;
         this.items = await store({ repo: this.repoRoot }).list();
         this.error = null;
+        succeeded = true;
       } catch (e) {
         this.error = String(e?.message ?? e);
       }
-      this.loadedPlaceKey = placeKey;
-      this.loaded = true;
+      const state = workflowRefreshState(this, placeKey, succeeded);
+      this.loadedPlaceKey = state.loadedPlaceKey;
+      this.loaded = state.loaded;
       this.loading = false;
       cx.notify();
       if (this.again) this.refresh(cx);

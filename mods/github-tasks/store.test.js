@@ -1,7 +1,7 @@
 import test from "node:test";
 import { parse as parseYaml } from "./yaml.js";
 import assert from "node:assert/strict";
-import { makeStore, StoreError, cloneWorkflow, replacementFromYaml, restorePlan, canRestoreDefaults } from "./store.js";
+import { makeStore, StoreError, cloneWorkflow, replacementFromYaml, restorePlan, canRestoreDefaults, workflowRefreshState } from "./store.js";
 import { blank, ROLES, serialize } from "./workflow-model.js";
 
 const GLOBAL = "/home/me/.config/herdr-app/workflows", REPO = "/proj/.herdr/workflows";
@@ -129,6 +129,17 @@ test("Restore defaults is available only after the current place has loaded", ()
   assert.equal(canRestoreDefaults({ loaded: true, placeChanged: true }), false);
   assert.equal(canRestoreDefaults({ loaded: false, placeChanged: true }), false);
   assert.equal(canRestoreDefaults({ loaded: true, placeChanged: false }), true);
+});
+
+test("a failed refresh does not make Restore defaults available", () => {
+  const initial = workflowRefreshState({ loadedPlaceKey: null }, "global", false);
+  assert.deepEqual(initial, { loaded: true, loadedPlaceKey: null });
+  assert.equal(canRestoreDefaults({ loaded: initial.loaded, placeChanged: "global" !== initial.loadedPlaceKey }), false);
+
+  const oldPlace = workflowRefreshState({ loadedPlaceKey: null }, "old", true);
+  const newPlace = workflowRefreshState(oldPlace, "new", false);
+  assert.deepEqual(newPlace, { loaded: true, loadedPlaceKey: "old" });
+  assert.equal(canRestoreDefaults({ loaded: newPlace.loaded, placeChanged: "new" !== newPlace.loadedPlaceKey }), false);
 });
 
 test("restore replaces Project workflows with the shipped starter text, even when Global has Bug and Story", async () => {
