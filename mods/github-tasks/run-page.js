@@ -8,11 +8,12 @@ import { exec, hc, home, notify, run, setShared, shared, terminals, theme } from
 import { S, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
 import { agentsOf, orchestratorOf, statusColor, statusLabel, withGone } from "./runview.js";
-import { branchArgs, canMerge, defaultBranch, finalSeen, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, stageOf, statusArgs, worktreeArgs } from "./finish.js";
+import { branchArgs, canMerge, finalSeen, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
 
 const stageKey = (id) => `github-tasks.run.${id}.stage`;
 const prKey = (id) => `github-tasks.run.${id}.pr`;
 const finalKey = (id) => `github-tasks.run.${id}.final`; // the final reviewer has been seen: Merge waits for that
+const autoPrKey = (id) => `github-tasks.run.${id}.autopr`; // the page has tried to open the pull request by itself: it does that once per run
 const POLL_MS = 30000;
 
 export class RunPage {
@@ -31,6 +32,7 @@ export class RunPage {
     this.stage = Number(shared(stageKey(this.id))) || 0; // the furthest status already set
     this.pr = shared(prKey(this.id)) || null; // { url, state, number }
     this.finalSeen = finalSeen({ saved: shared(finalKey(this.id)) });
+    this.autoPrTried = Boolean(Number(shared(autoPrKey(this.id))));
     this.busy = null; // "pr" | "merge" while one runs
     this.error = null;
     this.polling = false;
@@ -44,7 +46,7 @@ export class RunPage {
     const workers = withGone(live.workers, this.seenWorkers), reviewers = withGone(live.reviewers, this.seenReviewers);
     const lead = orchestratorOf(all, this.orchestrator);
     this.noteFinal(reviewers);
-    if (cx) { this.advance(cx, workers, reviewers); this.startPolling(cx); }
+    if (cx) { this.advance(cx, workers, reviewers); this.autoPr(cx, workers, reviewers); this.startPolling(cx); }
     return v_flex().id("workflow-run").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
       .child(this.renderHeader(t, lead, cx, workers, reviewers))
       .when(needsYou > 0, (el) => el.child(h_flex().flex_none().px(16).py(8).border_b(1).border_color(t.border).text_size(S().secondary).text_color(t.blocked)
@@ -73,6 +75,17 @@ export class RunPage {
     if (this.finalSeen || !finalSeen({ reviewers })) return;
     this.finalSeen = true;
     setShared(finalKey(this.id), 1);
+  }
+
+  // When Merge would be allowed and the run has no pull request, open it by itself, once: the attempt is saved before it
+  // is made, so neither a reload nor a failure tries again. A failure shows its error, and Create PR stays as the retry.
+  autoPr(cx, workers, reviewers) {
+    if (!this.folder || !this.branch) return;
+    const ready = canMerge({ finalSeen: this.finalSeen, workers, reviewers });
+    if (!shouldAutoPr({ ready, pr: this.pr, tried: this.autoPrTried, busy: this.busy })) return;
+    this.autoPrTried = true;
+    setShared(autoPrKey(this.id), 1);
+    this.createPr(cx);
   }
 
   // The ticket follows the run: In Progress once a worker has started, In Review once a reviewer has. It never goes back.
@@ -115,23 +128,18 @@ export class RunPage {
   }
 
   renderActions(t, lead, cx, workers = [], reviewers = []) {
-    // Merge and Create PR wait for the final review and for every worker and reviewer to end.
+    // Merge and Create PR wait for the final review and for every worker and reviewer to end; Merge also waits for the pull request.
     const ready = canMerge({ finalSeen: this.finalSeen, workers, reviewers });
     const button = (id, label, onClick, on = true) => h_flex().id(id).h(26).px(10).items_center().rounded(6).text_size(S().secondary).font_medium()
       .when(on, (el) => el.cursor_pointer().bg(t.selected).hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click(onClick))
       .when(!on, (el) => el.text_color(t.muted)).child(label);
     const row = h_flex().gap(8).items_center().pt(4)
-      .child(button("run-merge", this.busy === "merge" ? "Merging…" : "Merge", (_e, cx) => this.merge(cx), ready && !this.busy));
+      .child(button("run-merge", this.busy === "merge" ? "Merging…" : "Merge", (_e, cx) => this.merge(cx), ready && Boolean(this.pr) && !this.busy));
     if (!this.pr) row.child(button("run-pr", this.busy === "pr" ? "Creating PR…" : "Create PR", (_e, cx) => this.createPr(cx), ready && !this.busy));
     else row.child(h_flex().id("run-pr-link").h(26).px(10).gap(6).items_center().rounded(6).cursor_pointer().bg(t.selected).hover((s) => s.bg(t.hover))
       .text_size(S().secondary).font_medium().on_mouse_down("left", stop).on_click((_e, cx) => cx.open_url(this.pr.url))
       .child(`PR #${this.pr.number}${this.pr.state === "MERGED" ? " · merged" : ""}`).child(icon("external", 12, t.muted)));
     return v_flex().gap(4).child(row).when(Boolean(this.error), (el) => el.child(div().text_size(S().secondary).text_color(t.blocked).child(this.error)));
-  }
-
-  async baseBranch() {
-    const r = await exec("git", ["-C", this.repoRoot, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
-    return (r.code === 0 && defaultBranch(r.stdout)) || "main";
   }
 
   createPr(cx) {
@@ -152,20 +160,25 @@ export class RunPage {
     });
   }
 
-  // Merge: commit what is left, merge the ticket branch into the default branch, push it, then set the ticket Done,
-  // close it, and clean up (finish.js has the steps). Nothing here waits for a pull request.
+  // Merge, through the pull request (finish.js has the steps): stop if the worktree has uncommitted changes or the branch is
+  // ahead of origin, squash-merge the PR with gh, set the ticket Done, then remove the worktree, the local branch and the
+  // run files. It never runs git in the main checkout's working tree. Pressing it again finishes what a failure left.
   merge(cx) {
-    if (this.busy) return;
+    if (this.busy || !this.pr) return;
     this.busy = "merge"; this.error = null; cx.notify();
     cx.spawn(async (cx) => {
       try {
         // A Merge that stopped part way can be pressed again: leave out what is already gone (the folder, the branch).
         const workDirExists = (await exec("git", worktreeArgs(this.folder))).code === 0;
         const branchExists = (await exec("git", branchArgs(this.repoRoot, this.branch))).code === 0;
+        // Ask GitHub where the pull request stands now, so a saved state that has gone stale (merged by hand, say) doesn't matter.
+        const view = await exec("gh", prViewArgs(this.branch), { cwd: workDirExists ? this.folder : this.repoRoot });
+        const found = view.code === 0 ? parsePr(view.stdout) : null;
+        if (!found) throw new Error(`Couldn't look up the pull request: ${out(view)}`);
+        if (found.url !== this.pr.url || found.state !== this.pr.state) { this.pr = found; setShared(prKey(this.id), found); }
         const { warnings } = await runSteps(mergeSteps({
-          repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, base: await this.baseBranch(),
-          number: this.ticket?.number, status: this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`,
-          workDirExists, branchExists,
+          repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, number: found.number, prMerged: found.state === "MERGED",
+          status: this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
         }), exec);
         for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
         if (!(await this.closeSession())) {

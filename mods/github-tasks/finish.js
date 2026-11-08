@@ -1,4 +1,4 @@
-// What the run page does when the person is done: move the ticket along, merge the ticket branch, open a pull request.
+// What the run page does when the person is done: move the ticket along, open a pull request, merge it.
 // Pure: no Herdr imports, so node --test runs it. run-page.js does the exec calls and the drawing.
 
 import { sameStatus, STATUSES } from "./model.js";
@@ -14,7 +14,7 @@ export const stageOf = (agents) => (agents.reviewers?.length ? 2 : agents.worker
 // keeps it. saved: the value kept in shared state, any of 1, "1" or nothing.
 export const finalSeen = ({ reviewers = [], saved } = {}) => reviewers.some((r) => r.final) || Boolean(Number(saved));
 
-// Merge and Create PR wait for the final review to have started and every worker and reviewer to have ended.
+// Merge, Create PR and the automatic pull request wait for the final review to have started and every worker and reviewer to have ended.
 export const canMerge = ({ finalSeen: seen, workers = [], reviewers = [] }) =>
   Boolean(seen) && !workers.some((w) => w.live) && !reviewers.some((r) => r.live);
 
@@ -29,25 +29,25 @@ export function optionFor(options, stage) {
 export const statusArgs = ({ projectId, itemId, fieldId, optionId }) =>
   ["api", "graphql", "-f", `query=${STATUS_MUTATION}`, "-f", `project=${projectId}`, "-f", `item=${itemId}`, "-f", `field=${fieldId}`, "-f", `option=${optionId}`];
 
-// "origin/main" -> "main"; null when git had nothing to say.
-export const defaultBranch = (symbolicRef) => String(symbolicRef ?? "").trim().replace(/^origin\//, "") || null;
-
 // gh/git args that say whether the ticket worktree folder is still there, and whether the ticket branch still is
 // (exit code 0 means yes). Merge can be pressed again after a partial failure, so it asks before each part.
 export const worktreeArgs = (workDir) => ["-C", workDir, "rev-parse", "--git-dir"];
 export const branchArgs = (repoRoot, branch) => ["-C", repoRoot, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`];
 
-// A push that origin turned away because it has moved on.
-const PUSH_REJECTED = /rejected|non-fast-forward|fetch first|failed to push some refs/i;
-
-// Merge as a list of steps, in order. A step is { name, cmd, args, cwd?, fail, hint?, done?, abort?, dirty?, ifOutput?, warn? }:
-//   fail   what to say when it fails; hint { when, say }: also say this when its output matches when; done  what to call it once it has happened ("Already done: ...")
-//   abort  { cmd, args } to run when it fails    dirty  stop with this when its output is not empty (a check)
-//   ifOutput  steps to run only when its output is not empty    warn  not run: runSteps passes this on as a warning
-// The caller has already found the default branch (base). status: { args } to set the ticket Done, { warn } when the
-// project has no such option, or nothing when there is no project to set it in. number: the issue to close, if any.
-// workDirExists / branchExists: false when an earlier Merge already removed the folder / merged and deleted the branch;
-// the steps for them are left out, so pressing Merge again finishes what was left.
+// Merge as a list of steps, in order. A step is { name, cmd, args, cwd?, fail, done?, dirty?, warn? }:
+//   fail   what to say when it fails; done  what to call it once it has happened ("Already done: ...")
+//   dirty  stop with this when its output is not empty (a check)    warn  not run: runSteps passes this on as a warning
+// Merge goes through the ticket's pull request and never runs git in the main checkout's working tree: no switch, no local
+// merge, no push of the default branch. In order:
+//   tree-status   the ticket worktree has no uncommitted changes (nothing is committed for the person any more)
+//   fetch, ahead  the local ticket branch has no commits origin's copy lacks, so the squash can't leave work behind
+//   pr-merge      gh pr merge <n> --squash (no --admin, no --auto). If GitHub refuses, its message is shown and nothing after it runs
+//   status        the ticket Done    remove-worktree / prune-worktrees    delete-branch (-D: a squash leaves the branch looking unmerged)    remove-run-files
+// number: the pull request's number. prMerged: the caller has just asked gh and the pull request is already MERGED, so the
+// merge step is skipped, and so are fetch and ahead (GitHub may have deleted the remote branch, and the work is already in).
+// status: { args } to set the ticket Done, { warn } when the project has no such option, or nothing when there is no project.
+// workDirExists / branchExists: false when an earlier Merge already removed the folder / deleted the branch; the steps for
+// them are left out, so pressing Merge again finishes what was left.
 // Only a child of a .herdr/workflow-runs folder can be removed. In particular, never rm the parent or a path
 // reached through a run id containing traversal; Merge builds this path from home() and the run id.
 const safeRunDir = (runDir) => {
@@ -55,27 +55,31 @@ const safeRunDir = (runDir) => {
   return Boolean(id && id !== "." && !id.includes(".."));
 };
 
-export function mergeSteps({ repoRoot, workDir, branch, base, number, status, runDir, workDirExists = true, branchExists = true }) {
+export function mergeSteps({ repoRoot, workDir, branch, number, prMerged = false, status, runDir, workDirExists = true, branchExists = true }) {
+  if (!prMerged && !number) throw new Error("Merge needs the pull request, and this run has none.");
   const git = (args) => ({ cmd: "git", args });
+  const inTree = workDirExists ? workDir : repoRoot; // where the remote is asked: the ticket worktree, else the repo's git dir (no checkout is touched)
+  const remote = `origin/${branch}`;
   return [
     ...(workDirExists ? [{ name: "tree-status", ...git(["-C", workDir, "status", "--porcelain"]), fail: `Couldn't look at ${workDir}.`,
-      ifOutput: [
-        { name: "commit-add", ...git(["-C", workDir, "add", "-A"]), fail: `Couldn't stage the changes left in ${workDir}.` },
-        { name: "commit", ...git(["-C", workDir, "commit", "-m", `Commit what was left in the worktree${number ? ` (#${number})` : ""}`]), fail: `Couldn't commit the changes left in ${workDir}.`, done: `committed what was left in ${workDir}` },
-      ] }] : []),
-    { name: "repo-clean", ...git(["-C", repoRoot, "status", "--porcelain"]), fail: `Couldn't look at ${repoRoot}.`, dirty: `${repoRoot} has uncommitted changes, so ${branch} can't be merged into ${base} there.` },
-    { name: "switch", ...git(["-C", repoRoot, "switch", base]), fail: `Couldn't switch ${repoRoot} to ${base}.`, done: `switched ${repoRoot} to ${base}` },
-    ...(branchExists ? [{ name: "merge", ...git(["-C", repoRoot, "merge", "--no-edit", branch]), fail: `${branch} didn't merge into ${base} (the merge was aborted).`, abort: git(["-C", repoRoot, "merge", "--abort"]), done: `merged ${branch} into ${base}` }] : []),
-    { name: "push", ...git(["-C", repoRoot, "push", "origin", base]), fail: `${base} didn't push to origin.`, done: `pushed ${base} to origin`,
-      hint: { when: PUSH_REJECTED, say: `The merge is done locally. Update ${base} from origin in ${repoRoot}, then press Merge again.` } },
+      dirty: `${workDir} has uncommitted changes. Commit or discard them (and push, so the pull request has them), then press Merge again.` }] : []),
+    ...(branchExists && !prMerged ? [
+      { name: "fetch", ...git(["-C", inTree, "fetch", "origin", branch]), fail: `Couldn't fetch ${branch} from origin.` },
+      { name: "ahead", ...git(["-C", inTree, "rev-list", `${remote}..${branch}`]), fail: `Couldn't compare ${branch} with ${remote}.`,
+        dirty: `${branch} has commits that ${remote} doesn't. Push them so the pull request has them, then press Merge again.` },
+    ] : []),
+    ...(prMerged ? [] : [{ name: "pr-merge", cmd: "gh", args: ["pr", "merge", String(number), "--squash"], cwd: inTree, fail: `GitHub didn't merge pull request #${number}.`, done: `merged pull request #${number}` }]),
     ...(status ? [status.warn ? { name: "status", warn: status.warn } : { name: "status", cmd: "gh", args: status.args, fail: "Couldn't set the ticket's status.", done: "set the ticket's status" }] : []),
-    ...(number ? [{ name: "close-issue", cmd: "gh", args: ["issue", "close", String(number)], cwd: repoRoot, fail: `Couldn't close issue #${number}.`, done: `closed issue #${number}` }] : []),
     ...(workDirExists ? [{ name: "remove-worktree", ...git(["-C", repoRoot, "worktree", "remove", workDir]), fail: `Couldn't remove the worktree ${workDir}.`, done: `removed the worktree ${workDir}` }]
       : [{ name: "prune-worktrees", ...git(["-C", repoRoot, "worktree", "prune"]), fail: `Couldn't clear the removed worktree ${workDir} from git's list.` }]),
-    ...(branchExists ? [{ name: "delete-branch", ...git(["-C", repoRoot, "branch", "-d", branch]), fail: `Couldn't delete the branch ${branch}.`, done: `deleted ${branch}` }] : []),
+    ...(branchExists ? [{ name: "delete-branch", ...git(["-C", repoRoot, "branch", "-D", branch]), fail: `Couldn't delete the branch ${branch}.`, done: `deleted ${branch}` }] : []),
     ...(safeRunDir(runDir) ? [{ name: "remove-run-files", cmd: "rm", args: ["-rf", runDir], fail: `Couldn't remove the run files ${runDir}.`, done: `removed the run files ${runDir}` }] : []),
   ];
 }
+
+// Whether the page should open the pull request by itself now: once per run (tried is saved in shared state before the
+// attempt, so a reload or a failure doesn't try again), when Merge would be allowed and the run has no pull request yet.
+export const shouldAutoPr = ({ ready, pr, tried, busy }) => Boolean(ready) && !pr && !tried && !busy;
 
 // Runs steps with exec(cmd, args, opts) -> { code, stdout, stderr }. Resolves { done, warnings } with what happened and
 // what was said on the way; throws an Error at the first step that fails, saying which earlier steps already happened.
@@ -88,12 +92,8 @@ export async function runSteps(steps, exec) {
       if (st.warn) { warnings.push(st.warn); continue; }
       const r = await exec(st.cmd, st.args, st.cwd ? { cwd: st.cwd } : undefined);
       if (st.dirty) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim()); if (String(r.stdout ?? "").trim()) stop(st.dirty); continue; }
-      if (r.code !== 0) {
-        if (st.abort) await exec(st.abort.cmd, st.abort.args);
-        stop(`${st.fail} ${text(r)} ${st.hint?.when.test(text(r)) ? st.hint.say : ""}`.replace(/ +/g, " ").trim());
-      }
+      if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim());
       if (st.done) done.push(st.done);
-      if (st.ifOutput && String(r.stdout ?? "").trim()) await go(st.ifOutput);
     }
   };
   await go(steps);

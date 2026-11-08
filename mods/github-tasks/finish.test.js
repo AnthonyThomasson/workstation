@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { worktreeArgs, branchArgs, canMerge, finalSeen, stageOf, optionFor, statusArgs, defaultBranch, mergeSteps, runSteps, prArgs, parsePrUrl, prNumber, parsePr } from "./finish.js";
+import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, optionFor, statusArgs, mergeSteps, runSteps, prArgs, parsePrUrl, prNumber, parsePr } from "./finish.js";
 
 test("canMerge needs the final reviewer seen and nobody live", () => {
   const ended = { live: false }, live = { live: true, status: "idle" };
@@ -48,16 +48,20 @@ test("statusArgs sends the ids as variables", () => {
   assert.ok(a.includes("option=O") && a.includes("item=I") && a[0] === "api");
 });
 
-test("defaultBranch", () => {
-  assert.equal(defaultBranch("origin/main\n"), "main");
-  assert.equal(defaultBranch(""), null);
+test("shouldAutoPr opens the pull request once, when Merge would be allowed and there is none", () => {
+  const go = { ready: true, pr: null, tried: false, busy: null };
+  assert.equal(shouldAutoPr(go), true);
+  assert.equal(shouldAutoPr({ ...go, ready: false }), false);
+  assert.equal(shouldAutoPr({ ...go, pr: { url: "u", state: "OPEN", number: 3 } }), false);
+  assert.equal(shouldAutoPr({ ...go, tried: true }), false); // already tried, even across a reload or after a failure
+  assert.equal(shouldAutoPr({ ...go, busy: "merge" }), false);
 });
 
-const ctx = { repoRoot: "/r", workDir: "/r-9-x", branch: "workflow/9-x", base: "main", number: 9, status: { args: ["api", "graphql"] }, runDir: "/home/test/.herdr/workflow-runs/9-abc123" };
-const names = (list) => list.flatMap((s) => [s.name, ...(s.ifOutput ?? []).map((x) => `>${x.name}`)]);
+const ctx = { repoRoot: "/r", workDir: "/r-9-x", branch: "workflow/9-x", number: 12, status: { args: ["api", "graphql"] }, runDir: "/home/test/.herdr/workflow-runs/9-abc123" };
+const names = (list) => list.map((s) => s.name);
 
 test("mergeSteps runs in the order the ticket gives", () => {
-  assert.deepEqual(names(mergeSteps(ctx)), ["tree-status", ">commit-add", ">commit", "repo-clean", "switch", "merge", "push", "status", "close-issue", "remove-worktree", "delete-branch", "remove-run-files"]);
+  assert.deepEqual(names(mergeSteps(ctx)), ["tree-status", "fetch", "ahead", "pr-merge", "status", "remove-worktree", "delete-branch", "remove-run-files"]);
 });
 
 test("mergeSteps adds run-file cleanup after the other cleanup when runDir is given", () => {
@@ -89,38 +93,57 @@ test("mergeSteps refuses missing or unsafe run folders", () => {
   }
 });
 
-test("mergeSteps commits leftovers, checks the repo folder, merges with an abort, and pushes the default branch", () => {
+test("mergeSteps checks the worktree and the branch, squash-merges the PR, and cleans up", () => {
   const s = Object.fromEntries(mergeSteps(ctx).map((x) => [x.name, x]));
   assert.deepEqual(s["tree-status"].args, ["-C", "/r-9-x", "status", "--porcelain"]);
-  assert.deepEqual(s["tree-status"].ifOutput.map((x) => x.args.slice(2, 3)[0]), ["add", "commit"]);
-  assert.match(s["tree-status"].ifOutput[1].args.join(" "), /#9/);
-  assert.ok(s["repo-clean"].dirty.includes("/r"));
-  assert.deepEqual(s.switch.args, ["-C", "/r", "switch", "main"]);
-  assert.deepEqual(s.merge.args, ["-C", "/r", "merge", "--no-edit", "workflow/9-x"]);
-  assert.deepEqual(s.merge.abort, { cmd: "git", args: ["-C", "/r", "merge", "--abort"] });
-  assert.deepEqual(s.push.args, ["-C", "/r", "push", "origin", "main"]);
-  assert.equal(s["close-issue"].cmd, "gh");
-  assert.deepEqual(s["close-issue"].args, ["issue", "close", "9"]);
-  assert.equal(s["close-issue"].cwd, "/r");
+  assert.ok(s["tree-status"].dirty.includes("/r-9-x"));
+  assert.deepEqual(s.fetch.args, ["-C", "/r-9-x", "fetch", "origin", "workflow/9-x"]);
+  assert.deepEqual(s.ahead.args, ["-C", "/r-9-x", "rev-list", "origin/workflow/9-x..workflow/9-x"]);
+  assert.ok(s.ahead.dirty.includes("origin/workflow/9-x"));
+  assert.equal(s["pr-merge"].cmd, "gh");
+  assert.deepEqual(s["pr-merge"].args, ["pr", "merge", "12", "--squash"]);
+  assert.equal(s["pr-merge"].cwd, "/r-9-x");
   assert.deepEqual(s["remove-worktree"].args, ["-C", "/r", "worktree", "remove", "/r-9-x"]);
-  assert.deepEqual(s["delete-branch"].args, ["-C", "/r", "branch", "-d", "workflow/9-x"]);
+  assert.deepEqual(s["delete-branch"].args, ["-C", "/r", "branch", "-D", "workflow/9-x"]);
 });
 
-test("mergeSteps leaves out the status and the issue when there is nothing to set or close", () => {
-  assert.ok(!names(mergeSteps({ ...ctx, status: undefined, number: null })).some((n) => n === "status" || n === "close-issue"));
+test("mergeSteps never merges, switches, pushes, closes the issue, or bypasses protection", () => {
+  const lines = mergeSteps(ctx).filter((x) => x.cmd).map((x) => `${x.cmd} ${x.args.join(" ")}`);
+  for (const l of lines) {
+    assert.ok(!/ (switch|checkout|push|issue)( |$)/.test(l), l);
+    assert.ok(!/--admin|--auto| -d( |$)|--delete-branch/.test(l), l);
+    assert.ok(!/ merge (--no-edit|workflow)/.test(l), l);
+  }
+  assert.ok(!lines.some((l) => l.startsWith("git -C /r ") && /fetch|status|rev-list/.test(l)), "no git in the repo folder while the worktree exists");
+});
+
+test("mergeSteps needs a pull request, unless it is already merged", () => {
+  assert.throws(() => mergeSteps({ ...ctx, number: undefined }), /pull request/);
+  assert.doesNotThrow(() => mergeSteps({ ...ctx, number: undefined, prMerged: true }));
+});
+
+test("mergeSteps leaves out the status when there is nothing to set, and warns when the option is missing", () => {
+  assert.ok(!names(mergeSteps({ ...ctx, status: undefined })).includes("status"));
   const warn = mergeSteps({ ...ctx, status: { warn: "no Done option" } }).find((x) => x.name === "status");
   assert.equal(warn.warn, "no Done option");
 });
 
-test("mergeSteps skips the worktree steps when the folder is already gone", () => {
-  const n = names(mergeSteps({ ...ctx, workDirExists: false }));
-  assert.deepEqual(n, ["repo-clean", "switch", "merge", "push", "status", "close-issue", "prune-worktrees", "delete-branch", "remove-run-files"]);
+test("mergeSteps skips the PR merge, fetch and ahead check when the PR is already merged", () => {
+  const steps = mergeSteps({ ...ctx, prMerged: true });
+  assert.deepEqual(names(steps), ["tree-status", "status", "remove-worktree", "delete-branch", "remove-run-files"]);
 });
 
-test("mergeSteps skips merge and branch delete when the branch is already gone", () => {
-  const n = names(mergeSteps({ ...ctx, workDirExists: false, branchExists: false }));
-  assert.deepEqual(n, ["repo-clean", "switch", "push", "status", "close-issue", "prune-worktrees", "remove-run-files"]);
-  assert.deepEqual(names(mergeSteps({ ...ctx, branchExists: false })), ["tree-status", ">commit-add", ">commit", "repo-clean", "switch", "push", "status", "close-issue", "remove-worktree", "remove-run-files"]);
+test("mergeSteps skips the worktree steps when the folder is already gone, and asks origin from the repo folder", () => {
+  const steps = mergeSteps({ ...ctx, workDirExists: false });
+  assert.deepEqual(names(steps), ["fetch", "ahead", "pr-merge", "status", "prune-worktrees", "delete-branch", "remove-run-files"]);
+  assert.deepEqual(steps[0].args.slice(0, 2), ["-C", "/r"]);
+  assert.equal(steps.find((x) => x.name === "pr-merge").cwd, "/r");
+});
+
+test("mergeSteps skips the branch steps when the branch is already gone", () => {
+  assert.deepEqual(names(mergeSteps({ ...ctx, branchExists: false })), ["tree-status", "pr-merge", "status", "remove-worktree", "remove-run-files"]);
+  assert.deepEqual(names(mergeSteps({ ...ctx, workDirExists: false, branchExists: false })), ["pr-merge", "status", "prune-worktrees", "remove-run-files"]);
+  assert.deepEqual(names(mergeSteps({ ...ctx, workDirExists: false, branchExists: false, prMerged: true })), ["status", "prune-worktrees", "remove-run-files"]);
 });
 
 test("worktreeArgs and branchArgs ask git whether the folder and the branch are still there", () => {
@@ -143,53 +166,58 @@ const fake = (answers = {}) => {
 test("runSteps runs every step in order and reports what it did", async () => {
   const f = fake();
   const r = await runSteps(mergeSteps(ctx), f.exec);
-  assert.equal(f.ran.length, 10);
-  assert.ok(f.ran[3].includes("merge --no-edit"));
-  assert.ok(r.done.includes("merged workflow/9-x into main"));
+  assert.equal(f.ran.length, 8);
+  assert.ok(f.ran[3].startsWith("gh pr merge 12 --squash"));
+  assert.ok(f.ran[4].startsWith("gh api graphql"));
+  assert.ok(f.ran[6].includes("branch -D workflow/9-x"));
+  assert.ok(r.done.includes("merged pull request #12"));
   assert.deepEqual(r.warnings, []);
 });
 
-test("runSteps commits the ticket worktree only when it has changes", async () => {
+test("runSteps stops on an uncommitted worktree and does nothing else", async () => {
   const f = fake({ "r-9-x status": { stdout: " M a.js\n" } });
-  await runSteps(mergeSteps(ctx), f.exec);
-  assert.ok(f.ran.some((l) => l.includes("r-9-x add -A")));
-  assert.ok(f.ran.some((l) => l.includes("r-9-x commit")));
-  const clean = fake();
-  await runSteps(mergeSteps(ctx), clean.exec);
-  assert.ok(!clean.ran.some((l) => l.includes(" commit ")));
+  await assert.rejects(runSteps(mergeSteps(ctx), f.exec), /\/r-9-x has uncommitted changes/);
+  assert.deepEqual(f.ran, ["git -C /r-9-x status --porcelain"]);
 });
 
-test("runSteps stops on a dirty repo folder and says nothing has happened to the branch", async () => {
-  const f = fake({ "-C /r status": { stdout: " M x\n" } });
-  await assert.rejects(runSteps(mergeSteps(ctx), f.exec), /\/r has uncommitted changes/);
-  assert.ok(!f.ran.some((l) => l.includes("switch")));
+test("runSteps stops when the branch is ahead of origin, before it merges anything", async () => {
+  const f = fake({ "rev-list": { stdout: "abc123\n" } });
+  await assert.rejects(runSteps(mergeSteps(ctx), f.exec), /has commits that origin\/workflow\/9-x doesn't/);
+  assert.ok(!f.ran.some((l) => l.startsWith("gh ")));
+  assert.ok(!f.ran.some((l) => l.includes("worktree remove") || l.includes("branch -D")));
 });
 
-test("a failed merge aborts and says which steps already happened", async () => {
-  const f = fake({ "merge --no-edit": { code: 1, stderr: "CONFLICT" } });
-  await assert.rejects(runSteps(mergeSteps(ctx), f.exec), (e) => /didn't merge into main/.test(e.message) && /CONFLICT/.test(e.message) && /switched \/r to main/.test(e.message));
-  assert.ok(f.ran.some((l) => l.includes("merge --abort")));
-  assert.ok(!f.ran.some((l) => l.includes("push")));
+test("runSteps stops when origin can't be reached for the check", async () => {
+  const f = fake({ "fetch origin": { code: 128, stderr: "Could not resolve host" } });
+  await assert.rejects(runSteps(mergeSteps(ctx), f.exec), /Couldn't fetch workflow\/9-x from origin\. Could not resolve host/);
+  assert.ok(!f.ran.some((l) => l.startsWith("gh ")));
 });
 
-test("a failed push says the merge already happened locally", async () => {
-  const f = fake({ "push origin main": { code: 1, stderr: "rejected" } });
-  await assert.rejects(runSteps(mergeSteps(ctx), f.exec), (e) => /rejected/.test(e.message) && /merged workflow\/9-x into main/.test(e.message));
-  assert.ok(!f.ran.some((l) => l.includes("issue close")));
+test("when GitHub refuses the merge its message is shown and nothing is cleaned up", async () => {
+  const f = fake({ "pr merge": { code: 1, stderr: "Pull request is not mergeable: the base branch policy prohibits the merge" } });
+  await assert.rejects(runSteps(mergeSteps(ctx), f.exec), (e) => /didn't merge pull request #12/.test(e.message) && /base branch policy prohibits/.test(e.message) && !/Already done/.test(e.message));
+  assert.ok(!f.ran.some((l) => l.includes("graphql") || l.includes("worktree") || l.includes("branch -D") || l.startsWith("rm ")));
 });
 
-test("a rejected push says what to do, and only a rejection gets the hint", async () => {
-  const f = fake({ "push origin main": { code: 1, stderr: "! [rejected] main -> main (fetch first)" } });
-  await assert.rejects(runSteps(mergeSteps(ctx), f.exec), (e) => /merge is done locally/.test(e.message) && /Update main from origin/.test(e.message) && /press Merge again/.test(e.message) && /Already done/.test(e.message));
-  const g = fake({ "push origin main": { code: 1, stderr: "Could not resolve host" } });
-  await assert.rejects(runSteps(mergeSteps(ctx), g.exec), (e) => /Could not resolve host/.test(e.message) && !/press Merge again/.test(e.message));
+test("an already merged PR is not merged again, and the cleanup runs", async () => {
+  const f = fake();
+  const r = await runSteps(mergeSteps({ ...ctx, prMerged: true }), f.exec);
+  assert.ok(!f.ran.some((l) => l.includes("pr merge") || l.includes("fetch")));
+  assert.ok(f.ran.some((l) => l.includes("worktree remove")) && f.ran.some((l) => l.includes("branch -D")) && f.ran.some((l) => l.startsWith("rm -rf")));
+  assert.ok(!r.done.some((d) => /merged pull request/.test(d)));
+});
+
+test("a failed status step says the PR is already merged", async () => {
+  const f = fake({ graphql: { code: 1, stderr: "boom" } });
+  await assert.rejects(runSteps(mergeSteps(ctx), f.exec), (e) => /Couldn't set the ticket's status/.test(e.message) && /merged pull request #12/.test(e.message));
+  assert.ok(!f.ran.some((l) => l.includes("worktree remove")));
 });
 
 test("a missing Done option warns once and carries on", async () => {
   const f = fake();
   const r = await runSteps(mergeSteps({ ...ctx, status: { warn: "no Done option" } }), f.exec);
   assert.deepEqual(r.warnings, ["no Done option"]);
-  assert.ok(f.ran.some((l) => l.includes("branch -d")));
+  assert.ok(f.ran.some((l) => l.includes("branch -D")));
 });
 
 test("prArgs and the URL", () => {
@@ -206,13 +234,15 @@ test("parsePr", () => {
   assert.equal(parsePr("no pull requests found"), null);
 });
 
-// The same steps against real git: an origin, a repo folder on main, and a ticket worktree with a leftover edit.
+// The same steps against real git: an origin, a repo folder on main, and a ticket worktree. gh is stubbed (it would reach GitHub).
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const real = async (cmd, args, opts) => {
+// Runs git and rm for real; gh answers from `gh` (default: success) and is recorded in `ghRan`.
+const realWith = (ghRan, gh = () => ({ code: 0, stdout: "", stderr: "" })) => async (cmd, args, opts) => {
+  if (cmd === "gh") { ghRan.push({ args, cwd: opts?.cwd }); return gh(args); }
   const r = spawnSync(cmd, args, { encoding: "utf8", cwd: opts?.cwd });
   return { code: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 };
@@ -229,63 +259,89 @@ function repoWithTicket() {
   writeFileSync(join(repoRoot, "a.txt"), "a\n"); git(repoRoot, "add", "."); git(repoRoot, "commit", "-qm", "first"); git(repoRoot, "push", "-q", "origin", "main");
   git(repoRoot, "worktree", "add", "-q", "-b", "workflow/9-x", workDir);
   writeFileSync(join(workDir, "b.txt"), "b\n"); git(workDir, "add", "."); git(workDir, "commit", "-qm", "work");
-  writeFileSync(join(workDir, "c.txt"), "left over\n");
-  return { git, origin, repoRoot, workDir, runDir, ctx: { repoRoot, workDir, branch: "workflow/9-x", base: "main", runDir } };
+  git(workDir, "push", "-q", "-u", "origin", "workflow/9-x"); // the automatic PR pushes the branch
+  return { git, origin, repoRoot, workDir, runDir, ctx: { repoRoot, workDir, branch: "workflow/9-x", number: 12, runDir } };
 }
+const head = (w) => w.git(w.repoRoot, "rev-parse", "HEAD").trim();
 
-test("merge steps, run for real: commit, merge, push, clean up", async () => {
+test("merge steps, run for real: check, merge through the PR, clean up, and leave the main checkout alone", async () => {
   const w = repoWithTicket();
-  const r = await runSteps(mergeSteps(w.ctx), real);
-  assert.equal(r.done.length, 7); // commit, switch, merge, push, remove worktree, delete branch, remove run files
-  assert.ok(existsSync(join(w.repoRoot, "c.txt")), "the leftover edit was committed and merged");
+  const before = head(w), ran = [];
+  const r = await runSteps(mergeSteps(w.ctx), realWith(ran));
+  assert.equal(r.done.length, 4); // merge the PR, remove worktree, delete branch, remove run files
+  assert.deepEqual(ran.map((x) => x.args.slice(0, 4)), [["pr", "merge", "12", "--squash"]]);
+  assert.equal(ran[0].cwd, w.workDir);
   assert.ok(!existsSync(w.workDir));
   assert.ok(!existsSync(w.runDir));
   assert.equal(w.git(w.repoRoot, "branch", "--list", "workflow/9-x").trim(), "");
-  assert.equal(w.git(w.origin, "log", "--format=%s", "main").split("\n").includes("work"), true);
-  assert.equal(w.git(w.repoRoot, "rev-parse", "HEAD").trim(), w.git(w.origin, "rev-parse", "main").trim());
+  assert.equal(head(w), before, "the main checkout's HEAD didn't move");
+  assert.equal(w.git(w.repoRoot, "branch", "--show-current").trim(), "main");
+  assert.ok(w.git(w.origin, "branch", "--list", "workflow/9-x").includes("workflow/9-x"), "the remote branch is left alone");
+  assert.equal(w.git(w.origin, "log", "--format=%s", "main").trim(), "first", "nothing was pushed to the default branch");
 });
 
-test("merge steps, run for real: a conflict aborts and leaves the repo clean", async () => {
+test("merge steps, run for real: uncommitted changes in the worktree stop everything", async () => {
   const w = repoWithTicket();
-  writeFileSync(join(w.repoRoot, "b.txt"), "other\n"); w.git(w.repoRoot, "add", "."); w.git(w.repoRoot, "commit", "-qm", "clash");
-  await assert.rejects(runSteps(mergeSteps(w.ctx), real), /didn't merge into main/);
-  assert.equal(w.git(w.repoRoot, "status", "--porcelain").trim(), "");
-  assert.ok(existsSync(w.workDir), "nothing was removed");
-  assert.ok(existsSync(w.runDir), "the run files remain when cleanup has not started");
+  writeFileSync(join(w.workDir, "c.txt"), "left over\n");
+  const ran = [];
+  await assert.rejects(runSteps(mergeSteps(w.ctx), realWith(ran)), /has uncommitted changes/);
+  assert.equal(ran.length, 0);
+  assert.ok(existsSync(w.workDir) && existsSync(w.runDir));
+  assert.equal(w.git(w.workDir, "log", "--format=%s").trim().split("\n")[0], "work", "nothing was committed for the person");
 });
 
-test("merge steps, run for real: a rejected push can be retried after updating from origin", async () => {
+test("merge steps, run for real: a branch ahead of origin stops everything", async () => {
   const w = repoWithTicket();
-  // origin moves on while the run is going
-  const other = join(w.repoRoot, "..", "other");
-  execFileSync("git", ["clone", "-q", w.origin, other]);
-  writeFileSync(join(other, "z.txt"), "z\n"); w.git(other, "add", "."); w.git(other, "commit", "-qm", "moved"); w.git(other, "push", "-q", "origin", "main");
-  await assert.rejects(runSteps(mergeSteps(w.ctx), real), (e) => /merge is done locally/.test(e.message));
-  assert.ok(existsSync(w.workDir), "cleanup has not happened yet");
-  assert.ok(existsSync(w.runDir), "the run files remain until cleanup");
-  w.git(w.repoRoot, "pull", "--no-rebase", "--no-edit", "origin", "main");
-  const r = await runSteps(mergeSteps({ ...w.ctx, workDirExists: true, branchExists: true }), real);
-  assert.ok(r.done.some((d) => /pushed main/.test(d)));
-  assert.ok(!existsSync(w.workDir));
-  assert.ok(!existsSync(w.runDir));
-  assert.equal(w.git(w.repoRoot, "rev-parse", "HEAD").trim(), w.git(w.origin, "rev-parse", "main").trim());
+  writeFileSync(join(w.workDir, "c.txt"), "unpushed\n"); w.git(w.workDir, "add", "."); w.git(w.workDir, "commit", "-qm", "unpushed");
+  const ran = [];
+  await assert.rejects(runSteps(mergeSteps(w.ctx), realWith(ran)), /has commits that origin\/workflow\/9-x doesn't/);
+  assert.equal(ran.length, 0);
+  assert.ok(existsSync(w.workDir) && existsSync(w.runDir));
+  assert.equal(w.git(w.repoRoot, "branch", "--list", "workflow/9-x").includes("workflow/9-x"), true);
+});
+
+test("merge steps, run for real: GitHub refusing leaves everything where it was", async () => {
+  const w = repoWithTicket();
+  const ran = [];
+  const refuse = () => ({ code: 1, stdout: "", stderr: "X Pull request #12 is not mergeable: required status checks are failing" });
+  await assert.rejects(runSteps(mergeSteps(w.ctx), realWith(ran, refuse)), /required status checks are failing/);
+  assert.ok(existsSync(w.workDir) && existsSync(w.runDir));
+  assert.equal(w.git(w.repoRoot, "branch", "--list", "workflow/9-x").includes("workflow/9-x"), true);
+});
+
+test("merge steps, run for real: an already merged PR (remote branch deleted) still cleans up", async () => {
+  const w = repoWithTicket();
+  w.git(w.origin, "branch", "-D", "workflow/9-x"); // GitHub deleted the branch on merge
+  const ran = [];
+  const r = await runSteps(mergeSteps({ ...w.ctx, prMerged: true }), realWith(ran));
+  assert.equal(ran.length, 0, "no gh pr merge");
+  assert.ok(r.done.length >= 3);
+  assert.ok(!existsSync(w.workDir) && !existsSync(w.runDir));
+  assert.equal(w.git(w.repoRoot, "branch", "--list", "workflow/9-x").trim(), "");
 });
 
 test("merge steps, run for real: a second Merge after everything is done is harmless", async () => {
   const w = repoWithTicket();
-  await runSteps(mergeSteps(w.ctx), real);
-  const again = await runSteps(mergeSteps({ ...w.ctx, workDirExists: false, branchExists: false }), real);
+  await runSteps(mergeSteps(w.ctx), realWith([]));
+  const again = await runSteps(mergeSteps({ ...w.ctx, prMerged: true, workDirExists: false, branchExists: false }), realWith([]));
   assert.deepEqual(again.warnings, []);
   assert.ok(!existsSync(w.runDir), "removing an already removed run folder is harmless");
-  assert.equal(w.git(w.repoRoot, "rev-parse", "HEAD").trim(), w.git(w.origin, "rev-parse", "main").trim());
 });
 
 test("merge steps, run for real: a retry with the worktree gone but the branch kept", async () => {
   const w = repoWithTicket();
-  w.git(w.workDir, "add", "."); w.git(w.workDir, "commit", "-qm", "left");
   w.git(w.repoRoot, "worktree", "remove", w.workDir);
-  const r = await runSteps(mergeSteps({ ...w.ctx, workDirExists: false }), real);
-  assert.ok(r.done.some((d) => /merged/.test(d)) && r.done.some((d) => /deleted/.test(d)));
+  const ran = [];
+  const r = await runSteps(mergeSteps({ ...w.ctx, workDirExists: false }), realWith(ran));
+  assert.equal(ran[0].cwd, w.repoRoot, "gh runs in the repo folder when the worktree is gone");
+  assert.ok(r.done.some((d) => /merged pull request/.test(d)) && r.done.some((d) => /deleted/.test(d)));
   assert.ok(!existsSync(w.runDir));
   assert.equal(w.git(w.repoRoot, "branch", "--list", "workflow/9-x").trim(), "");
+});
+
+test("merge steps, run for real: a retry after the PR merged but the cleanup stopped", async () => {
+  const w = repoWithTicket();
+  const r = await runSteps(mergeSteps({ ...w.ctx, prMerged: true }), realWith([]));
+  assert.ok(r.done.some((d) => /deleted/.test(d)));
+  assert.ok(!existsSync(w.workDir) && !existsSync(w.runDir));
 });
