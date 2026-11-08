@@ -28,6 +28,10 @@
 # saves absolute paths unless the config says preserve_tilde_on_save: true (the repo's does), and
 # keeps whatever it already had, so each real run also rewrites "$HOME/" to "~/" in
 # skillshare/config.yaml. Set SKILLSHARE_HOME to use a folder other than ~/.config/skillshare.
+# Only skillshare/skills/mine/ and skillshare/skills/.metadata.json are committed: every real run
+# also reinstalls each skill recorded in .metadata.json whose folder is missing (see below), at its
+# recorded commit. --dry-run prints "would reinstall: <name>"; --check never does it; a missing
+# skillshare CLI or a failed install (offline) is a warning, never an error.
 #
 # Nothing is deleted from the repo, and Herdr loses files only with --push --prune (see above). A file you remove on one side comes back
 # from the other on the next run, so delete it on both. A file this run overwrites is first saved at
@@ -36,7 +40,7 @@
 # version of this script is replaced with a real copy.
 #
 # Output: one line per file change, "<what>: <path>", then summary lines ("copied: ...",
-# "skillshare: ..."). A sync mod can read these.
+# "skillshare: ...", "reinstalled: <name>"). A sync mod can read these.
 # Set HERDR_APP_HOME to use a config folder other than ~/.config/herdr-app.
 # Herdr picks up changed layouts and mods without a restart; restart it if something looks stale.
 # Commit after a --pull or a two-way run: pulled files are edits to the repo.
@@ -257,6 +261,70 @@ done
 verb="linked"
 [ "$dry_run" -eq 0 ] || verb="would link"
 echo "skillshare: $verb $linked, $already already linked"
+
+# Skillshare: reinstall the skills recorded in skillshare/skills/.metadata.json whose folder is missing.
+# Installed skills are not committed (only skillshare/skills/mine/ is), so on a fresh clone they come
+# back from their source at the commit recorded for each: skillshare install <repo>/<subdir> --name
+# <entry> --branch <commit>. That rewrites the entry's source/branch/installed_at in .metadata.json, so the
+# file is put back as it was. Never fatal: a missing CLI or a failed install (offline) only warns.
+meta="$here/skillshare/skills/.metadata.json"
+if [ -f "$meta" ]; then
+  skills_dir="$ss/skills"
+  if [ "$dry_run" -eq 1 ] && ! { [ -L "$skills_dir" ] && [ "$(readlink "$skills_dir")" = "$here/skillshare/skills" ]; }; then
+    skills_dir="$here/skillshare/skills"   # not linked yet: a real run would link it first
+  fi
+
+  # reinstall_skill NAME REPO_URL SUBDIR COMMIT: install one recorded skill; prints why it failed.
+  reinstall_skill() {
+    src=${2%.git}
+    case "$src" in https://*) src=${src#https://} ;; http://*) src=${src#http://} ;; esac
+    if [ -n "$3" ]; then
+      case "$src" in git@*) src="$src//$3" ;; *) src="$src/$3" ;; esac
+    fi
+    set -- "$1" "$src" "$4"
+    set -- install "$2" --name "$1" ${3:+--branch "$3"} -y -g
+    # An alternative Skillshare folder (SKILLSHARE_HOME) is used through its linked config.
+    if [ -n "${SKILLSHARE_HOME:-}" ] && [ -z "${SKILLSHARE_CONFIG:-}" ] && [ -f "$ss/config.yaml" ]; then
+      SKILLSHARE_CONFIG="$ss/config.yaml" skillshare "$@" > "$tmp/reinstall.out" 2>&1 < /dev/null
+    else
+      skillshare "$@" > "$tmp/reinstall.out" 2>&1 < /dev/null
+    fi
+  }
+
+  # name|repo_url|subdir|commit for each recorded entry (entries are indented 4 spaces, their fields 6).
+  awk '
+    function field(line) { sub(/^[^:]*: *"/, "", line); sub(/",? *$/, "", line); return line }
+    function flush() { if (entry != "") printf "%s|%s|%s|%s\n", entry, url, dir, commit }
+    /^    "[^"]+": \{ *$/ { flush(); entry = $0; sub(/^    "/, "", entry); sub(/".*/, "", entry); url = ""; dir = ""; commit = ""; next }
+    entry != "" && /^      "repo_url": / { url = field($0) }
+    entry != "" && /^      "subdir": / { dir = field($0) }
+    entry != "" && /^      "commit": / { commit = field($0) }
+    END { flush() }
+  ' "$meta" > "$tmp/recorded"
+
+  restored=0
+  while IFS='|' read -r name url dir commit; do
+    [ -n "$name" ] || continue
+    [ ! -e "$skills_dir/$name" ] || continue
+    if [ -z "$url" ]; then
+      echo "skillshare: could not reinstall $name: no repo_url is recorded for it"
+    elif [ "$dry_run" -eq 1 ]; then
+      echo "would reinstall: $name"
+    elif ! command -v skillshare > /dev/null 2>&1; then
+      echo "skillshare: could not reinstall $name: the skillshare CLI was not found"
+    else
+      [ "$restored" -eq 1 ] || cp "$meta" "$tmp/metadata.json"
+      restored=1
+      if reinstall_skill "$name" "$url" "$dir" "$commit" && [ -e "$skills_dir/$name" ]; then
+        echo "reinstalled: $name"
+      else
+        reason=$(tr -d '\r' < "$tmp/reinstall.out" | grep -v '^[[:space:]]*$' | tail -n 1)
+        echo "skillshare: could not reinstall $name: ${reason:-skillshare install failed}"
+      fi
+    fi
+  done < "$tmp/recorded"
+  [ "$restored" -eq 0 ] || cat "$tmp/metadata.json" > "$meta"
+fi
 
 # Keep the config in ~/ form so the username never reaches a commit.
 cfg="$here/skillshare/config.yaml"

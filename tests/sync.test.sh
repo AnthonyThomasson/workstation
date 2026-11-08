@@ -3,7 +3,8 @@
 #
 # Every test works on a scratch copy of the repo, a scratch Herdr config folder and a scratch
 # Skillshare folder under $TMPDIR, and runs sync.sh with HOME pointed at a scratch folder too.
-# Nothing in ~/.config/herdr-app or ~/.config/skillshare is ever read or written.
+# Nothing in ~/.config/herdr-app or ~/.config/skillshare is ever read or written, and the
+# skillshare CLI is a stub on PATH (it only records its arguments), so no test touches the network.
 
 set -u
 
@@ -11,6 +12,33 @@ real_repo=$(cd "$(dirname "$0")/.." && pwd)
 base=$(mktemp -d "${TMPDIR:-/tmp}/sync-test.XXXXXX")
 trap 'rm -rf "$base"' EXIT
 base=$(cd "$base" && pwd)
+
+# A stub skillshare on PATH for every run: it records its arguments and environment in $STUB_LOG, fails
+# for a --name listed in $STUB_FAIL ("all" fails every one), and otherwise creates the skill folder in
+# $STUB_SKILLS and rewrites .metadata.json there (as the real one does), so the tests can see the
+# script put the recorded file back.
+stub_bin="$base/bin"
+mkdir -p "$stub_bin"
+cat > "$stub_bin/skillshare" <<'STUB'
+#!/bin/sh
+echo "args: $*" >> "$STUB_LOG"
+echo "config: ${SKILLSHARE_CONFIG:-}" >> "$STUB_LOG"
+name=""; prev=""
+for a in "$@"; do
+  [ "$prev" = "--name" ] && name=$a
+  prev=$a
+done
+case ",${STUB_FAIL:-}," in
+  *",$name,"*|*",all,"*) echo "network unreachable" >&2; exit 1 ;;
+esac
+mkdir -p "$STUB_SKILLS/$name"
+echo "# $name" > "$STUB_SKILLS/$name/SKILL.md"
+echo '{"rewritten": true}' > "$STUB_SKILLS/.metadata.json"
+STUB
+chmod +x "$stub_bin/skillshare"
+PATH="$stub_bin:$PATH"; export PATH
+# A PATH with neither the stub nor any real skillshare, for the CLI-missing test.
+bare_path="/usr/bin:/bin"
 
 # A macOS home path, built so the literal is not in this file (the repo must hold no such path).
 U="/Use"rs
@@ -58,6 +86,48 @@ new_world() {
   cp "$real_repo/scripts/sync/sync.sh" "$R/scripts/sync/sync.sh"
   cp -R "$real_repo/mods" "$real_repo/layouts" "$real_repo/personal" "$real_repo/skillshare" "$R/"
   find "$R" -name .DS_Store -delete
+  # Installed skills are not in the repo: only mine/ and the file that records them.
+  find "$R/skillshare/skills" -mindepth 1 -maxdepth 1 ! -name mine ! -name .metadata.json -exec rm -rf {} +
+  write_metadata "$R/skillshare/skills/.metadata.json"
+  cp "$R/skillshare/skills/.metadata.json" "$T/metadata.orig"
+  STUB_LOG="$T/skillshare.log"; STUB_SKILLS="$R/skillshare/skills"; STUB_FAIL=""
+  export STUB_LOG STUB_SKILLS STUB_FAIL
+}
+
+# write_metadata FILE: two recorded skills, shaped like Skillshare's own file (herdr pinned to a tag,
+# skillshare to nothing but its commit).
+write_metadata() {
+  cat > "$1" <<'JSON'
+{
+  "version": 1,
+  "entries": {
+    "herdr": {
+      "source": "https://github.com/herdrdev/herdr/blob/v0.9.5/skills/herdr/SKILL.md",
+      "type": "github-subdir",
+      "branch": "v0.9.5",
+      "repo_url": "https://github.com/herdrdev/herdr.git",
+      "subdir": "skills/herdr",
+      "version": "2ecf19a",
+      "commit": "2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01",
+      "file_hashes": {
+        "SKILL.md": "sha256:fbd9"
+      }
+    },
+    "skillshare": {
+      "source": "github.com/runkids/skillshare/skills/skillshare",
+      "type": "github-subdir",
+      "repo_url": "https://github.com/runkids/skillshare.git",
+      "subdir": "skills/skillshare",
+      "version": "c19ff80",
+      "commit": "c19ff80611c20e9b69392ad4e4aeaf491d5036b7",
+      "file_hashes": {
+        "SKILL.md": "sha256:ec60",
+        "references/install.md": "sha256:5624"
+      }
+    }
+  }
+}
+JSON
 }
 
 # run_sync ARGS...: run the script from the scratch repo; sets $OUT (stdout+stderr) and $RC.
@@ -353,6 +423,128 @@ OUT=$(cd "$T" && HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh "$
 assert_status 0 "$RC"
 assert_has "to Herdr (new): layouts/Tony.json"
 assert_eq "" "$(ls -A "$H")" "dry run from another directory left Herdr empty"
+
+# 13. Recorded skills whose folder is missing are reinstalled from .metadata.json at their recorded commits.
+herdr_args="args: install github.com/herdrdev/herdr/skills/herdr --name herdr --branch 2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01 -y -g"
+shield_args="args: install github.com/runkids/skillshare/skills/skillshare --name skillshare --branch c19ff80611c20e9b69392ad4e4aeaf491d5036b7 -y -g"
+assert_no_reinstall() {
+  n=$(printf '%s\n' "$OUT" | grep -cE '^(reinstalled:|would reinstall:|skillshare: could not)' || true)
+  assert_eq 0 "$n" "lines about reinstalling"
+}
+log_count() { if [ -f "$STUB_LOG" ]; then grep -c '^args: ' "$STUB_LOG"; else echo 0; fi; }
+
+new_world "reinstall-dry-run"
+run_sync --dry-run
+assert_status 0 "$RC"
+assert_has "would reinstall: herdr"
+assert_has "would reinstall: skillshare"
+assert_lacks "could not reinstall"
+assert_absent "$STUB_LOG"
+assert_absent "$R/skillshare/skills/herdr"
+assert_same_file "$T/metadata.orig" "$R/skillshare/skills/.metadata.json"
+
+new_world "reinstall-two-way"
+run_sync
+assert_status 0 "$RC"
+assert_has "reinstalled: herdr"
+assert_has "reinstalled: skillshare"
+assert_eq 2 "$(log_count)" "one skillshare call per missing skill"
+grep -qxF -- "$herdr_args" "$STUB_LOG" && pass || fail "herdr was not installed at its commit: $(cat "$STUB_LOG")"
+grep -qxF -- "$shield_args" "$STUB_LOG" && pass || fail "skillshare was not installed at its commit: $(cat "$STUB_LOG")"
+grep -qxF -- "config: $S/config.yaml" "$STUB_LOG" && pass || fail "the stub did not get the linked config: $(cat "$STUB_LOG")"
+assert_exists "$S/skills/herdr/SKILL.md"
+assert_exists "$S/skills/skillshare/SKILL.md"
+assert_same_file "$T/metadata.orig" "$R/skillshare/skills/.metadata.json"
+# the next run has nothing left to reinstall
+rm -f "$STUB_LOG"
+run_sync
+assert_status 0 "$RC"
+assert_no_reinstall
+assert_absent "$STUB_LOG"
+
+for mode in --push --pull; do
+  new_world "reinstall$mode"
+  run_sync $mode
+  assert_status 0 "$RC"
+  assert_has "reinstalled: herdr"
+  assert_has "reinstalled: skillshare"
+done
+new_world "reinstall--push--prune"
+run_sync --push --prune
+assert_status 0 "$RC"
+assert_has "reinstalled: herdr"
+
+# only the missing folder is reinstalled
+new_world "reinstall-only-missing"
+mkdir -p "$R/skillshare/skills/herdr"
+echo "# herdr" > "$R/skillshare/skills/herdr/SKILL.md"
+run_sync
+assert_status 0 "$RC"
+assert_lacks "reinstalled: herdr"
+assert_has "reinstalled: skillshare"
+assert_eq 1 "$(log_count)" "one skillshare call"
+
+# --check never reinstalls
+new_world "reinstall-check"
+run_sync --check
+assert_status 0 "$RC"
+assert_no_reinstall
+assert_absent "$STUB_LOG"
+
+# a failed reinstall (offline) warns, the rest of the sync finishes, and the exit is still 0
+new_world "reinstall-fails"
+STUB_FAIL=herdr; export STUB_FAIL
+run_sync
+assert_status 0 "$RC"
+assert_has "skillshare: could not reinstall herdr: network unreachable"
+assert_has "reinstalled: skillshare"
+assert_has "copied: "
+assert_has "skillshare: linked 3, 0 already linked"
+assert_absent "$R/skillshare/skills/herdr"
+assert_exists "$H/layouts/Tony.json"
+assert_same_file "$T/metadata.orig" "$R/skillshare/skills/.metadata.json"
+STUB_FAIL=all; export STUB_FAIL
+rm -rf "$R/skillshare/skills/skillshare"
+run_sync --pull
+assert_status 0 "$RC"
+assert_has "could not reinstall herdr: network unreachable"
+assert_has "could not reinstall skillshare: network unreachable"
+
+# no skillshare CLI at all: a warning per skill, exit 0
+new_world "reinstall-no-cli"
+OUT=$(cd "$R" && PATH="$bare_path" HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./scripts/sync/sync.sh 2>&1); RC=$?
+assert_status 0 "$RC"
+assert_has "skillshare: could not reinstall herdr: the skillshare CLI was not found"
+assert_has "skillshare: could not reinstall skillshare: the skillshare CLI was not found"
+assert_has "copied: "
+assert_absent "$STUB_LOG"
+# a dry run does not need the CLI
+OUT=$(cd "$R" && PATH="$bare_path" HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./scripts/sync/sync.sh --dry-run 2>&1); RC=$?
+assert_status 0 "$RC"
+assert_has "would reinstall: herdr"
+
+# an entry with no repo to reinstall from is reported, not guessed at; no recorded skills is silent
+new_world "reinstall-no-source"
+cat > "$R/skillshare/skills/.metadata.json" <<'JSON'
+{
+  "version": 1,
+  "entries": {
+    "local-only": {
+      "source": "/somewhere/local-only",
+      "type": "local",
+      "version": "abc"
+    }
+  }
+}
+JSON
+run_sync
+assert_status 0 "$RC"
+assert_has "skillshare: could not reinstall local-only: no repo_url is recorded for it"
+assert_absent "$STUB_LOG"
+rm "$R/skillshare/skills/.metadata.json"
+run_sync
+assert_status 0 "$RC"
+assert_no_reinstall
 
 echo
 echo "$passed passed, $failed failed"

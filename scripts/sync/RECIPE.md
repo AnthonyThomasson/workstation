@@ -26,7 +26,7 @@ One line per file change, `<what>: <path>` with `<path>` relative to the Herdr c
 - `to Herdr: <path>` and `to Herdr (new): <path>`: copied (or would be) from the repo to Herdr.
 - `removed from Herdr: <path>`: moved to the backup folder by `--prune`.
 
-Then summary lines: `copied: <n> to Herdr, <m> to the repo; <k> already the same` (`would copy` with `--dry-run`, plus `; <p> removed from Herdr` when pruning), `replaced Herdr files were saved to <folder>` and `replaced repo files were saved to <folder>` when backups were made, and `skillshare: linked <n>, <m> already linked`. A `--dry-run` with no direction flag must be a faithful preview of a real two-way run.
+Then summary lines: `copied: <n> to Herdr, <m> to the repo; <k> already the same` (`would copy` with `--dry-run`, plus `; <p> removed from Herdr` when pruning), `replaced Herdr files were saved to <folder>` and `replaced repo files were saved to <folder>` when backups were made, `skillshare: linked <n>, <m> already linked`, and, for recorded skills (see "Reinstall recorded skills"), `reinstalled: <name>` / `would reinstall: <name>` / `skillshare: could not reinstall <name>: <reason>`. A `--dry-run` with no direction flag must be a faithful preview of a real two-way run.
 
 ## What goes where (repo to the Herdr config folder)
 
@@ -46,6 +46,19 @@ A file a run overwrites (or prunes) is first saved at the same relative path in 
 ## Skillshare
 
 `~/.config/skillshare/{config.yaml,agents,skills}` become symlinks to `skillshare/<name>` in this repo. A real file or folder in the way is moved to `<name>.backup-<timestamp>` first; a link that is already right is left alone (`link ok: <path>`); a link elsewhere is repointed. Skip a name the repo does not have. After a real run, rewrite `$HOME/` to `~/` in `skillshare/config.yaml` so the username never reaches a commit.
+
+## Reinstall recorded skills
+
+Only `skillshare/skills/mine/` and `skillshare/skills/.metadata.json` are committed; every other skill under `skillshare/skills/` is ignored by git and recorded in `.metadata.json` (`repo_url`, `subdir`, `commit` per entry). After linking, every run (two-way, `--push`, `--pull`, with or without `--prune`) reinstalls each recorded skill whose folder is missing under `${SKILLSHARE_HOME:-$HOME/.config/skillshare}/skills`, so a fresh clone gets them back:
+
+- Per entry, parse `.metadata.json` with `awk` (no `jq` or `node`): entries are indented 4 spaces and their fields 6. Run `skillshare install <source> --name <entry> --branch <commit> -y -g`, where `<source>` is `repo_url` without `https://` and `.git`, plus `/<subdir>` (for an `ssh` `git@` URL, `//<subdir>`). `--branch <commit>` pins the recorded commit; `skillshare install` with no argument does not, because it installs a skill that has no recorded branch from its latest commit.
+- If `SKILLSHARE_HOME` is set and `SKILLSHARE_CONFIG` is not, run Skillshare with `SKILLSHARE_CONFIG=$SKILLSHARE_HOME/config.yaml`, so it uses the linked config.
+- Reinstalling rewrites the entry's `source`, `branch` and `installed_at` in `.metadata.json`. Copy the file first and put it back afterwards, so a restore leaves the committed record untouched.
+- Print `reinstalled: <name>` after a successful install (the folder must exist afterwards).
+- `--dry-run` only prints `would reinstall: <name>`; it does not need the CLI. When the skills link would still be created, look in `skillshare/skills` in the repo instead of the Skillshare folder.
+- `--check` never reinstalls.
+- Never fatal. An entry without `repo_url`, a missing `skillshare` CLI, or a failed install (offline) prints `skillshare: could not reinstall <name>: <reason>` (the last line `skillshare` printed, or `no repo_url is recorded for it`, or `the skillshare CLI was not found`); the rest of the sync finishes and the exit status stays 0.
+- Skip it when `skillshare/skills/.metadata.json` does not exist. It does not run `skillshare sync`.
 
 ## Safety
 
