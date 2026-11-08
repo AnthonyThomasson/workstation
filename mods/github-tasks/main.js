@@ -69,7 +69,12 @@ export default class GitHubTasks extends View {
     this.role = blockProps()?.role ?? "sidebar";
     if (this.role === "editor") { this.editor = new TaskEditor(blockProps(), cx); return; }
     if (this.role === "workflow-editor") { this.workflowEditor = new WorkflowEditor(blockProps(), cx); return; }
-    if (this.role === "run") { this.runPage = new RunPage(blockProps()); return; }
+    if (this.role === "run") {
+      this.runPage = new RunPage(blockProps());
+      this.runPage.refresh(cx);
+      cx.timer.every(3000, (cx) => { this.runPage.refresh(cx); cx.notify(); }); // agents starting and ending, and their status
+      return;
+    }
     if (this.role === "prompt") { this.promptPage = new PromptPage(blockProps()); return; }
     if (this.role === "settings") {
       this.settingsKey = null;

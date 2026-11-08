@@ -18,6 +18,7 @@ export function promptForRole(role, { repo = "", project = null, options = [] } 
 
 // What a run fills in, shown as it is in the built-in prompts' own words.
 const SAMPLE = {
+  id: "0-mw8f0o2j",
   workflow: {
     name: "<workflow name>",
     orchestrator: { planning: "<the workflow's planning prompt goes here>", retro: "<the workflow's retro prompt goes here>", prompt: "<the workflow's orchestrator prompt goes here>" },
