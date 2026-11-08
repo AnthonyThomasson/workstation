@@ -32,6 +32,24 @@ ignored skillshare/skills/synced/anything/SKILL.md || fail "skillshare/skills/sy
 ignored skillshare/skills/mine/x/SKILL.md && fail "skillshare/skills/mine/x/SKILL.md should not be ignored"
 ignored skillshare/skills/.metadata.json && fail "skillshare/skills/.metadata.json should not be ignored"
 
+# 3. Installing a new skill leaves git status clean apart from .metadata.json. Simulate the install in a
+# scratch clone (what skillshare 0.29.1 does: a new top-level folder plus a rewritten .metadata.json),
+# including the dotfiles and nested folders a skill can carry.
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+git clone -q "$repo" "$scratch/repo" || fail "could not clone the repo into a scratch folder"
+if [ -d "$scratch/repo/skillshare/skills" ]; then
+  skills="$scratch/repo/skillshare/skills"
+  mkdir -p "$skills/some-new/references" "$skills/some-new/.hidden"
+  printf 'x\n' > "$skills/some-new/SKILL.md"
+  printf 'x\n' > "$skills/some-new/references/notes.md"
+  printf 'x\n' > "$skills/some-new/.hidden/file"
+  printf 'x\n' > "$skills/some-new/.gitignore"
+  printf '\n' >> "$skills/.metadata.json"
+  status=$(git -C "$scratch/repo" status --porcelain)
+  [ "$status" = " M skillshare/skills/.metadata.json" ] || fail "a new skill should change only .metadata.json, git status shows: $status"
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '%s skills tracking check(s) failed\n' "$failures"
   exit 1

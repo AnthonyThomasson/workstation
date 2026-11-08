@@ -62,13 +62,14 @@ To use the **Sync** mod afterward, open its tab-bar button, expand **Settings**,
 
 **Restore on a fresh clone.** Installed skills (`herdr`, `skillshare`) are not in the clone. `./scripts/sync/sync.sh` reinstalls every recorded skill whose folder is missing, on each real run (two-way, `--push`, `--pull`), at the commit recorded in `.metadata.json`. `--dry-run` prints `would reinstall: <name>`; `--check` never does it. Without the `skillshare` CLI, or offline, it prints `skillshare: could not reinstall <name>: <reason>`, finishes the sync and exits 0. It leaves `.metadata.json` as committed; run `skillshare sync` afterwards to link the skills into your tools.
 
-To do the same by hand, once per entry in `skillshare/skills/.metadata.json` (its `repo_url`, `subdir` and `commit`):
+To do the same by hand, once per entry in `skillshare/skills/.metadata.json`:
 
 ```sh
-skillshare install github.com/herdrdev/herdr/skills/herdr --name herdr --branch 2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01 -y -g
-skillshare install github.com/runkids/skillshare/skills/skillshare --name skillshare --branch c19ff80611c20e9b69392ad4e4aeaf491d5036b7 -y -g
+skillshare install <repo_url-without-https-and-.git>/<subdir> --name <name> --branch <commit> -y -g
 git checkout skillshare/skills/.metadata.json   # the installs rewrite each entry's source and branch fields
 ```
+
+Fill the placeholders from the entry: `<repo_url-without-https-and-.git>` is its `repo_url` minus the leading `https://` and the trailing `.git`, `<subdir>` is its `subdir`, `<name>` is the entry's key, and `<commit>` is its `commit`. For the entry `herdr` (`repo_url` `https://github.com/herdrdev/herdr.git`, `subdir` `skills/herdr`) that reads `skillshare install github.com/herdrdev/herdr/skills/herdr --name herdr --branch <its commit> -y -g`.
 
 A plain `skillshare install -g` also restores every recorded skill, but one with no recorded branch (`skillshare`) comes back at its latest commit, not the recorded one.
 
