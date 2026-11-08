@@ -186,6 +186,29 @@ test("a worker merges by rebasing, re-testing, fast-forwarding and cleaning up, 
   assert.ok(!text.includes("Other workers may share it"));
 });
 
+test("a worker removes its own folder and reports in one command run from the ticket worktree", () => {
+  const text = workerPrompt({ workflow: workflow(), ...place });
+  assert.ok(text.includes('cd /src/app-12-fix-the-login && git worktree remove <your worktree> && git branch -d workflow/12-fix-the-login--<job> && hc send <orchestrator> "<report>"'));
+  assert.match(text, /Don't remove your worktree in a separate step before reporting/);
+  assert.ok(!text.includes("5. `hc send` the orchestrator that the merge is done"));
+});
+
+test("the orchestrator names reviewers uniquely, apart from every job", () => {
+  const text = orchestratorPrompt({ workflow: workflow(), ...place });
+  assert.match(text, /unique in this run and differ from every job name/);
+  assert.ok(text.includes("`<job>-review`"));
+});
+
+test("a reviewer is only told about git commands its allowlist permits, and not to check out other commits", () => {
+  const text = reviewerPrompt({ workflow: workflow(), ...place });
+  const argv = agentArgv("reviewer", { agent: "claude", tests: "" }, ["claude"], "/run");
+  const named = [...text.matchAll(/`(git [a-z-]+)[ `]/g)].map((m) => m[1]);
+  assert.ok(named.length >= 9);
+  for (const cmd of named) assert.ok(argv.includes(`Bash(${cmd}:*)`), cmd);
+  assert.match(text, /checking out another commit/);
+  assert.ok(text.includes("git show <commit>:<path>"));
+});
+
 test("shQuote survives quotes", () => {
   const out = execFileSync("sh", ["-c", `printf %s ${shQuote(`it's "x" $HOME`)}`]).toString();
   assert.equal(out, `it's "x" $HOME`);
