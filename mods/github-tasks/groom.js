@@ -1,17 +1,10 @@
 // Start Grooming and Set Up Project: each opens an agent in a tab of its own, in the repo's folder, told what
 // to do (the prompts are in model.js).
-import { exec, knownAgents, spaces } from "herdr";
+import { knownAgents, spaces } from "herdr";
 import { groomPrompt, groomArgv, setupPrompt } from "./model.js";
+import { app } from "./ui.js";
 
 export const installedAgents = () => knownAgents().then((list) => list.filter((a) => a.installed), () => []);
-
-async function app(name, args) {
-  const r = await exec("herdr-app", ["do", name, ...Object.entries(args).flatMap(([k, v]) => [`--${k}`, typeof v === "string" ? v : JSON.stringify(v)])]);
-  let made = {};
-  try { made = JSON.parse(r.stdout || "{}"); } catch { /* nothing readable */ }
-  if (r.code !== 0 || made.error) throw new Error(made.error || r.stderr.trim() || `${name} failed`);
-  return made;
-}
 
 // The agent in a tab of its own, in the folder the panel looks at, with the task as its first message.
 // agent: an entry of knownAgents(). groomer: { model, effort } from the settings page. Throws with a message for the person.

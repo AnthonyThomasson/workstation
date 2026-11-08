@@ -1,6 +1,6 @@
 // The git side of getting a ticket's worktree ready. `git` is (cwd, ...args) => Promise<{ code, stdout, stderr }>,
 // so this runs in the mod (herdr's exec) and in the tests (real git) alike.
-const out = (r) => (r.stderr || r.stdout).trim();
+import { out } from "./run.js";
 
 // The repo's main checkout, never a linked worktree: the first entry of `git worktree list` is always the main one,
 // wherever Start was launched from. Falls back to the folder git says it is in.

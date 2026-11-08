@@ -3,11 +3,11 @@
 // orchestrator runs the ticket itself (run.js says how).
 import { exec, hc, home, knownAgents, notify, panes, readTextFile, run, spaces, terminals, writeTextFile } from "herdr";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
-import { agentArgv, branchName, FOLDER_LABEL, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
+import { app } from "./ui.js";
+import { ROLES } from "./workflow-model.js";
+import { out, agentArgv, branchName, FOLDER_LABEL, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
 
-const ROLES = ["orchestrator", "worker", "reviewer"];
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
-const out = (r) => (r.stderr || r.stdout).trim();
 
 // The live run's orchestrator for a ticket, or null. Start becomes View while one is going. Runs on different
 // tickets can go at once, even in one repo: each has its own worktree.
@@ -36,15 +36,6 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
     await app("pane.split", { pane, direction: "right", mod: "github-tasks", props: reopenProps(saved, partial, running.address) });
     run("pane.focus", { pane });
   } catch { /* the tab is showing; only the list of agents is missing */ }
-}
-
-// One app command, waited for, with what it made ({ tab, terminal, pane, ... }).
-async function app(name, args) {
-  const r = await exec("herdr-app", ["do", name, ...Object.entries(args).flatMap(([k, v]) => [`--${k}`, typeof v === "string" ? v : JSON.stringify(v)])]);
-  let made = {};
-  try { made = JSON.parse(r.stdout || "{}"); } catch { /* it said nothing we can read */ }
-  if (r.code !== 0 || made.error) throw new Error(made.error || r.stderr.trim() || `${name} failed`);
-  return made;
 }
 
 // Each role's agent as a command. An agent that isn't on this computer stops the run before anything changes.

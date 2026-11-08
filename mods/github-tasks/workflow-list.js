@@ -5,7 +5,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, shared, setShared, theme } from "herdr";
-import { S, icon, stop, note, iconButton, segmented } from "./ui.js";
+import { S, icon, stop, note, iconButton, segmented, later } from "./ui.js";
 import { SCOPE_LABELS } from "./workflow-model.js";
 import { WORKFLOWS_CHANGED, store, repoRootOf } from "./workflow-env.js";
 
@@ -13,9 +13,6 @@ import { WORKFLOWS_CHANGED, store, repoRootOf } from "./workflow-env.js";
 export const TABS = [["all", "All"], ["repo", "Project"], ["global", "Global"]];
 const POLL = 5000; // a listing of a local folder costs nothing; this picks up files that arrive by git pull
 const baseName = (path) => String(path ?? "").split("/").filter(Boolean).pop() ?? "";
-
-// Work started from render: cx.notify() throws while a view renders, so it starts after.
-const later = (cx, fn) => cx.spawn(async (cx) => { await cx.sleep(0); return fn(cx); });
 
 export class WorkflowList {
   // place: () => { cwd, on } | null, where the selected space is. shown: () => whether the settings are on screen.

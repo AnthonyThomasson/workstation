@@ -1,4 +1,5 @@
-// What the sidebar, the settings and the editors and pages all draw with: text sizes, icons, buttons, and the gh runner.
+// What the sidebar, the settings and the editors and pages all draw with: text sizes, icons, buttons, the gh and
+// herdr-app runners, and work started from render.
 import { div, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { exec, settings } from "herdr";
@@ -43,3 +44,18 @@ export function action(id, label, t, onClick, quiet = false, disabled = false) {
 // gh, as the loaders want it: a failure to start is an answer with a code, not a throw.
 export const gh = (args, where) => exec("gh", args, where)
   .catch((e) => ({ code: 127, stdout: "", stderr: String(e?.message ?? e) }));
+
+// The dim layer behind a picker: the theme's background, half see-through where it is a hex color.
+export const scrim = (t) => (/^#[0-9a-f]{6}$/i.test(t.background ?? "") ? `${t.background}b3` : t.background);
+
+// Work started from render: cx.notify() throws while a view renders, so it starts after.
+export const later = (cx, fn) => cx.spawn(async (cx) => { await cx.sleep(0); return fn(cx); });
+
+// One herdr-app command, waited for, with what it made ({ tab, terminal, pane, ... }). Throws with its message.
+export async function app(name, args) {
+  const r = await exec("herdr-app", ["do", name, ...Object.entries(args).flatMap(([k, v]) => [`--${k}`, typeof v === "string" ? v : JSON.stringify(v)])]);
+  let made = {};
+  try { made = JSON.parse(r.stdout || "{}"); } catch { /* nothing readable */ }
+  if (r.code !== 0 || made.error) throw new Error(made.error || r.stderr.trim() || `${name} failed`);
+  return made;
+}

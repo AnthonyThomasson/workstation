@@ -30,6 +30,8 @@ export const ticketKey = (repo, ticket) => `${repo}#${ticket?.number ?? ticket?.
 export const ticketName = (ticket) => (ticket?.number ? `#${ticket.number} ${ticket.title}` : String(ticket?.title ?? "Ticket"));
 
 // Quoted for sh, whatever is in it.
+// What a command said: its error text, else its output, trimmed.
+export const out = (r) => (r.stderr || r.stdout || "").trim();
 export const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 // What each role may do without asking, in Claude's terms. Bare `hc run` is left out: it would run anything.

@@ -239,7 +239,7 @@ test("loadAll reads every workflow whole, with its scope, by name, and reports t
   assert.equal(items[1].worker.permissions, "ask");
   assert.deepEqual(items[0].trigger.labels, ["feature"]);
   assert.equal(errors.length, 1);
-  assert.match(errors[0], /^broken: not a workflow object/);
+  assert.match(errors[0], /^broken\.yaml: not a workflow object/);
 });
 
 test("loadAll without a repo reads only the global folder", async () => {

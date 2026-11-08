@@ -2,6 +2,7 @@
 // reviewer each run (their prompt, agent, model and effort). Pure: no Herdr imports, so node --test runs it.
 
 import { parse as parseYaml, stringify as stringifyYaml } from "./yaml.js";
+import { EFFORTS } from "./model.js";
 
 export const VERSION = 1;
 export const ROLES = ["orchestrator", "worker", "reviewer"];
@@ -42,7 +43,6 @@ export const ORCHESTRATOR_PROMPTS = [
 ];
 // Only the orchestrator has extra prompts; worker and reviewer permissions are settings, not prompts.
 export const ROLE_PROMPTS = { orchestrator: ORCHESTRATOR_PROMPTS, worker: [], reviewer: [] };
-export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 export const PERMISSIONS = ["auto", "ask"];
 export const PERMISSION_LABELS = { auto: "Auto", ask: "Ask" };
 export const PERMISSION_HINTS = {

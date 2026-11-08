@@ -5,7 +5,8 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { shared, setShared, theme } from "herdr";
-import { normalizeGroomer, spelled, groomPrompt, STATUSES, GROOMER_KEY, EFFORTS, CLAUDE_MODELS } from "./model.js";
+import { normalizeGroomer, spelled, groomPrompt, STATUSES, GROOMER_KEY, EFFORTS } from "./model.js";
+import { CLAUDE_MODELS } from "./models.js";
 import { installedAgents } from "./groom.js";
 import { loadStatusField } from "./loader.js";
 import { S, stop, note, iconButton, gh } from "./ui.js";

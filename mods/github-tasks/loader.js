@@ -144,7 +144,7 @@ const DRAFT_MUTATION = `mutation($id: ID!, $title: String!, $body: String!) {
   updateProjectV2DraftIssue(input: { draftIssueId: $id, title: $title, body: $body }) { draftIssue { id } }
 }`;
 
-const STATUS_MUTATION = `mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) {
+export const STATUS_MUTATION = `mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) {
   updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: { singleSelectOptionId: $option } }) { projectV2Item { id } }
 }`;
 
@@ -191,14 +191,6 @@ export async function loadStatusField(gh, projectId, where) {
   const data = await graphql(gh, STATUS_QUERY, { id: projectId }, where);
   const field = data.node?.field;
   return field?.id ? { id: field.id, options: field.options ?? [] } : null;
-}
-
-// The repo's labels, to choose from: [{ name, color }].
-export async function loadRepoLabels(gh, repo, where) {
-  const r = await gh(["label", "list", "-R", repo, "--json", "name,color", "-L", "200"], where);
-  const labels = r.code === 0 ? parse(r.stdout) : null;
-  if (!Array.isArray(labels)) throw new GitHubError(r.stderr || r.stdout);
-  return labels;
 }
 
 // Sends what differs between before and after, and nothing else: the title, body and labels of an

@@ -16,6 +16,14 @@ test("loadLabels asks for the repo's labels and returns them by name", async () 
   assert.equal(labels[2].color, ""); // a missing color does not break the list
 });
 
+test("loadLabels asks gh from where it is given and fails with a GitHubError", async () => {
+  let seen;
+  const gh = async (args, where) => { seen = { args, where }; return ok([{ name: "bug", color: "d73a4a" }]); };
+  assert.deepEqual(await loadLabels(gh, "me/app", { cwd: "/x", on: "box" }), [{ name: "bug", color: "d73a4a" }]);
+  assert.deepEqual(seen.where, { cwd: "/x", on: "box" });
+  await assert.rejects(loadLabels(async () => ({ code: 1, stdout: "", stderr: "HTTP 404" }), "me/app"), GitHubError);
+});
+
 test("loadLabels drops junk entries and fails on what is not a list", async () => {
   assert.deepEqual((await loadLabels(async () => ok([null, { color: "x" }, { name: "ok" }]), "a/b", {})).map((l) => l.name), ["ok"]);
   await assert.rejects(loadLabels(async () => ok({ message: "nope" }), "a/b", {}), GitHubError);

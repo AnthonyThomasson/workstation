@@ -150,13 +150,6 @@ export function checkTask(after, statusOptions = []) {
 // ---- Grooming ---------------------------------------------------------------------------------------
 export const GROOMER_KEY = "github-tasks.groomer"; // { agent, model, effort }: what Start Grooming opens
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
-export const CLAUDE_MODELS = [
-  { id: "opus", name: "Opus 5.5" },
-  { id: "opus[1m]", name: "Opus 5.5 · 1M" },
-  { id: "claude-fable-5-1", name: "Fable 5.1" },
-  { id: "sonnet", name: "Sonnet 5.5" },
-  { id: "haiku", name: "Haiku 5.5" },
-];
 
 // The saved grooming agent choice: { agent (key or null for "pick the default"), model ("" = the agent's own), effort }.
 export function normalizeGroomer(raw) {

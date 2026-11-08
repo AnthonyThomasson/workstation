@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findRepo, findProjects, createProject, loadItems, loadTask, loadStatusField, loadRepoLabels, saveTask, GitHubError, PAGE_SIZE, MAX_ITEMS } from "./loader.js";
+import { findRepo, findProjects, createProject, loadItems, loadTask, loadStatusField, saveTask, GitHubError, PAGE_SIZE, MAX_ITEMS } from "./loader.js";
 
 const ok = (data) => ({ code: 0, stdout: JSON.stringify({ data }), stderr: "" });
 const page = (count, endCursor, hasNextPage) => ok({
@@ -119,13 +119,6 @@ test("reads a draft through the project by its content id", async () => {
 test("reads the Status field's options, and nothing when there is none", async () => {
   assert.deepEqual(await loadStatusField(async () => ok({ node: { field: field } }), "P1"), field);
   assert.equal(await loadStatusField(async () => ok({ node: { field: {} } }), "P1"), null);
-});
-
-test("lists the repo's labels", async () => {
-  const { gh, calls } = recorder({ code: 0, stdout: '[{"name":"bug","color":"d73a4a"}]', stderr: "" });
-  assert.deepEqual(await loadRepoLabels(gh, "me/app"), [{ name: "bug", color: "d73a4a" }]);
-  assert.deepEqual(calls[0].args.slice(0, 4), ["label", "list", "-R", "me/app"]);
-  await assert.rejects(loadRepoLabels(async () => ({ code: 1, stdout: "", stderr: "HTTP 404" }), "me/app"), GitHubError);
 });
 
 test("sends nothing when nothing changed", async () => {

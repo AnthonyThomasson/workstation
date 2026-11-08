@@ -25,7 +25,7 @@ export function makeStore({ io, dirs }) {
     return dirs[scope];
   }
 
-  // Every file in the available scopes, read: [{ id, scope, workflow }] or [{ id, scope, error }] for a file that cannot be
+  // Every file in the available scopes, read: [{ id, scope, workflow }] or [{ id, scope, file, error }] for a file that cannot be
   // read. The one place a workflow folder is listed.
   async function readAll() {
     const entries = [];
@@ -39,7 +39,7 @@ export function makeStore({ io, dirs }) {
           if (text == null) continue;
           entries.push({ id, scope, workflow: { ...parse(text), id, scope } });
         } catch (e) {
-          entries.push({ id, scope, error: e.message });
+          entries.push({ id, scope, error: e.message, file: files.includes(`${id}.yaml`) ? `${id}.yaml` : `${id}.json` });
         }
       }
     }
@@ -55,12 +55,12 @@ export function makeStore({ io, dirs }) {
   }
 
   // Every workflow that can be read, whole, for Start to match a ticket's labels against: { items: [workflow with its
-  // scope], errors: ["id: what is wrong"] }, by name.
+  // scope], errors: ["broken.yaml: what is wrong"] }, by name.
   async function loadAll() {
     const entries = await readAll();
     return {
       items: entries.filter((e) => e.workflow).map((e) => ({ ...e.workflow, name: e.workflow.name || e.id })).sort(byName),
-      errors: entries.filter((e) => e.error).map((e) => `${e.id}: ${e.error}`),
+      errors: entries.filter((e) => e.error).map((e) => `${e.file}: ${e.error}`),
     };
   }
 

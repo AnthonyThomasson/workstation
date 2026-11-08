@@ -13,7 +13,7 @@ import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, pr
 import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, spelled, STATUSES, GROOMER_KEY, chooseProject } from "./model.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField } from "./loader.js";
 import { installedAgents, startGrooming, startProjectSetup } from "./groom.js";
-import { S, icon, stop, note, iconButton, action, gh } from "./ui.js";
+import { S, icon, stop, note, iconButton, action, gh, later } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { TaskEditor, CHANGED } from "./editor.js";
 import { TaskSettings } from "./settings.js";
@@ -47,9 +47,6 @@ const shownHere = () => {
   const root = layout(), panel = find(root, PANEL), body = find(root, STACK);
   return Boolean(panel && !panel.hidden && body?.active === SHOWN);
 };
-
-// Work started from render: cx.notify() throws while a view renders, so it starts after.
-const later = (cx, fn) => cx.spawn(async (cx) => { await cx.sleep(0); return fn(cx); });
 
 const activeSpace = () => spaces().find((s) => s.active) ?? null;
 
@@ -212,7 +209,7 @@ export default class GitHubTasks extends View {
     const newSpace = key !== this.ctxKey;
     const newFolder = !newSpace && ctx?.folder !== this.ctx?.folder;
     if (newSpace) { this.ctxKey = key; this.reset(ctx); later(cx, () => this.publish()); } // the old space's repo is forgotten, so the settings forget it too
-    else if (newFolder) { this.ctx = ctx; this.token++; this.loading = false; }
+    else if (newFolder) { this.ctx = ctx; this.token++; this.loading = false; later(cx, () => this.publish()); } // the settings follow the folder at once, not after the refresh
     if (ctx && (newSpace || newFolder)) later(cx, (cx) => this.refresh(cx));
 
     return v_flex().id("github-tasks").track_focus(this.handle).size_full().min_h(0).border_t(1).border_color(t.border)

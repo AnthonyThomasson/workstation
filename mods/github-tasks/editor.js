@@ -5,8 +5,9 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { run, setShared, theme } from "herdr";
 import { snapshot, isDirty, changes } from "./model.js";
-import { GitHubError, loadTask, loadStatusField, loadRepoLabels, saveTask } from "./loader.js";
-import { S, icon, stop, note, iconButton, action, gh } from "./ui.js";
+import { GitHubError, loadTask, loadStatusField, saveTask } from "./loader.js";
+import { loadLabels } from "./labels.js";
+import { S, icon, stop, note, iconButton, action, gh, scrim } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { matchWorkflows } from "./match.js";
 import { loadWorkflows } from "./workflow-env.js";
@@ -15,8 +16,6 @@ import { startRun } from "./start.js";
 // Set to the time of each save, so the panel's list refreshes.
 export const CHANGED = "github-tasks.changed";
 
-// The dim layer behind the picker: the theme's background, half see-through where it is a hex color.
-const scrim = (t) => (/^#[0-9a-f]{6}$/i.test(t.background ?? "") ? `${t.background}b3` : t.background);
 const tabName = (ticket, title) => (ticket.draft ? title : `#${ticket.number} ${title}`);
 const SIGN_IN_KINDS = { "no-write-scope": REFRESH, "no-scope": REFRESH, "no-auth": LOGIN };
 
@@ -80,7 +79,7 @@ export class TaskEditor {
       const [task, field, labels] = await Promise.allSettled([
         loadTask(gh, repo, ticket, where),
         project ? loadStatusField(gh, project.id, where) : Promise.resolve(null),
-        this.draft ? Promise.resolve([]) : loadRepoLabels(gh, repo, where),
+        this.draft ? Promise.resolve([]) : loadLabels(gh, repo, where),
       ]);
       if (task.status === "rejected") {
         this.loadError = task.reason instanceof GitHubError ? task.reason : { kind: "other", message: String(task.reason?.message ?? task.reason) };

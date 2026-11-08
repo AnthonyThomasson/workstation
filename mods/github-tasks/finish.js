@@ -2,6 +2,7 @@
 // Pure: no Herdr imports, so node --test runs it. run-page.js does the exec calls and the drawing.
 
 import { sameStatus, STATUSES } from "./model.js";
+import { STATUS_MUTATION } from "./loader.js";
 
 export const STAGES = [STATUSES.inProgress, STATUSES.inReview, STATUSES.done]; // what a ticket becomes as the run goes on, in order (Done is set by Merge)
 
@@ -23,10 +24,6 @@ export function optionFor(options, stage) {
   const name = STAGES[stage - 1];
   return (options ?? []).find((o) => sameStatus(o.name, name)) ?? null;
 }
-
-export const STATUS_MUTATION = `mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) {
-  updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: { singleSelectOptionId: $option } }) { projectV2Item { id } }
-}`;
 
 // gh args that set the item's status to the option.
 export const statusArgs = ({ projectId, itemId, fieldId, optionId }) =>
