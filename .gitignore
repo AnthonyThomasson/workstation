@@ -12,4 +12,3 @@ jsconfig.json
 # installed, synced/) stays out of the repo; installed skills are recorded in .metadata.json.
 skillshare/skills/*/
 !skillshare/skills/mine/
-.sync-backup/

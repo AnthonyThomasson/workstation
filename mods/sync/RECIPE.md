@@ -26,6 +26,66 @@ The script is one quoted path, not a command line: absolute, `~/…`, or relativ
 - `--pull`: copy Herdr files to the repository, with Herdr winning.
 - `--dry-run`: write nothing. With no direction flag, perform a two-way comparison and print one line per pending copy: `to repo: <path>` or `to repo (new): <path>` for Herdr-to-repository copies, and `to Herdr: <path>` or `to Herdr (new): <path>` for repository-to-Herdr copies. The mod parses those exact prefixes.
 
+## Sync script
+
+`mods/sync/sync.sh` is the script this mod runs. It is POSIX `sh` (`#!/bin/sh`, `set -eu`, executable), lives inside the mod, and is copied to Herdr with the rest of the mod, so `mods/sync/sync.sh` in a clone is also the one setup command. Its test is `mods/sync/sync.test.sh` (`sh mods/sync/sync.test.sh`); both are copied to Herdr like any other file in the mod folder.
+
+### Purpose
+
+Copy the repo's Herdr setup (mods, the Tony layout, themes, workflows) into the Herdr config folder, link Skillshare to the repo, and record which clone did it. The Herdr config folder is `${HERDR_APP_HOME:-$HOME/.config/herdr-app}` and must exist (Herdr must have been started once); the Skillshare folder is `${SKILLSHARE_HOME:-$HOME/.config/skillshare}`. The clone is `git rev-parse --show-toplevel` of the script's folder (two folders above the script when git is not available). Exit 1 if there is no `mods/` or `layouts/` folder there, if the Herdr config folder is missing, or if it lies inside the clone.
+
+### Flags
+
+| Flags | Meaning |
+| --- | --- |
+| none | Repo to Herdr, with prune; writes `sync.json`. |
+| `--dry-run` | Write nothing (not `sync.json`, not links, not reinstalls); print what a real run would do. |
+| `--check` | Stands alone; write nothing; exit 1 and name each line when `skillshare/config.yaml` holds an absolute home path. |
+| `-h`, `--help` | Print usage, exit 0. Any other argument, or `--check` with `--dry-run`: usage to stderr, exit 2. |
+
+There is no `--push`, `--pull` or `--prune`, and no two-way mode: Herdr-side edits are overwritten and never copied back.
+
+### Output
+
+One line per change, `<what>: <path>` with `<path>` relative to the Herdr config folder:
+
+- `to Herdr (new): <path>` and `to Herdr: <path>`: a file copied (or, with `--dry-run`, that would be copied) to Herdr.
+- `removed from Herdr: <path>`: a file deleted by the prune.
+
+Then summary lines: `copied: <n> to Herdr, <m> removed from Herdr; <k> already the same` (`would copy` with `--dry-run`), `linked: <config>/sync.json` (`would link` with `--dry-run`), `skillshare: linked <n>, <m> already linked` (`would link` with `--dry-run`), and, for recorded skills, `reinstalled: <name>`, `would reinstall: <name>` and `skillshare: could not reinstall <name>: <reason>`. A caller that only needs the result reads the exit code and the `copied:` summary.
+
+### What goes where (repo to the Herdr config folder)
+
+- `mods/<mod>/` to `mods/<mod>/` for every mod, including `mods/sync/sync.sh` and `mods/sync/sync.test.sh`. Herdr does not load a mod's assets through a symlink, so Herdr holds real copies (a symlink left by an older version is replaced with a copy first).
+- `layouts/Tony.json` to `layouts/Tony.json`.
+- The root `preview.png` to `layouts/Tony.png`: Tony's preview, which Herdr's layout picker shows.
+- `personal/herdr-app/themes/<file>` to `themes/<file>`, and `personal/herdr-app/workflows/<file>` to `workflows/<file>`: only files the repo has.
+- Never copied: each mod's `RECIPE.md` and `preview.png`, `keys.json` and `settings.json` (Herdr writes them), `.DS_Store`, `gpui-kit.d.ts`, `jsconfig.json`, `layouts/.state/*`.
+- The repo always wins: a differing file in Herdr is overwritten, whichever is newer. Nothing is ever written to the repo, and nothing is backed up (no `.workstation-backup/`, no `.sync-backup/`).
+- Prune: a file inside a repo-owned mod folder in Herdr (`mods/<mod>/` for a mod the repo has) that the repo does not have is deleted, and a folder that leaves empty goes with it. Other Herdr files, themes, workflows and mods the repo does not own are never removed.
+
+### sync.json
+
+Every real run writes `<config>/sync.json` last-run-wins, as one JSON line (written to a temporary file and moved into place): `{"repo": "<git rev-parse --show-toplevel>", "remote": "<git remote get-url origin>"}`. `remote` is an empty string when there is no `origin` (or no git). Both values are JSON-escaped. This is how the Sync mod, on any machine, finds the clone to watch.
+
+### Skillshare
+
+`~/.config/skillshare/{config.yaml,agents,skills}` become symlinks to `skillshare/<name>` in the clone. A real file or folder in the way is moved to `<name>.backup-<timestamp>` first (the one backup that stays); a link that is already right is left alone (`link ok: <path>`); a link elsewhere is repointed. A name the repo does not have is skipped. `skillshare/config.yaml` sets `preserve_tilde_on_save: true`, and each real run rewrites `$HOME/` to `~/` there so the username never reaches a commit (`--check` fails if an absolute home path remains).
+
+Only `skillshare/skills/mine/` and `skillshare/skills/.metadata.json` are committed; every other top-level folder under `skillshare/skills/` is ignored by git, and installed skills are recorded in `.metadata.json` (`repo_url`, `subdir`, `commit` per entry).
+
+### Reinstall recorded skills
+
+After linking, every real run reinstalls each recorded skill whose folder is missing under `${SKILLSHARE_HOME:-$HOME/.config/skillshare}/skills`, so a fresh clone gets them back at the recorded commit:
+
+- Per entry, parse `.metadata.json` with `awk` (no `jq` or `node`): entries are indented 4 spaces and their fields 6. Run `skillshare install <source> --name <entry> --branch <commit> -y -g`, where `<source>` is `repo_url` without `https://` and `.git`, plus `/<subdir>` (for an `ssh` `git@` URL, `//<subdir>`). `--branch` pins the recorded commit (a full SHA); a plain `skillshare install -g` would install an entry without a recorded branch from its latest commit.
+- Skillshare ignores `SKILLSHARE_HOME`: it installs where the config's `sources.skills` says, and the repo's config says `~/.config/skillshare/skills`, which expands from `HOME`. So when `SKILLSHARE_HOME` is set, run Skillshare with `SKILLSHARE_CONFIG` pointing at a temporary copy of `$SKILLSHARE_HOME/config.yaml` whose `sources:` section is replaced by `skills: $SKILLSHARE_HOME/skills` and `agents: $SKILLSHARE_HOME/agents`.
+- Reinstalling rewrites the entry's `source`, `branch` and `installed_at` in `.metadata.json`. Copy the file first and put it back afterwards, also from the exit trap (the script traps `INT`, `TERM` and `HUP`), so an interrupted install leaves the committed record untouched.
+- Print `reinstalled: <name>` after a successful install (the folder must exist afterwards). `--dry-run` prints `would reinstall: <name>` instead and does not need the CLI; when the skills link would still be created, it looks in `skillshare/skills` in the clone. `--check` never reinstalls. The script does not run `skillshare sync`; run it afterwards to link the skills into your tools.
+- Never fatal. An entry without `repo_url`, a missing `skillshare` CLI, or a failed install (offline) prints `skillshare: could not reinstall <name>: <reason>` (the last non-empty line `skillshare` printed with `\r` and ANSI colour codes removed, or `no repo_url is recorded for it`, or `the skillshare CLI was not found`); the rest of the run finishes and the exit status stays 0. Skipped when `.metadata.json` does not exist.
+
+To reinstall one entry by hand: `skillshare install <repo_url-without-https-and-.git>/<subdir> --name <name> --branch <commit> -y -g`, then `git checkout skillshare/skills/.metadata.json`. To try an install without touching the real Skillshare folder, point Skillshare at a scratch one (it reads `XDG_CONFIG_HOME`, or `SKILLSHARE_CONFIG` with absolute scratch `sources`; it does not read `SKILLSHARE_HOME`).
+
 ## Built from
 
 - Install `mods/sync/`. `RECIPE.md` and `preview.png` sit inside `mods/sync/`, and an installing agent leaves them out. Its `mod.json` is `{ "place": "none", "title": "sync" }`; there are no key bindings. The host layout must mount the always-present default/`button` role and should place a `details` role as child `sync` in stack `panel-body` inside column `panel`. The button calls `layout.select`, `layout.show` and `layout.hide` on those ids. Other props roles are `text`, `upgrade` and `srcboth` dialogs, opened by the mod itself.

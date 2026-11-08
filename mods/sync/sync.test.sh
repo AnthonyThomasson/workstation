@@ -1,5 +1,5 @@
 #!/bin/sh
-# Tests for scripts/sync/sync.sh. Run with: sh tests/sync.test.sh
+# Tests for mods/sync/sync.sh. Run with: sh mods/sync/sync.test.sh
 #
 # Every test works on a scratch copy of the repo, a scratch Herdr config folder and a scratch
 # Skillshare folder under $TMPDIR, and runs sync.sh with HOME pointed at a scratch folder too.
@@ -8,10 +8,10 @@
 
 set -u
 
-real_repo=$(cd "$(dirname "$0")/.." && pwd)
+real_repo=$(cd "$(dirname "$0")/../.." && pwd)
 base=$(mktemp -d "${TMPDIR:-/tmp}/sync-test.XXXXXX")
 trap 'rm -rf "$base"' EXIT
-base=$(cd "$base" && pwd)
+base=$(cd "$base" && pwd -P)   # physical, as git reports the clone
 
 # A stub skillshare on PATH for every run: it records its arguments and environment in $STUB_LOG, fails
 # for a --name listed in $STUB_FAIL ("all" fails every one), and otherwise creates the skill folder in
@@ -92,11 +92,13 @@ new_world() {
   T="$base/$1"
   R="$T/repo"; H="$T/herdr"; S="$T/skillshare-home"; HOME_DIR="$T/home"
   rm -rf "$T"
-  mkdir -p "$R/scripts/sync" "$H" "$HOME_DIR"
-  cp "$real_repo/scripts/sync/sync.sh" "$R/scripts/sync/sync.sh"
+  mkdir -p "$R" "$H" "$HOME_DIR"
   cp "$real_repo/preview.png" "$R/preview.png"
   cp -R "$real_repo/mods" "$real_repo/layouts" "$real_repo/personal" "$real_repo/skillshare" "$R/"
   find "$R" -name .DS_Store -delete
+  # The script finds the clone with git, so the scratch repo is one, with an origin.
+  git -C "$R" init -q
+  git -C "$R" remote add origin "https://example.com/scratch/workstation.git"
   # Workflow starters live in a mod folder and sync like any other mod file; make sure the scratch repo has one.
   mkdir -p "$R/mods/github-tasks/starters"
   echo "name: scratch starter" > "$R/mods/github-tasks/starters/scratch-starter.yaml"
@@ -146,7 +148,7 @@ JSON
 
 # run_sync ARGS...: run the script from the scratch repo; sets $OUT (stdout+stderr) and $RC.
 run_sync() {
-  OUT=$(cd "$R" && HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./scripts/sync/sync.sh "$@" 2>&1)
+  OUT=$(cd "$R" && HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./mods/sync/sync.sh "$@" 2>&1)
   RC=$?
 }
 
@@ -155,10 +157,15 @@ lines() { printf '%s\n' "$OUT" | grep "^$1" || true; }
 
 # bump FILE: make FILE the newest file around.
 bump() { touch -t 203001010000 "$1"; }
-age() { touch -t 200001010000 "$1"; }
+
+# herdr_path: the Herdr config folder as the script prints it (symlinks resolved).
+herdr_path() { (cd "$H" && pwd -P); }
+
+# json_get FILE KEY: the string value of KEY in a JSON file, parsed with node.
+json_get() { node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"))[process.argv[2]]))' "$1" "$2"; }
 
 # ---------------------------------------------------------------------------------------------
-# 1. A fresh --dry-run lists only the expected mappings and writes nothing.
+# 1. A fresh --dry-run lists only the expected mappings and writes nothing (no sync.json either).
 new_world "dry-run-lists-only-the-mappings"
 expected="$T/expected"
 (
@@ -168,7 +175,7 @@ expected="$T/expected"
   echo layouts/Tony.png
   (cd personal/herdr-app && find themes workflows -type f)
 ) | sort > "$expected"
-before=$(cd "$R" && find . -type f | sort | xargs cksum)
+before=$(cd "$R" && find . -path ./.git -prune -o -type f -print | sort | xargs cksum)
 run_sync --dry-run
 assert_status 0 "$RC"
 printf '%s\n' "$OUT" | sed -n 's/^to Herdr (new): //p' | sort > "$T/listed"
@@ -176,14 +183,16 @@ assert_same_file "$expected" "$T/listed"
 assert_lacks "RECIPE.md"
 assert_lacks "preview.png"
 assert_has "to Herdr (new): mods/github-tasks/starters/scratch-starter.yaml"
-assert_lacks "Tony copy"
-assert_lacks "Tony's copies"
+assert_has "to Herdr (new): mods/sync/sync.sh"
+assert_has "to Herdr (new): mods/sync/sync.test.sh"
 assert_lacks "keys.json"
 assert_lacks "settings.json"
 assert_lacks "to repo"
-assert_has "would copy: $(wc -l < "$expected" | tr -d ' ') to Herdr, 0 to the repo; 0 already the same"
+assert_has "would copy: $(wc -l < "$expected" | tr -d ' ') to Herdr, 0 removed from Herdr; 0 already the same"
+assert_has "would link: $(herdr_path)/sync.json"
 assert_eq "" "$(ls -A "$H")" "dry run left the Herdr folder empty"
-after=$(cd "$R" && find . -type f | sort | xargs cksum)
+assert_absent "$H/sync.json"
+after=$(cd "$R" && find . -path ./.git -prune -o -type f -print | sort | xargs cksum)
 assert_eq "$before" "$after" "dry run left the repo untouched"
 assert_absent "$S/config.yaml"
 
@@ -207,49 +216,83 @@ assert_same_file "$R/mods/github-tasks/starters/scratch-starter.yaml" "$H/mods/g
 assert_absent "$H/keys.json"
 assert_absent "$H/settings.json"
 assert_has "copied: "
-assert_lacks "Tony copy"
-assert_lacks "Tony's copies"
+# the script and its test are copied like any other mod file
+assert_same_file "$R/mods/sync/sync.sh" "$H/mods/sync/sync.sh"
+assert_same_file "$R/mods/sync/sync.test.sh" "$H/mods/sync/sync.test.sh"
 run_sync
 assert_status 0 "$RC"
-assert_has "copied: 0 to Herdr, 0 to the repo;"
+assert_has "copied: 0 to Herdr, 0 removed from Herdr;"
 assert_lacks "to Herdr: "
+assert_lacks "to Herdr (new): "
 
-# 3. Recipes and previews stay out of Herdr and are never pulled or pruned; starters sync like other mod files.
+# 2b. The repo wins: a differing Herdr file is overwritten, whichever copy is newer, with no backup.
+new_world "repo-wins-without-backups"
+run_sync
+echo "// edited in Herdr" >> "$H/mods/usage/main.js"
+bump "$H/mods/usage/main.js"
+echo "// edited in Herdr" >> "$H/layouts/Tony.json"
+bump "$H/layouts/Tony.json"
+echo "// edited in Herdr" >> "$H/themes/win98.json"
+bump "$H/themes/win98.json"
+echo "// edited in Herdr" >> "$H/workflows/bug.yaml"
+bump "$H/workflows/bug.yaml"
+before=$(cd "$R" && find . -path ./.git -prune -o -type f -print | sort | xargs cksum)
+run_sync
+assert_status 0 "$RC"
+assert_has "to Herdr: mods/usage/main.js"
+assert_has "to Herdr: layouts/Tony.json"
+assert_has "to Herdr: themes/win98.json"
+assert_has "to Herdr: workflows/bug.yaml"
+assert_lacks "to repo"
+assert_lacks "saved to"
+assert_same_file "$R/mods/usage/main.js" "$H/mods/usage/main.js"
+assert_same_file "$R/layouts/Tony.json" "$H/layouts/Tony.json"
+assert_same_tree "$R/personal/herdr-app/themes" "$H/themes"
+assert_same_tree "$R/personal/herdr-app/workflows" "$H/workflows"
+assert_absent "$H/.workstation-backup"
+assert_absent "$R/.sync-backup"
+assert_eq "" "$(cd "$H" && find . -name '*.backup*' -o -name '*backup*')" "no backup files anywhere in Herdr"
+after=$(cd "$R" && find . -path ./.git -prune -o -type f -print | sort | xargs cksum)
+assert_eq "$before" "$after" "the repo was not touched"
+
+# 3. Herdr-only files are never carried back, and recipes and previews are neither copied nor pruned.
 new_world "repository-metadata-is-not-synced"
 run_sync
 echo herdr-recipe > "$H/mods/usage/RECIPE.md"
 echo herdr-preview > "$H/mods/usage/preview.png"
-before=$(cd "$R" && find mods -type f | sort | xargs cksum)
-run_sync --pull
+echo herdr-only > "$H/mods/skills/note.txt"
+echo herdr-only > "$H/themes/only-in-herdr.json"
+echo herdr-only > "$H/workflows/only-in-herdr.yaml"
+before=$(cd "$R" && find . -path ./.git -prune -o -type f -print | sort | xargs cksum)
+run_sync --dry-run
 assert_status 0 "$RC"
 assert_lacks "RECIPE.md"
 assert_lacks "preview.png"
-assert_eq "herdr-recipe" "$(cat "$H/mods/usage/RECIPE.md")" "pull left Herdr recipe alone"
-run_sync --push --prune --dry-run
+assert_has "removed from Herdr: mods/skills/note.txt"
+run_sync
 assert_status 0 "$RC"
 assert_lacks "RECIPE.md"
 assert_lacks "preview.png"
-run_sync --push --prune
-assert_status 0 "$RC"
-assert_exists "$H/mods/usage/RECIPE.md"
-assert_exists "$H/mods/usage/preview.png"
-after=$(cd "$R" && find mods -type f | sort | xargs cksum)
-assert_eq "$before" "$after" "pull and prune left repo metadata untouched"
+assert_eq "herdr-recipe" "$(cat "$H/mods/usage/RECIPE.md")" "the Herdr recipe is left alone"
+assert_eq "herdr-preview" "$(cat "$H/mods/usage/preview.png")" "the Herdr preview is left alone"
+assert_absent "$R/mods/skills/note.txt"
+assert_absent "$R/personal/herdr-app/themes/only-in-herdr.json"
+assert_absent "$R/personal/herdr-app/workflows/only-in-herdr.yaml"
+# outside the mod folders nothing is pruned
+assert_exists "$H/themes/only-in-herdr.json"
+assert_exists "$H/workflows/only-in-herdr.yaml"
+after=$(cd "$R" && find . -path ./.git -prune -o -type f -print | sort | xargs cksum)
+assert_eq "$before" "$after" "nothing was carried back to the repo"
 
-# 3b. Starters sync like any other mod file: pulled from Herdr, pushed to Herdr, and pruned when extra.
+# 3b. Starters sync like any other mod file: copied to Herdr, and pruned when the repo drops them.
 new_world "starters-sync-like-mod-files"
 run_sync
 assert_exists "$H/mods/github-tasks/starters/scratch-starter.yaml"
-echo herdr-starter > "$H/mods/github-tasks/starters/herdr-only.yaml"
-run_sync --pull
+rm "$R/mods/github-tasks/starters/scratch-starter.yaml"
+run_sync
 assert_status 0 "$RC"
-assert_has "to repo (new): mods/github-tasks/starters/herdr-only.yaml"
-assert_same_file "$H/mods/github-tasks/starters/herdr-only.yaml" "$R/mods/github-tasks/starters/herdr-only.yaml"
-rm "$R/mods/github-tasks/starters/herdr-only.yaml"
-run_sync --push --prune
-assert_status 0 "$RC"
-assert_has "removed from Herdr: mods/github-tasks/starters/herdr-only.yaml"
-assert_absent "$H/mods/github-tasks/starters/herdr-only.yaml"
+assert_has "removed from Herdr: mods/github-tasks/starters/scratch-starter.yaml"
+assert_absent "$H/mods/github-tasks/starters/scratch-starter.yaml"
 
 # 4. Generated files are skipped and --check only checks Skillshare's absolute home paths.
 new_world "generated-files-and-check"
@@ -261,17 +304,18 @@ run_sync
 assert_absent "$H/mods/usage/gpui-kit.d.ts"
 assert_absent "$H/mods/usage/jsconfig.json"
 assert_absent "$H/mods/usage/.DS_Store"
+rm -f "$H/sync.json"
 run_sync --check
 assert_status 0 "$RC"
 assert_has "ok: skillshare/config.yaml has no absolute home paths"
-assert_lacks "Tony copy"
+assert_absent "$H/sync.json"
 printf 'sources:\n  skills: %s/someone/.config/skillshare/skills\n' "$U" >> "$R/skillshare/config.yaml"
-before=$(cd "$R" && find . -type f | sort | xargs cksum)
+before=$(cd "$R" && find . -path ./.git -prune -o -type f -print | sort | xargs cksum)
 run_sync --check
 assert_status 1 "$RC"
 assert_has "skillshare/config.yaml"
 assert_has "$U/someone"
-after=$(cd "$R" && find . -type f | sort | xargs cksum)
+after=$(cd "$R" && find . -path ./.git -prune -o -type f -print | sort | xargs cksum)
 assert_eq "$before" "$after" "--check wrote nothing"
 rm -rf "$H"
 printf 'x: /home/someone/skills\n' > "$R/skillshare/config.yaml"
@@ -279,74 +323,119 @@ run_sync --check
 assert_status 1 "$RC"
 assert_has "skillshare/config.yaml"
 
-# 5. --pull brings Herdr-side edits and new files back into root-level mod folders.
-new_world "pull-goes-to-root-mods"
-run_sync
-echo "// edited in Herdr" >> "$H/mods/usage/main.js"
-bump "$H/mods/usage/main.js"
-run_sync --pull
-assert_status 0 "$RC"
-assert_has "to repo: mods/usage/main.js"
-assert_same_file "$H/mods/usage/main.js" "$R/mods/usage/main.js"
-assert_exists "$R/.sync-backup"
-echo new > "$H/mods/skills/note.txt"
-run_sync --pull
-assert_has "to repo (new): mods/skills/note.txt"
-assert_exists "$R/mods/skills/note.txt"
-run_sync --check
-assert_status 0 "$RC"
-
-# 6. --push and --pull only go one way; newer wins by default; overwrites are backed up.
-new_world "directions"
-run_sync
-echo "// herdr side" > "$H/themes/only-in-herdr.json"
-echo "// edit" >> "$H/layouts/Tony.json"
-bump "$H/layouts/Tony.json"
-run_sync --push --dry-run
-assert_status 0 "$RC"
-assert_has "to Herdr: layouts/Tony.json"
-assert_lacks "to repo"
-run_sync --push
-assert_same_file "$R/layouts/Tony.json" "$H/layouts/Tony.json"
-assert_exists "$H/.workstation-backup"
-assert_has "replaced Herdr files were saved to"
-# only repo-tracked theme files are synced: a theme that exists only in Herdr stays there
-run_sync --pull
-assert_absent "$R/personal/herdr-app/themes/only-in-herdr.json"
-# the two-way default: the newer side wins in either direction
-echo "// newer in Herdr" >> "$H/themes/win98.json"
-bump "$H/themes/win98.json"
-run_sync
-assert_has "to repo: themes/win98.json"
-echo "// newer in repo" >> "$R/personal/herdr-app/workflows/bug.yaml"
-bump "$R/personal/herdr-app/workflows/bug.yaml"
-age "$H/workflows/bug.yaml"
-run_sync
-assert_has "to Herdr: workflows/bug.yaml"
-run_sync --push --pull
-assert_status 2 "$RC"
-run_sync --bogus
-assert_status 2 "$RC"
-run_sync --prune
-assert_status 2 "$RC"
+# 5. The flags that are gone, and bad combinations, print usage and exit 2; --help exits 0.
+new_world "removed-flags"
+for flag in --push --pull --prune "--push --prune" "--push --pull" --bogus; do
+  run_sync $flag
+  assert_status 2 "$RC"
+  assert_has "usage:"
+done
 run_sync --check --dry-run
 assert_status 2 "$RC"
+run_sync --dry-run extra
+assert_status 2 "$RC"
+run_sync --help
+assert_status 0 "$RC"
+assert_has "usage:"
+assert_lacks "--push"
+assert_lacks "--pull"
+assert_lacks "--prune"
+assert_eq "" "$(ls -A "$H")" "a refused run left the Herdr folder empty"
+assert_absent "$H/sync.json"
 
-# 7. --prune removes only extra files in repo-owned mod folders and keeps backups.
+# 6. Prune: files in repo-owned mod folders that the repo lacks are deleted, with no backup;
+# other Herdr files and mods are never removed. Emptied folders go too.
 new_world "prune"
 run_sync
 echo stale > "$H/mods/usage/old.js"
-mkdir -p "$H/mods/shipped"
+mkdir -p "$H/mods/usage/old-dir" "$H/mods/shipped"
+echo stale > "$H/mods/usage/old-dir/a.js"
 echo untouched > "$H/mods/shipped/main.js"
 echo untouched > "$H/themes/local.json"
-run_sync --push --prune
+run_sync --dry-run
 assert_status 0 "$RC"
 assert_has "removed from Herdr: mods/usage/old.js"
+assert_has "removed from Herdr: mods/usage/old-dir/a.js"
+assert_exists "$H/mods/usage/old.js"
+run_sync
+assert_status 0 "$RC"
+assert_has "removed from Herdr: mods/usage/old.js"
+assert_has "removed from Herdr: mods/usage/old-dir/a.js"
+assert_has "2 removed from Herdr"
 assert_absent "$H/mods/usage/old.js"
+assert_absent "$H/mods/usage/old-dir"
 assert_exists "$H/mods/shipped/main.js"
 assert_exists "$H/themes/local.json"
-assert_exists "$H/.workstation-backup"
+assert_absent "$H/.workstation-backup"
+assert_absent "$R/.sync-backup"
 assert_absent "$R/mods/usage/old.js"
+# a file the repo deletes is deleted in Herdr on the next run, nothing else is
+rm "$R/mods/usage/main.js"
+run_sync
+assert_has "removed from Herdr: mods/usage/main.js"
+assert_absent "$H/mods/usage/main.js"
+assert_exists "$H/mods/usage/mod.json"
+
+# 7. sync.json: written by each real run, in the Herdr config folder, with the clone and its remote.
+new_world "sync-json"
+git -C "$R" remote set-url origin "https://github.com/example/workstation.git"
+root=$(git -C "$R" rev-parse --show-toplevel)
+run_sync --dry-run
+assert_absent "$H/sync.json"
+run_sync
+assert_status 0 "$RC"
+assert_has "linked: $(herdr_path)/sync.json"
+assert_exists "$H/sync.json"
+assert_eq "$root" "$(json_get "$H/sync.json" repo)" "sync.json repo"
+assert_eq "https://github.com/example/workstation.git" "$(json_get "$H/sync.json" remote)" "sync.json remote"
+assert_eq '{"repo": "'"$root"'", "remote": "https://github.com/example/workstation.git"}' "$(cat "$H/sync.json")" "sync.json text"
+assert_eq "" "$(ls -A "$H" | grep -i 'sync.json.' || true)" "no temporary sync.json left behind"
+# the file is replaced on every run
+echo garbage > "$H/sync.json"
+run_sync
+assert_eq "$root" "$(json_get "$H/sync.json" repo)" "sync.json is rewritten"
+# the script finds the clone when run from another directory, by its own location
+rm -f "$H/sync.json"
+OUT=$(cd "$T" && HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh "$R/mods/sync/sync.sh" 2>&1); RC=$?
+assert_status 0 "$RC"
+assert_eq "$root" "$(json_get "$H/sync.json" repo)" "sync.json repo from another directory"
+
+# 7b. No origin: the remote is an empty string. Odd characters are JSON-escaped.
+new_world "sync-json-no-remote"
+git -C "$R" remote remove origin
+run_sync
+assert_status 0 "$RC"
+assert_eq "" "$(json_get "$H/sync.json" remote)" "no remote is an empty string"
+grep -q '"remote": ""' "$H/sync.json" && pass || fail "remote is not an empty JSON string: $(cat "$H/sync.json")"
+git -C "$R" remote add origin 'https://example.com/a"b\c/repo.git'
+run_sync
+assert_status 0 "$RC"
+assert_eq 'https://example.com/a"b\c/repo.git' "$(json_get "$H/sync.json" remote)" "quote and backslash survive"
+
+# 7c. HERDR_APP_HOME is respected, and the last clone to run wins.
+new_world "sync-json-last-clone-wins"
+mkdir -p "$T/other-herdr"
+root=$(git -C "$R" rev-parse --show-toplevel)
+run_sync
+assert_exists "$H/sync.json"
+assert_absent "$HOME_DIR/.config/herdr-app/sync.json"
+second="$T/second"
+mkdir -p "$second"
+cp -R "$R/." "$second/"
+git -C "$second" remote set-url origin "https://github.com/example/second.git"
+second_root=$(git -C "$second" rev-parse --show-toplevel)
+OUT=$(cd "$second" && HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$T/skillshare-second" sh ./mods/sync/sync.sh 2>&1); RC=$?
+assert_status 0 "$RC"
+assert_eq "$second_root" "$(json_get "$H/sync.json" repo)" "the last clone wins"
+assert_eq "https://github.com/example/second.git" "$(json_get "$H/sync.json" remote)" "the last clone's remote wins"
+run_sync
+assert_eq "$root" "$(json_get "$H/sync.json" repo)" "and back again"
+# the default folder is ~/.config/herdr-app under HOME
+mkdir -p "$HOME_DIR/.config/herdr-app"
+OUT=$(cd "$R" && env -u HERDR_APP_HOME HOME="$HOME_DIR" SKILLSHARE_HOME="$S" sh ./mods/sync/sync.sh 2>&1); RC=$?
+assert_status 0 "$RC"
+assert_exists "$HOME_DIR/.config/herdr-app/sync.json"
+assert_exists "$HOME_DIR/.config/herdr-app/layouts/Tony.json"
 
 # 8. Skillshare links are created, idempotent, and back up what is in the way.
 new_world "skillshare-links"
@@ -402,17 +491,17 @@ targets:
     skills:
       path: /elsewhere/skills
 EOF
-OUT=$(cd "$R" && HOME=$U/tester HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./scripts/sync/sync.sh --dry-run 2>&1); RC=$?
+OUT=$(cd "$R" && HOME=$U/tester HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./mods/sync/sync.sh --dry-run 2>&1); RC=$?
 assert_status 0 "$RC"
 assert_has "would normalise paths: skillshare/config.yaml"
 case $(cat "$R/skillshare/config.yaml") in *"$U/tester"*) pass ;; *) fail "dry run rewrote the config" ;; esac
-OUT=$(cd "$R" && HOME=$U/tester HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./scripts/sync/sync.sh 2>&1); RC=$?
+OUT=$(cd "$R" && HOME=$U/tester HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./mods/sync/sync.sh 2>&1); RC=$?
 assert_status 0 "$RC"
 assert_has "normalised paths: skillshare/config.yaml"
 assert_eq "  skills: ~/.config/skillshare/skills" "$(sed -n 2p "$R/skillshare/config.yaml")" "sources line"
 assert_eq "      path: ~/.claude/skills" "$(sed -n 6p "$R/skillshare/config.yaml")" "target line"
 assert_eq "      path: /elsewhere/skills" "$(sed -n 9p "$R/skillshare/config.yaml")" "other paths untouched"
-OUT=$(cd "$R" && HOME=$U/tester HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./scripts/sync/sync.sh 2>&1); RC=$?
+OUT=$(cd "$R" && HOME=$U/tester HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./mods/sync/sync.sh 2>&1); RC=$?
 assert_lacks "normalised"
 run_sync --check
 assert_status 0 "$RC"
@@ -422,32 +511,44 @@ current="repo-config-keeps-tilde"
 grep -q '^preserve_tilde_on_save: true' "$real_repo/skillshare/config.yaml" && pass || fail "config.yaml lacks preserve_tilde_on_save: true"
 ! grep -qE '(/Use[r]s/|/home/)' "$real_repo/skillshare/config.yaml" && pass || fail "config.yaml has an absolute home path"
 
-# 11. Guards: script location, missing Herdr folder, and a Herdr folder inside the repo.
+# 11. Guards: missing Herdr folder (and no sync.json), a Herdr folder inside the repo, a repo without mods/ or layouts/.
 new_world "guards"
 rm -rf "$H"
 run_sync
 assert_status 1 "$RC"
 assert_has "no Herdr config folder"
+assert_absent "$H"
 mkdir -p "$R/inside"
-OUT=$(cd "$R" && HERDR_APP_HOME="$R/inside" SKILLSHARE_HOME="$S" HOME="$HOME_DIR" sh ./scripts/sync/sync.sh 2>&1); RC=$?
+OUT=$(cd "$R" && HERDR_APP_HOME="$R/inside" SKILLSHARE_HOME="$S" HOME="$HOME_DIR" sh ./mods/sync/sync.sh 2>&1); RC=$?
 assert_status 1 "$RC"
 assert_has "inside this repo"
+assert_absent "$R/inside/sync.json"
+# the script finds the repo as the git top level of its own folder, so a copy elsewhere in the clone works
+mkdir -p "$R/tools" "$H"
+cp "$R/mods/sync/sync.sh" "$R/tools/sync.sh"
 rm -rf "$R/mods"
-run_sync --check
+OUT=$(cd "$T" && HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh "$R/tools/sync.sh" --check 2>&1); RC=$?
 assert_status 1 "$RC"
 assert_has "no mods/ or layouts/ folder at the repo root"
 mkdir -p "$R/mods"
 rm -rf "$R/layouts"
-run_sync --check
+OUT=$(cd "$T" && HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh "$R/tools/sync.sh" --check 2>&1); RC=$?
 assert_status 1 "$RC"
 assert_has "no mods/ or layouts/ folder at the repo root"
 
 # 12. The script finds the repo two folders above itself, regardless of the caller's directory.
 new_world "script-location"
-OUT=$(cd "$T" && HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh "$R/scripts/sync/sync.sh" --push --dry-run 2>&1); RC=$?
+OUT=$(cd "$T" && HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh "$R/mods/sync/sync.sh" --dry-run 2>&1); RC=$?
 assert_status 0 "$RC"
 assert_has "to Herdr (new): layouts/Tony.json"
 assert_eq "" "$(ls -A "$H")" "dry run from another directory left Herdr empty"
+# without a git repository it falls back to the folder two levels above the script
+rm -rf "$R/.git"
+OUT=$(cd "$T" && HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh "$R/mods/sync/sync.sh" 2>&1); RC=$?
+assert_status 0 "$RC"
+assert_exists "$H/layouts/Tony.json"
+assert_eq "$R" "$(json_get "$H/sync.json" repo)" "sync.json repo without git"
+assert_eq "" "$(json_get "$H/sync.json" remote)" "sync.json remote without git"
 
 # 13. Recorded skills whose folder is missing are reinstalled from .metadata.json at their recorded commits.
 herdr_args="args: install github.com/herdrdev/herdr/skills/herdr --name herdr --branch 2ecf19a92fc3a7fff75b6ce3655ef04f4625ec01 -y -g"
@@ -468,7 +569,7 @@ assert_absent "$STUB_LOG"
 assert_absent "$R/skillshare/skills/herdr"
 assert_same_file "$T/metadata.orig" "$R/skillshare/skills/.metadata.json"
 
-new_world "reinstall-two-way"
+new_world "reinstall"
 run_sync
 assert_status 0 "$RC"
 assert_has "reinstalled: herdr"
@@ -489,22 +590,10 @@ assert_status 0 "$RC"
 assert_no_reinstall
 assert_absent "$STUB_LOG"
 
-for mode in --push --pull; do
-  new_world "reinstall$mode"
-  run_sync $mode
-  assert_status 0 "$RC"
-  assert_has "reinstalled: herdr"
-  assert_has "reinstalled: skillshare"
-done
-new_world "reinstall--push--prune"
-run_sync --push --prune
-assert_status 0 "$RC"
-assert_has "reinstalled: herdr"
-
 # without SKILLSHARE_HOME the folder is ~/.config/skillshare and the install goes there
 new_world "reinstall-default-home"
 mkdir -p "$HOME_DIR/.config"
-OUT=$(cd "$R" && env -u SKILLSHARE_HOME HOME="$HOME_DIR" HERDR_APP_HOME="$H" sh ./scripts/sync/sync.sh 2>&1); RC=$?
+OUT=$(cd "$R" && env -u SKILLSHARE_HOME HOME="$HOME_DIR" HERDR_APP_HOME="$H" sh ./mods/sync/sync.sh 2>&1); RC=$?
 assert_status 0 "$RC"
 assert_has "reinstalled: herdr"
 grep -qxF -- "target: $HOME_DIR/.config/skillshare/skills" "$STUB_LOG" && pass || fail "default install target: $(cat "$STUB_LOG")"
@@ -551,21 +640,21 @@ assert_exists "$H/layouts/Tony.json"
 assert_same_file "$T/metadata.orig" "$R/skillshare/skills/.metadata.json"
 STUB_FAIL=all; export STUB_FAIL
 rm -rf "$R/skillshare/skills/skillshare"
-run_sync --pull
+run_sync
 assert_status 0 "$RC"
 assert_has "could not reinstall herdr: ✗ network unreachable"
 assert_has "could not reinstall skillshare: ✗ network unreachable"
 
 # no skillshare CLI at all: a warning per skill, exit 0
 new_world "reinstall-no-cli"
-OUT=$(cd "$R" && PATH="$bare_path" HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./scripts/sync/sync.sh 2>&1); RC=$?
+OUT=$(cd "$R" && PATH="$bare_path" HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./mods/sync/sync.sh 2>&1); RC=$?
 assert_status 0 "$RC"
 assert_has "skillshare: could not reinstall herdr: the skillshare CLI was not found"
 assert_has "skillshare: could not reinstall skillshare: the skillshare CLI was not found"
 assert_has "copied: "
 assert_absent "$STUB_LOG"
 # a dry run does not need the CLI
-OUT=$(cd "$R" && PATH="$bare_path" HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./scripts/sync/sync.sh --dry-run 2>&1); RC=$?
+OUT=$(cd "$R" && PATH="$bare_path" HOME="$HOME_DIR" HERDR_APP_HOME="$H" SKILLSHARE_HOME="$S" sh ./mods/sync/sync.sh --dry-run 2>&1); RC=$?
 assert_status 0 "$RC"
 assert_has "would reinstall: herdr"
 
@@ -598,3 +687,4 @@ assert_no_reinstall
 echo
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]
+

@@ -1,28 +1,31 @@
 #!/bin/sh
-# Keep this repo's Herdr setup (mods, the Tony layout, themes, workflows) and Skillshare config in
-# step with the installed folders.
+# Keep the Herdr config folder (~/.config/herdr-app) and Skillshare in step with this clone: copy
+# the repo's Herdr setup (mods, the Tony layout, themes, workflows) into Herdr, link Skillshare to
+# the repo, and record which clone did it.
 #
-#   ./scripts/sync/sync.sh             two-way: the newer copy of each file wins, in either direction
-#   ./scripts/sync/sync.sh --push      repo -> Herdr only (the repo wins)
-#   ./scripts/sync/sync.sh --pull      Herdr -> repo only (Herdr wins)
-#   ./scripts/sync/sync.sh --push --prune
-#                                     repo -> Herdr, and files in a repo-owned mod folder in Herdr that the repo does
-#                                     not have are moved to the backup folder (only with --push)
-#   ./scripts/sync/sync.sh --dry-run   show what would change, write nothing (combine with --push or --pull)
-#   ./scripts/sync/sync.sh --check     write nothing; fail if skillshare/config.yaml has an absolute home path
+#   ./mods/sync/sync.sh             repo -> Herdr, with prune; links this clone (writes sync.json)
+#   ./mods/sync/sync.sh --dry-run   show what would change, write nothing (no sync.json either)
+#   ./mods/sync/sync.sh --check     write nothing; fail if skillshare/config.yaml has an absolute home path
 #
 # What goes where (repo -> the Herdr config folder, ~/.config/herdr-app):
-#   mods/<mod>/                        -> mods/<mod>/       every mod
+#   mods/<mod>/                        -> mods/<mod>/       every mod, this one (sync.sh and its test) included
 #   layouts/Tony.json                  -> layouts/Tony.json
 #   preview.png                        -> layouts/Tony.png   (the picture the layout picker shows)
-#   personal/herdr-app/themes/<file>   -> themes/<file>     only the theme files the repo has
-#   personal/herdr-app/workflows/      -> workflows/        new files on either side are carried over
-# Herdr does not load a mod's icons and other assets through a symlink, so both sides hold real
-# copies. A new file inside a mod folder, on either side, is carried over to the other. Each mod's
-# RECIPE.md and preview.png (but not the root preview.png, which is Tony's) belong only to the repo: they are never copied to Herdr, pulled, or
-# pruned. Everything else in a mod folder, including mods/github-tasks/starters/, syncs like any
-# other mod file. keys.json and settings.json are not synced, because Herdr writes to them itself.
-# Generated files (gpui-kit.d.ts, jsconfig.json, .DS_Store) are skipped.
+#   personal/herdr-app/themes/<file>   -> themes/<file>
+#   personal/herdr-app/workflows/<file> -> workflows/<file>
+# Herdr does not load a mod's icons and other assets through a symlink, so Herdr holds real copies.
+# The repo always wins: a differing file in Herdr is overwritten, with no backup. Each mod's
+# RECIPE.md and preview.png (but not the root preview.png, which is Tony's) belong only to the repo
+# and are never copied. keys.json and settings.json are not synced, because Herdr writes to them
+# itself. Generated files (gpui-kit.d.ts, jsconfig.json, .DS_Store) are skipped.
+#
+# Prune: a file inside a repo-owned mod folder in Herdr (mods/<mod>/ for a mod the repo has) that the
+# repo no longer has is deleted, and so is a folder that leaves empty. Nothing else in Herdr is
+# removed, and nothing is ever deleted from the repo. A symlink left in the config folder by an
+# older version of this script is replaced with a real copy.
+#
+# sync.json: every real run writes <config>/sync.json, {"repo": "<this clone>", "remote": "<its
+# origin URL, or empty>"}, so the Sync mod knows which clone to watch. The last clone to run wins.
 #
 # Skillshare: ~/.config/skillshare/{config.yaml,agents,skills} become symlinks to skillshare/ in
 # this repo. A real file or folder in the way is moved to <name>.backup-<timestamp> first; a link
@@ -36,46 +39,40 @@
 # --dry-run prints "would reinstall: <name>"; --check never does it; a missing skillshare CLI or a
 # failed install (offline) is a warning, never an error.
 #
-# Nothing is deleted from the repo, and Herdr loses files only with --push --prune (see above). A file you remove on one side comes back
-# from the other on the next run, so delete it on both. A file this run overwrites is first saved at
-# the same relative path in <config>/.workstation-backup/<timestamp>/ (Herdr's copy) or
-# <repo>/.sync-backup/<timestamp>/ (the repo's). A symlink left in the config folder by an older
-# version of this script is replaced with a real copy.
-#
-# Output: one line per file change, "<what>: <path>", then summary lines ("copied: ...",
-# "skillshare: ...", "reinstalled: <name>"). A sync mod can read these.
-# Set HERDR_APP_HOME to use a config folder other than ~/.config/herdr-app.
-# Herdr picks up changed layouts and mods without a restart; restart it if something looks stale.
-# Commit after a --pull or a two-way run: pulled files are edits to the repo.
+# Output: one line per change, "<what>: <path>" ("to Herdr (new): <path>", "to Herdr: <path>",
+# "removed from Herdr: <path>"), then summary lines ("copied: <n> to Herdr, <m> removed from Herdr;
+# <k> already the same", "linked: <sync.json>", "skillshare: ...", "reinstalled: <name>").
+# Exit 0 on success, 1 on a failure, 2 on bad arguments.
+# Set HERDR_APP_HOME to use a config folder other than ~/.config/herdr-app. The folder must exist:
+# start Herdr once. Herdr picks up changed layouts and mods without a restart; restart it if
+# something looks stale.
 
 set -eu
 
-usage="usage: $0 [--push|--pull] [--dry-run] | --check"
+usage="usage: $0 [--dry-run] | --check"
 dry_run=0
-push=1
-pull=1
 check=0
-prune=0
 for arg in "$@"; do
   case "$arg" in
     -n|--dry-run) dry_run=1 ;;
-    --push) pull=0 ;;
-    --pull) push=0 ;;
     --check) check=1 ;;
-    --prune) prune=1 ;;
     -h|--help) echo "$usage"; exit 0 ;;
     *) echo "$usage" >&2; exit 2 ;;
   esac
 done
-[ "$push" -eq 1 ] || [ "$pull" -eq 1 ] || { echo "--push and --pull together are the default two-way sync: leave both off" >&2; exit 2; }
-[ "$prune" -eq 0 ] || { [ "$push" -eq 1 ] && [ "$pull" -eq 0 ]; } || { echo "--prune goes with --push" >&2; exit 2; }
-if [ "$check" -eq 1 ] && { [ "$dry_run" -eq 1 ] || [ "$push" -eq 0 ] || [ "$pull" -eq 0 ]; }; then
+if [ "$check" -eq 1 ] && [ "$dry_run" -eq 1 ]; then
   echo "--check stands alone" >&2
   exit 2
 fi
 
+# The clone is the git top level of this script's folder (the script sits two folders below it); without git, two folders up.
 script_dir=$(cd "$(dirname "$0")" && pwd)
-here=$(cd "$script_dir/../.." && pwd)
+if here=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null) && [ -n "$here" ]; then
+  in_git=1
+else
+  in_git=0
+  here=$(cd "$script_dir/../.." && pwd)
+fi
 [ -d "$here/mods" ] && [ -d "$here/layouts" ] || { echo "no mods/ or layouts/ folder at the repo root: $here" >&2; exit 1; }
 
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sync.XXXXXX")
@@ -142,7 +139,7 @@ pairs="$tmp/pairs"      # "<repo file>\t<Herdr file relative to the config folde
 roots="$tmp/roots"      # Herdr paths the repo tracks, to swap old links for copies
 : > "$pairs"; : > "$roots"
 
-# map_dir REPODIR HERDRDIR: every file in the folder on either side.
+# map_dir REPODIR HERDRDIR: every file in the folder on either side (Herdr-only ones get pruned).
 map_dir() {
   echo "$2" >> "$roots"
   { files "$here/$1"; files "$dst/$2"; } | sort -u | while IFS= read -r f; do
@@ -165,7 +162,7 @@ printf 'layouts/Tony.json\tlayouts/Tony.json\n' >> "$pairs"
 echo layouts/Tony.png >> "$roots"
 printf 'preview.png\tlayouts/Tony.png\n' >> "$pairs"
 map_tracked personal/herdr-app/themes themes
-map_dir personal/herdr-app/workflows workflows
+map_tracked personal/herdr-app/workflows workflows
 sort -u "$pairs" -o "$pairs"
 
 # Swap links left by the old script for real copies, so the sync below sees ordinary files.
@@ -183,23 +180,15 @@ done < "$roots"
 
 to_herdr=0
 pruned=0
-to_repo=0
 same=0
 
-# copy LABEL FROM TO BACKUP HERDRREL: copy one file, saving what it replaces at BACKUP.
+# copy LABEL FROM TO HERDRREL: copy one file to Herdr, replacing what is there (no backup).
 copy() {
-  echo "$1: $5"
+  echo "$1: $4"
   [ "$dry_run" -eq 0 ] || return 0
   mkdir -p "$(dirname "$3")"
-  if [ -e "$3" ]; then
-    mkdir -p "$(dirname "$4")"
-    cp -p "$3" "$4"
-  fi
   cp -p "$2" "$3"
 }
-
-herdr_backup="$dst/.workstation-backup/$stamp"
-repo_backup="$here/.sync-backup/$stamp"
 
 tab=$(printf '\t')
 while IFS="$tab" read -r rrel hrel; do
@@ -208,33 +197,49 @@ while IFS="$tab" read -r rrel hrel; do
   b="$dst/$hrel"    # Herdr's copy
 
   if [ ! -e "$b" ]; then
-    if [ "$push" -eq 1 ]; then copy "to Herdr (new)" "$a" "$b" "$herdr_backup/$hrel" "$hrel"; to_herdr=$((to_herdr + 1)); fi
+    copy "to Herdr (new)" "$a" "$b" "$hrel"; to_herdr=$((to_herdr + 1))
   elif [ ! -e "$a" ]; then
-    if [ "$prune" -eq 1 ]; then
-      case "$hrel" in
-        mods/*)
-          echo "removed from Herdr: $hrel"
-          if [ "$dry_run" -eq 0 ]; then mkdir -p "$(dirname "$herdr_backup/$hrel")"; mv "$b" "$herdr_backup/$hrel"; fi
-          pruned=$((pruned + 1)) ;;
-      esac
-    elif [ "$pull" -eq 1 ]; then copy "to repo (new)" "$b" "$a" "$repo_backup/$rrel" "$hrel"; to_repo=$((to_repo + 1)); fi
+    # Prune: only files in a repo-owned mod folder go; anything else only Herdr has stays.
+    case "$hrel" in
+      mods/*)
+        echo "removed from Herdr: $hrel"
+        [ "$dry_run" -eq 1 ] || rm -f "$b"
+        pruned=$((pruned + 1)) ;;
+    esac
   elif cmp -s "$a" "$b"; then
     same=$((same + 1))
-  elif [ "$push" -eq 1 ] && { [ "$pull" -eq 0 ] || [ "$a" -nt "$b" ]; }; then
-    copy "to Herdr" "$a" "$b" "$herdr_backup/$hrel" "$hrel"; to_herdr=$((to_herdr + 1))
-  elif [ "$pull" -eq 1 ] && { [ "$push" -eq 0 ] || [ "$b" -nt "$a" ]; }; then
-    copy "to repo" "$b" "$a" "$repo_backup/$rrel" "$hrel"; to_repo=$((to_repo + 1))
   else
-    same=$((same + 1))
+    copy "to Herdr" "$a" "$b" "$hrel"; to_herdr=$((to_herdr + 1))
   fi
 done < "$pairs"
 
+# A folder the prune emptied goes too (the mod folder itself stays).
+if [ "$pruned" -gt 0 ] && [ "$dry_run" -eq 0 ]; then
+  repo_mods | while IFS= read -r m; do
+    find "$dst/$m" -mindepth 1 -type d -empty -delete 2>/dev/null || true
+  done
+fi
+
 verb="copied"
 [ "$dry_run" -eq 0 ] || verb="would copy"
-echo "$verb: $to_herdr to Herdr, $to_repo to the repo; $same already the same$([ "$pruned" -eq 0 ] || echo "; $pruned removed from Herdr")"
-if [ "$dry_run" -eq 0 ]; then
-  [ ! -d "$herdr_backup" ] || echo "replaced Herdr files were saved to $herdr_backup"
-  [ ! -d "$repo_backup" ] || echo "replaced repo files were saved to $repo_backup"
+echo "$verb: $to_herdr to Herdr, $pruned removed from Herdr; $same already the same"
+
+# ---------------------------------------------------------------------------------------------
+# sync.json: tell the Sync mod which clone this is. Last run wins.
+
+# json_string TEXT: TEXT as a JSON string (quotes included).
+json_string() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' -e "s/$tab/\\\\t/g" -e "s/$(printf '\r')/\\\\r/g" |
+    awk 'BEGIN { printf "\"" } NR > 1 { printf "\\n" } { printf "%s", $0 } END { printf "\"" }'
+}
+remote=""
+if [ "$in_git" -eq 1 ]; then remote=$(git -C "$here" remote get-url origin 2>/dev/null || true); fi
+if [ "$dry_run" -eq 1 ]; then
+  echo "would link: $dst/sync.json"
+else
+  printf '{"repo": %s, "remote": %s}\n' "$(json_string "$here")" "$(json_string "$remote")" > "$dst/sync.json.tmp-$$"
+  mv "$dst/sync.json.tmp-$$" "$dst/sync.json"
+  echo "linked: $dst/sync.json"
 fi
 
 # ---------------------------------------------------------------------------------------------
