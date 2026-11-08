@@ -21,7 +21,7 @@ Tony is a full Herdr window layout with a 268px navigation sidebar, icon-rich dr
 
 ### Layout tree
 
-Copy `layouts/Tony.json` and the mod code and assets from every folder under `mods/`. The repository root is the Tony layout: there is one copy of each mod and no nested Tony folder or duplicate mod tree. An installing agent leaves the root `RECIPE.md` and `preview.png`, every mod's own `RECIPE.md` and `preview.png`, out of `~/.config/herdr-app`. The JSON records `cloned_from: { "name": "main", "version": "0.1.12" }` and has this exact structure:
+Copy `layouts/Tony.json` and the mod code and assets from every folder under `mods/`. The repository root is the Tony layout: there is one copy of each mod and no nested Tony folder or duplicate mod tree. An installing agent leaves the root `RECIPE.md` and `preview.png` and every mod's own `RECIPE.md` and `preview.png` out of `~/.config/herdr-app`. The JSON records `cloned_from: { "name": "main", "version": "0.1.12" }` and has this exact structure:
 
 ```json
 {

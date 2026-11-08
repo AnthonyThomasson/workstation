@@ -20,8 +20,8 @@
 # copies. A new file inside a mod folder, on either side, is carried over to the other. Each mod's
 # RECIPE.md and preview.png belong only to the repo: they are never copied to Herdr, pulled, or
 # pruned. Everything else in a mod folder, including mods/github-tasks/starters/, syncs like any
-# other mod file. keys.json and settings.json are not synced, because Herdr
-# writes to them itself. Generated files (gpui-kit.d.ts, jsconfig.json, .DS_Store) are skipped.
+# other mod file. keys.json and settings.json are not synced, because Herdr writes to them itself.
+# Generated files (gpui-kit.d.ts, jsconfig.json, .DS_Store) are skipped.
 #
 # Skillshare: ~/.config/skillshare/{config.yaml,agents,skills} become symlinks to skillshare/ in
 # this repo. A real file or folder in the way is moved to <name>.backup-<timestamp> first; a link
