@@ -36,7 +36,7 @@ export const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 // What each role may do without asking, in Claude's terms. Bare `hc run` is left out: it would run anything.
 const PLUMBING = {
-  orchestrator: (runDir) => [`Bash(${runDir}/spawn:*)`, `Bash(${runDir}/merge:*)`,"Bash(hc --skill:*)", "Bash(hc send:*)", "Bash(hc wait:*)", "Bash(hc read:*)", "Bash(hc get:*)", "Bash(hc ls:*)", "Bash(hc interrupt:*)", "Bash(hc kill:*)"],
+  orchestrator: (runDir) => [`Bash(${runDir}/spawn:*)`, `Bash(${runDir}/merge:*)`, "Bash(hc --skill:*)", "Bash(hc send:*)", "Bash(hc wait:*)", "Bash(hc read:*)", "Bash(hc get:*)", "Bash(hc ls:*)", "Bash(hc interrupt:*)", "Bash(hc kill:*)"],
   worker: () => ["Bash(hc send:*)"],
   // Read-only git only; auto mode decides which other commands are safe, and ask mode asks the person.
   reviewer: () => ["Bash(hc send:*)", ...READ_ONLY_GIT.map((c) => `Bash(${c}:*)`), SYMBOLIC_REF_RULE],
@@ -312,55 +312,69 @@ job_branch="$ticket_branch--$job"
 now=$(git -C "$ticket_dir" branch --show-current)
 [ "$now" = "$ticket_branch" ] || fail "$ticket_dir is on '$now', not $ticket_branch"
 git -C "$ticket_dir" show-ref --verify --quiet "refs/heads/$job_branch" || fail "unknown job $job: there is no branch $job_branch"
-[ -e "$job_dir/.git" ] || fail "job $job has no worktree at $job_dir"
-gitdir=$(git -C "$job_dir" rev-parse --absolute-git-dir) || fail "could not read $job_dir"
-for state in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD; do
-  [ ! -e "$gitdir/$state" ] || fail "$job_dir is in the middle of a rebase or merge. Have its worker finish or abort it, then run merge again"
-done
-now=$(git -C "$job_dir" branch --show-current)
-[ "$now" = "$job_branch" ] || fail "$job_dir is on '$now', not $job_branch"
+if [ -e "$job_dir/.git" ]; then
+  gitdir=$(git -C "$job_dir" rev-parse --absolute-git-dir) || fail "could not read $job_dir"
+  for state in rebase-merge rebase-apply MERGE_HEAD CHERRY_PICK_HEAD; do
+    [ ! -e "$gitdir/$state" ] || fail "$job_dir is in the middle of a rebase or merge. Have its worker finish or abort it, then run merge again"
+  done
+  now=$(git -C "$job_dir" branch --show-current)
+  [ "$now" = "$job_branch" ] || fail "$job_dir is on '$now', not $job_branch"
 
-# what is left in the worktree is the job's, so it goes in
-git -C "$job_dir" add -A || fail "could not stage what is left in $job_dir"
-if ! git -C "$job_dir" diff --cached --quiet; then
-  git -C "$job_dir" commit -q -m "Job $job: commit what was left in the worktree${what}" || fail "could not commit what is left in $job_dir"
-fi
-
-base=$(git -C "$ticket_dir" rev-parse "refs/heads/$ticket_branch") || fail "could not read $ticket_branch"
-if ! output=$(git -C "$job_dir" rebase "$base" 2>&1); then
-  files=$(git -C "$job_dir" diff --name-only --diff-filter=U)
-  git -C "$job_dir" rebase --abort >/dev/null 2>&1 || echo "merge: git rebase --abort failed in $job_dir: look at it before going on" >&2
-  if [ -n "$files" ]; then
-    echo "merge: job $job conflicts with $ticket_branch in:" >&2
-    printf '%s\\n' "$files" | sed 's/^/  /' >&2
-    echo "The rebase was aborted and nothing else was changed. Have the job's worker rebase onto $ticket_branch in $job_dir, resolve these, commit and report; then run merge $job again." >&2
-  else
-    echo "merge: rebasing $job_branch onto $ticket_branch failed, and was aborted:" >&2
-    printf '%s\\n' "$output" >&2
+  # what is left in the worktree is the job's, so it goes in
+  committed=
+  git -C "$job_dir" add -A || fail "could not stage what is left in $job_dir"
+  if ! git -C "$job_dir" diff --cached --quiet; then
+    git -C "$job_dir" commit -q -m "Job $job: commit what was left in the worktree${what}" || fail "could not commit what is left in $job_dir"
+    committed=1
   fi
-  exit 1
-fi
 
-# the ticket branch must be where the rebase put the job: if it moved, the job needs rebasing again
-now=$(git -C "$ticket_dir" rev-parse "refs/heads/$ticket_branch") || fail "could not read $ticket_branch"
-[ "$now" = "$base" ] || fail "$ticket_branch moved during the merge (from $base to $now). Nothing was merged or removed: run merge $job again"
-git -C "$ticket_dir" merge -q --ff-only "$job_branch" || fail "could not fast-forward $ticket_branch to $job_branch. Nothing was removed"
-new=$(git -C "$ticket_dir" rev-parse "refs/heads/$ticket_branch")
-if [ "$new" = "$base" ]; then
-  echo "$job_branch had nothing new for $ticket_branch."
+  base=$(git -C "$ticket_dir" rev-parse "refs/heads/$ticket_branch") || fail "could not read $ticket_branch"
+  if ! output=$(git -C "$job_dir" rebase "$base" 2>&1); then
+    files=$(git -C "$job_dir" diff --name-only --diff-filter=U)
+    git -C "$job_dir" rebase --abort >/dev/null 2>&1 || echo "merge: git rebase --abort failed in $job_dir: look at it before going on" >&2
+    if [ -n "$files" ]; then
+      echo "merge: job $job conflicts with $ticket_branch in:" >&2
+      printf '%s\\n' "$files" | sed 's/^/  /' >&2
+      echo "The rebase was aborted, and the worktree, the branch and the agents are as they were\${committed:+, except that what was left uncommitted in $job_dir is now committed on $job_branch (the rebase needs a clean tree)}. Have the job's worker rebase onto $ticket_branch in $job_dir, resolve these, commit and report; then run merge $job again." >&2
+    else
+      echo "merge: rebasing $job_branch onto $ticket_branch failed, and was aborted:" >&2
+      printf '%s\\n' "$output" >&2
+    fi
+    exit 1
+  fi
+
+  # the ticket branch must be where the rebase put the job: if it moved, the job needs rebasing again
+  now=$(git -C "$ticket_dir" rev-parse "refs/heads/$ticket_branch") || fail "could not read $ticket_branch"
+  [ "$now" = "$base" ] || fail "$ticket_branch moved during the merge (from $base to $now). Nothing was merged or removed: run merge $job again"
+  git -C "$ticket_dir" merge -q --ff-only "$job_branch" || fail "could not fast-forward $ticket_branch to $job_branch. Nothing was removed"
+  new=$(git -C "$ticket_dir" rev-parse "refs/heads/$ticket_branch")
+  if [ "$new" = "$base" ]; then
+    echo "$job_branch had nothing new for $ticket_branch."
+  else
+    echo "Merged $job_branch into $ticket_branch:"
+    git -C "$ticket_dir" log --oneline "$base..$new"
+  fi
+elif [ -e "$job_dir" ]; then
+  fail "$job_dir exists and is not a worktree"
 else
-  echo "Merged $job_branch into $ticket_branch:"
-  git -C "$ticket_dir" log --oneline "$base..$new"
+  # the worktree is gone but the branch is left: a merge that stopped in its cleanup. Finish that, if the branch is all in the ticket branch
+  git -C "$ticket_dir" worktree prune
+  git -C "$ticket_dir" merge-base --is-ancestor "$job_branch" "$ticket_branch" || fail "job $job has no worktree at $job_dir, and $job_branch has commits that $ticket_branch lacks. Restore its worktree (git worktree add $job_dir $job_branch) and merge again"
+  echo "$job_branch is already in $ticket_branch; finishing the cleanup."
 fi
 
 # the job's worker and any reviewers, whatever they are called: this run's terminals that work in the job's folder
 found=$(hc ls --label "${RUN_LABEL}=$run_id" --label "${FOLDER_LABEL}=$job_dir" --json) || fail "merged, but could not list the job's terminals, so nothing was cleaned up: run merge $job again"
-for term in $(printf '%s' "$found" | grep -o '"address":"[^"]*"' | sed 's/^"address":"//; s/"$//'); do
+addrs=$(printf '%s' "$found" | grep -o '"address" *: *"[^"]*"' | sed 's/^"address" *: *"//; s/"$//')
+if [ -z "$addrs" ] && ! printf '%s' "$found" | grep -Eq '"terminals" *: *\\[ *\\]'; then
+  fail "merged, but could not read the job's terminals from what hc ls said, so nothing was cleaned up: run merge $job again"
+fi
+for term in $addrs; do
   hc kill "$term" >/dev/null || fail "merged, but could not end $term, so nothing else was cleaned up: run merge $job again"
   echo "Ended $term."
 done
-git -C "$ticket_dir" worktree remove "$job_dir" || fail "merged, but could not remove the worktree $job_dir: run merge $job again once that is fixed"
-git -C "$ticket_dir" branch -d "$job_branch" >/dev/null || fail "merged, but could not delete the branch $job_branch"
+[ ! -e "$job_dir" ] || git -C "$ticket_dir" worktree remove "$job_dir" || fail "merged, but could not remove the worktree $job_dir: run merge $job again once that is fixed"
+git -C "$ticket_dir" branch -d "$job_branch" >/dev/null || fail "merged and the worktree is removed, but could not delete the branch $job_branch: run merge $job again once that is fixed"
 echo "Removed $job_dir and $job_branch."
 `;
 }

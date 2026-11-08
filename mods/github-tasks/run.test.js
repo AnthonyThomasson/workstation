@@ -433,7 +433,7 @@ test("the orchestrator ends agents once they have nothing left to do", () => {
 
 // merge: the same scratch repo, with a ticket worktree and a job whose worker has done some work. hc is a stand-in
 // that logs its calls; `hc ls --label …` answers from the terminals it is given, filtering the way hc does.
-function runMerge(args, { terminals = [], setup = () => {}, number = 12, failKill = false } = {}) {
+function runMerge(args, { terminals = [], setup = () => {}, number = 12, failKill = false, lsRaw } = {}) {
   const w = scratch();
   const jobs = jobAt(w.ticketDir, w.branch, "auth");
   const commit = (cwd, msg) => git(cwd, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", msg);
@@ -452,6 +452,7 @@ if (argv[0] === "ls") {
   const want = []; for (let i = 0; i < argv.length; i++) if (argv[i] === "--label") want.push(argv[++i]);
   const all = JSON.parse(readFileSync(${JSON.stringify(fixtures)}, "utf8"));
   const hit = all.filter((t) => t.state === "live" && want.every((k) => t.labels[k.split("=")[0]] === k.slice(k.indexOf("=") + 1)));
+  if (${JSON.stringify(lsRaw ?? null)} !== null) { console.log(${JSON.stringify(lsRaw ?? null)}); process.exit(0); }
   console.log(JSON.stringify({ hidden_finished: 0, terminals: hit.map((t) => ({ address: t.address, name: t.name, cwd: t.cwd, state: t.state })) }));
 }
 if (argv[0] === "kill" && ${failKill}) process.exit(1);
@@ -540,7 +541,8 @@ test("merge: a conflict aborts the rebase, names the files, exits non-zero and l
   });
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /conflicts with workflow\/12-fix in:\n  shared\.txt/);
-  assert.match(r.stderr, /rebase was aborted/);
+  assert.match(r.stderr, /rebase was aborted, and the worktree, the branch and the agents are as they were, except that what was left uncommitted in .* is now committed on workflow\/12-fix--auth/);
+  assert.equal(git(r.job.path, "log", "-1", "--format=%s"), "Job auth: commit what was left in the worktree (ticket #12)");
   assert.equal(git(r.job.path, "status", "--porcelain"), ""); // no rebase left half done
   assert.equal(exists(r.job.path, "rev-parse", "--verify", "REBASE_HEAD"), false);
   assert.equal(git(r.job.path, "branch", "--show-current"), r.job.branch);
@@ -583,7 +585,7 @@ test("merge refuses what it can't merge, and changes nothing", () => {
 });
 
 test("merge: a job whose worktree is gone says so, and a ticket worktree that is gone too", () => {
-  const noTree = runMerge(["auth"], { setup: (w) => { const j = w.addJob(); rmSync(j.path, { recursive: true }); } });
+  const noTree = runMerge(["auth"], { setup: (w) => { const j = w.addJob(); w.commit(j.path, "unmerged"); rmSync(j.path, { recursive: true }); } });
   assert.equal(noTree.status, 1);
   assert.match(noTree.stderr, /job auth has no worktree at /);
   assert.ok(exists(noTree.ticketDir, "show-ref", "--verify", "--quiet", `refs/heads/${noTree.job.branch}`));
@@ -653,6 +655,7 @@ test("merge cleans a job's name as spawn does, whatever is in the arguments", ()
   const spawned = runSpawn(["worker", long, "b"]);
   const folder = spawned.calls[0].match(/\[--cwd\]\[([^\]]*)\]/)[1];
   const script = mergeScript({ id: "12-abc", workDir: spawned.ticketDir, branch: spawned.branch });
+  writeFileSync(join(spawned.bin, "hc"), "#!/bin/sh\necho '{\"terminals\":[]}'\n");
   const m = spawnSync("sh", ["-c", script, "merge", long], { env: { PATH: `${spawned.bin}:${process.env.PATH}` }, encoding: "utf8" });
   assert.equal(m.status, 0, m.stderr); // found the same worktree and branch spawn made
   assert.ok(!existsSync(folder));
@@ -664,4 +667,43 @@ test("the merge script quotes whatever is in the paths and ids", () => {
   assert.ok(text.startsWith("#!/bin/sh\n"));
   const syntax = spawnSync("sh", ["-n"], { input: text, encoding: "utf8" });
   assert.equal(syntax.status, 0, syntax.stderr);
+});
+
+test("merge: with the worktree gone and the branch already in the ticket branch, it finishes the cleanup", () => {
+  const r = runMerge(["auth"], {
+    setup: (w) => {
+      const j = w.addJob();
+      writeFileSync(join(j.path, "a.txt"), "a\n"); git(j.path, "add", "a.txt"); w.commit(j.path, "work");
+      git(w.ticketDir, "merge", "-q", "--ff-only", j.branch);
+      rmSync(j.path, { recursive: true }); // as if `worktree remove` had got that far and the branch delete had not
+    },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /already in workflow\/12-fix; finishing the cleanup/);
+  assert.equal(exists(r.ticketDir, "show-ref", "--verify", "--quiet", `refs/heads/${r.job.branch}`), false);
+  assert.equal(git(r.ticketDir, "log", "-1", "--format=%s"), "work");
+});
+
+test("merge: with the worktree gone and commits on the branch the ticket lacks, it fails and deletes nothing", () => {
+  const r = runMerge(["auth"], { setup: (w) => { const j = w.addJob(); w.commit(j.path, "unmerged"); rmSync(j.path, { recursive: true }); } });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /has no worktree at .*, and workflow\/12-fix--auth has commits that workflow\/12-fix lacks/);
+  assert.ok(exists(r.ticketDir, "show-ref", "--verify", "--quiet", `refs/heads/${r.job.branch}`));
+});
+
+test("merge: pretty-printed JSON from hc ls is read too", () => {
+  const r = runMerge(["auth"], {
+    lsRaw: '{\n  "terminals": [\n    { "address" : "t1", "state": "live" },\n    { "address":  "t2" }\n  ]\n}',
+    setup: (w) => { const j = w.addJob(); w.commit(j.path, "work"); },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(r.calls.filter((c) => c.startsWith("[kill]")), ["[kill][t1]", "[kill][t2]"]);
+});
+
+test("merge: terminals listed but no address readable is a failure, and the job is kept", () => {
+  const r = runMerge(["auth"], { lsRaw: '{"terminals":[{"id":"t1"}]}', setup: (w) => { const j = w.addJob(); w.commit(j.path, "work"); } });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /could not read the job's terminals/);
+  assert.ok(git(r.ticketDir, "worktree", "list").includes("--auth"));
+  assert.ok(exists(r.ticketDir, "show-ref", "--verify", "--quiet", `refs/heads/${r.job.branch}`));
 });
