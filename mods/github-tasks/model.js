@@ -148,8 +148,6 @@ export function checkTask(after, statusOptions = []) {
 }
 
 // ---- Grooming ---------------------------------------------------------------------------------------
-// Which project statuses mean "backlog" (to be groomed) and "groomed" (ready to pick up).
-export const statusesKey = (repo) => `github-tasks.statuses.${repo}`; // where a repo's status choices are kept
 export const GROOMER_KEY = "github-tasks.groomer"; // { agent, model, effort }: what Start Grooming opens
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 export const CLAUDE_MODELS = [
@@ -180,34 +178,29 @@ export function groomArgv(agent, base, { model, effort }) {
   return argv;
 }
 
-export const DEFAULT_STATUSES = { backlog: "To Do", groomed: "Up Next", inProgress: "In Progress", inReview: "In Review", done: "Done" };
-
-export function normalizeSettings(raw) {
-  const text = (v, fallback) => (typeof v === "string" && v.trim() ? v.trim() : fallback);
-  return Object.fromEntries(Object.keys(DEFAULT_STATUSES).map((k) => [k, text(raw?.[k], DEFAULT_STATUSES[k])]));
-}
-
-// The names a workflow run moves its ticket through; passed to the run pane, which cannot import this mod.
-export function runStatuses(raw) {
-  const { inProgress, inReview, done } = normalizeSettings(raw);
-  return { inProgress, inReview, done };
-}
+// The project's statuses, fixed: backlog (to be groomed), groomed (ready to pick up), then the stages a workflow run moves a ticket through.
+export const STATUSES = { backlog: "To Do", groomed: "Up Next", inProgress: "In Progress", inReview: "In Review", done: "Done" };
 
 // Status names match ignoring case, spaces and punctuation: GitHub's own default is "Todo", not "To Do".
 export const statusKey = (name) => String(name ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 export const sameStatus = (a, b) => statusKey(a) === statusKey(b);
-const same = sameStatus;
+
+// A status as the project spells it ("Todo" for "To Do"); the name itself when the project has no such option.
+// options: the Status field's options, [{ name }].
+export const spelled = (options, name) => (options ?? []).find((o) => sameStatus(o.name, name))?.name ?? name;
 
 // The open tickets by stage, newest first: { inProgress, inReview, groomed, backlog }. A ticket in any other status is left out.
-export function groupByStage(open, settings) {
-  const s = normalizeSettings(settings);
-  const pick = (name) => (open ?? []).filter((t) => same(t.status, name)).sort(newestFirst);
-  return { inProgress: pick(s.inProgress), inReview: pick(s.inReview), groomed: pick(s.groomed), backlog: pick(s.backlog) };
+export function groupByStage(open) {
+  const pick = (name) => (open ?? []).filter((t) => sameStatus(t.status, name)).sort(newestFirst);
+  return { inProgress: pick(STATUSES.inProgress), inReview: pick(STATUSES.inReview), groomed: pick(STATUSES.groomed), backlog: pick(STATUSES.backlog) };
 }
 
 // What the agent is first told. It reads the backlog itself with gh; nothing from the tickets is pasted in.
-export function groomPrompt({ repo, project, backlog, groomed }) {
-  const board = `the GitHub Project "${project?.title ?? ""}"${project?.url ? ` (${project.url})` : ""}`;
+// backlog, groomed: the status names as the project spells them; they default to the fixed ones. With no repo or
+// project yet (the settings page before one is linked) the prompt shows <repo> and <project> in their place.
+export function groomPrompt({ repo: repoName, project, backlog = STATUSES.backlog, groomed = STATUSES.groomed }) {
+  const repo = repoName || "<repo>";
+  const board = `the GitHub Project "${project ? project.title ?? "" : "<project>"}"${project?.url ? ` (${project.url})` : ""}`;
   return [
     `# You are helping the person groom the tickets of ${repo}`, "",
     "## Context", "",

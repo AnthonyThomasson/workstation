@@ -29,7 +29,6 @@ export class RunPage {
     this.ticket = props?.ticket ?? null; // { number, key }
     this.projectId = props?.projectId ?? null;
     this.statusField = props?.statusField ?? null; // { id, options }
-    this.statuses = props?.statuses ?? null; // { inProgress, inReview, done }: the names Tasks is set to move tickets through
     this.stage = Number(shared(stageKey(this.id))) || 0; // the furthest status already set
     this.pr = shared(prKey(this.id)) || null; // { url, state, number }
     this.finalSeen = finalSeen({ saved: shared(finalKey(this.id)) });
@@ -83,7 +82,7 @@ export class RunPage {
     if (stage <= this.stage || this.moving || !this.statusField || !this.projectId || !this.ticket?.key) return;
     this.moving = true;
     cx.spawn(async (cx) => {
-      const option = optionFor(this.statusField.options, stage, this.statuses);
+      const option = optionFor(this.statusField.options, stage);
       try {
         if (option) {
           const r = await exec("gh", statusArgs({ projectId: this.projectId, itemId: this.ticket.key, fieldId: this.statusField.id, optionId: option.id }));
@@ -181,8 +180,8 @@ export class RunPage {
   // How Merge sets the ticket Done: the gh call, a warning when the project has no such option, or null when the run has no project.
   doneStatus() {
     if (!this.statusField || !this.projectId || !this.ticket?.key) return null;
-    const option = optionFor(this.statusField.options, 3, this.statuses);
-    if (!option) return { warn: `The project has no "${this.statuses?.done || "Done"}" status, so the ticket's status wasn't set. Set it by hand.` };
+    const option = optionFor(this.statusField.options, 3);
+    if (!option) return { warn: `The project has no "Done" status, so the ticket's status wasn't set. Set it by hand.` };
     return { args: statusArgs({ projectId: this.projectId, itemId: this.ticket.key, fieldId: this.statusField.id, optionId: option.id }) };
   }
 

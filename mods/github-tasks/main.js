@@ -3,12 +3,12 @@
 // opens it in a tab of its own to edit (editor.js), and saving pushes the change to GitHub. Each row links
 // out to GitHub and has Start, which becomes View while its workflow runs.
 // Roles (props.role): "sidebar" (default), the list; "toggle", the tab-bar button that opens or closes the
-// layout's shared side panel, which holds the settings; "settings", the statuses and grooming prompt, in that
+// layout's shared side panel, which holds the settings; "settings", the grooming agent and prompt, in that
 // side panel; "editor", one ticket in the center, opened by a click on a row.
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
-import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeSettings, normalizeGroomer, sameStatus, statusesKey, GROOMER_KEY, chooseProject } from "./model.js";
+import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, spelled, STATUSES, GROOMER_KEY, chooseProject } from "./model.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField } from "./loader.js";
 import { installedAgents, startGrooming, startProjectSetup } from "./groom.js";
 import { S, icon, stop, note, iconButton, action, gh } from "./ui.js";
@@ -156,7 +156,7 @@ export default class GitHubTasks extends View {
       } catch (e) {
         if (current()) {
           this.error = e instanceof GitHubError ? e : { kind: "other", message: String(e?.message ?? e) };
-          if (this.error.kind === "not-a-repo") this.forgetRepo();
+          if (this.error.kind === "not-a-repo") { this.forgetRepo(); this.publish(); }
         }
       } finally {
         if (current()) { this.loading = false; cx.notify(); }
@@ -164,10 +164,10 @@ export default class GitHubTasks extends View {
     });
   }
 
-  // Tells the settings, which live in the side panel, which repo and project this list is for.
+  // Tells the settings, which live in the side panel, which repo and project this list is for. Null when there is no repo.
   publish() {
     const ctx = this.ctx, project = this.project;
-    setShared(CONTEXT, project && ctx ? { repo: this.repo, project: { id: project.id, title: project.title, url: project.url }, where: { cwd: ctx.folder, on: ctx.on } } : null);
+    setShared(CONTEXT, this.repo && ctx ? { repo: this.repo, project: project ? { id: project.id, title: project.title, url: project.url } : null, where: { cwd: ctx.folder, on: ctx.on } } : null);
   }
 
   pickProject(project, cx) {
@@ -210,7 +210,7 @@ export default class GitHubTasks extends View {
       .text_color(t.foreground).text_size(S().body)
       .child(h_flex().h(36).flex_none().pl(14).pr(8).gap(2).items_center()
         .child(div().flex_1().text_size(S().label).font_semibold().text_color(t.muted).child("Tasks"))
-        .when(Boolean(this.project), (el) => el.child(iconButton("settings", "settings", t, () => showSettings(), false, "Task settings")))
+        .child(iconButton("settings", "settings", t, () => showSettings(), false, "Task settings"))
         .when(Boolean(ctx), (el) => el.child(iconButton("refresh", this.loading ? "ring" : "sync", t, (_e, cx) => this.refresh(cx), this.loading, "Refresh"))))
       .when(this.projects.length > 1, (el) => el.child(this.renderContext(t)))
       .child(this.renderBody(t, ctx));
@@ -218,16 +218,15 @@ export default class GitHubTasks extends View {
 
   // The settings, in the layout's side panel: for the repo and project the sidebar's list is showing.
   renderSettings(cx) {
-    const t = theme(), ctx = shared(CONTEXT) ?? null, key = ctx ? JSON.stringify(ctx) : null;
+    const t = theme(), ctx = shared(CONTEXT) ?? null, key = JSON.stringify(ctx); // no repo or project is still a page, with placeholders
     if (key !== this.settingsKey) {
       this.settingsKey = key;
-      later(cx, (cx) => { this.page = ctx ? new TaskSettings(ctx, cx, () => run("layout.hide", { id: PANEL })) : null; cx.notify(); });
+      later(cx, (cx) => { this.page = new TaskSettings(ctx, cx, () => run("layout.hide", { id: PANEL })); cx.notify(); });
     }
     if (this.page && key === this.settingsKey) return this.page.render(cx);
     return v_flex().id("task-settings-empty").size_full().p(16).gap(10).bg(t.background).text_size(S().body)
       .child(h_flex().items_center().child(div().flex_1().text_size(S().title).font_semibold().child("Task settings"))
-        .child(iconButton("settings-close", "close", t, () => run("layout.hide", { id: PANEL }), false, "Close")))
-      .child(note(t, "Select a space whose repo has a project to see its settings."));
+        .child(iconButton("settings-close", "close", t, () => run("layout.hide", { id: PANEL }), false, "Close")));
   }
 
   // Where the list comes from: the repo, its project, and a choice if several are linked.
@@ -255,8 +254,7 @@ export default class GitHubTasks extends View {
     if (!this.loaded) return v_flex().flex_1().min_h(0).p(16).gap(10).children([0, 1, 2, 3, 4].map((i) => div().h(44).flex_none().rounded(8).bg(t.chrome).opacity(1 - i * 0.15)));
     if (!this.project) return message(this.renderNoProject(t, ctx));
 
-    const cfg = this.statuses();
-    const { inProgress, inReview, groomed, backlog } = groupByStage(this.groups.open, cfg);
+    const { inProgress, inReview, groomed, backlog } = groupByStage(this.groups.open);
     const lists = { next: groomed, backlog, progress: inProgress, review: inReview };
     const colors = { next: t.ansi2, backlog: t.ansi4, progress: t.ansi3, review: t.ansi5 };
     const rows = [];
@@ -292,8 +290,6 @@ export default class GitHubTasks extends View {
       .when(Boolean(signIn) && Boolean(this.auth.state), (el) => el.child(this.auth.render(t, (_e, cx) => this.signIn(cx, signIn))));
   }
 
-  statuses() { return normalizeSettings(this.repo ? shared(statusesKey(this.repo)) : null); }
-
   // The chosen agent: the saved one if it is installed, else Claude, else the first installed.
   agent() {
     const saved = normalizeGroomer(shared(GROOMER_KEY)).agent ?? shared(AGENT_KEY);
@@ -307,11 +303,10 @@ export default class GitHubTasks extends View {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        // The prompt names the statuses as the project spells them ("Todo", not the default "To Do").
-        const where = { cwd: ctx.folder, on: ctx.on }, cfg = this.statuses();
+        // The prompt names the statuses as the project spells them ("Todo", not the fixed "To Do").
+        const where = { cwd: ctx.folder, on: ctx.on };
         const options = (await loadStatusField(gh, project.id, where).catch(() => null))?.options ?? [];
-        const real = (name) => options.find((o) => sameStatus(o.name, name))?.name ?? name;
-        await startGrooming({ agent, repo: this.repo, project, settings: { backlog: real(cfg.backlog), groomed: real(cfg.groomed) }, groomer: normalizeGroomer(shared(GROOMER_KEY)), where });
+        await startGrooming({ agent, repo: this.repo, project, settings: { backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) }, groomer: normalizeGroomer(shared(GROOMER_KEY)), where });
         this.error = null;
       } catch (e) {
         this.error = { kind: "other", message: String(e?.message ?? e) };

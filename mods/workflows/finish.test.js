@@ -37,22 +37,10 @@ test("optionFor matches status names loosely", () => {
   assert.equal(optionFor(undefined, 1), null);
 });
 
-test("optionFor uses the configured names, falling back to the defaults", () => {
-  const options = [{ id: "a", name: "Doing" }, { id: "b", name: "Checking" }, { id: "c", name: "In progress" }];
-  const statuses = { inProgress: "Doing", inReview: "Checking" };
-  assert.equal(optionFor(options, 1, statuses).id, "a");
-  assert.equal(optionFor(options, 2, statuses).id, "b");
-  assert.equal(optionFor(options, 1, {}).id, "c");
-  assert.equal(optionFor(options, 1, null).id, "c");
-  assert.equal(optionFor([{ id: "x", name: "In Review" }], 2, { inProgress: "Doing" }).id, "x");
-});
-
-test("optionFor sets the Done status, default Done", () => {
+test("optionFor sets the Done status", () => {
   const options = [{ id: "a", name: "In progress" }, { id: "d", name: "Done" }, { id: "s", name: "Shipped" }];
   assert.equal(optionFor(options, 3).id, "d");
-  assert.equal(optionFor(options, 3, { done: "Shipped" }).id, "s");
-  assert.equal(optionFor(options, 3, { done: "" }).id, "d");
-  assert.equal(optionFor([{ id: "a", name: "Todo" }], 3, {}), null);
+  assert.equal(optionFor([{ id: "a", name: "Todo" }], 3), null);
 });
 
 test("statusArgs sends the ids as variables", () => {

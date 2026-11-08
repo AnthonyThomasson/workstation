@@ -5,7 +5,7 @@
 // A copy of github-tasks/model.js's statusKey (a mod cannot import another mod).
 export const statusKey = (name) => String(name ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-export const STAGES = ["in progress", "in review", "done"]; // what a ticket becomes as the run goes on, in order (Done is set by Merge)
+export const STAGES = ["In Progress", "In Review", "Done"]; // what a ticket becomes as the run goes on, in order (Done is set by Merge)
 
 // The stage the run has reached: 0 nothing yet, 1 a worker started, 2 a reviewer started.
 // agents: { workers, reviewers }, with every agent seen (the ones that ended too).
@@ -20,9 +20,9 @@ export const canMerge = ({ finalSeen: seen, workers = [], reviewers = [] }) =>
   Boolean(seen) && !workers.some((w) => w.live) && !reviewers.some((r) => r.live);
 
 // The project's Status option for a stage, or null when the project has none by that name.
-// stage 3 is Done. statuses: { inProgress, inReview, done } as configured in Tasks; absent (old runs) means the defaults in STAGES.
-export function optionFor(options, stage, statuses) {
-  const name = [statuses?.inProgress, statuses?.inReview, statuses?.done][stage - 1] || STAGES[stage - 1];
+// stage 3 is Done.
+export function optionFor(options, stage) {
+  const name = STAGES[stage - 1];
   return (options ?? []).find((o) => statusKey(o.name) === statusKey(name)) ?? null;
 }
 

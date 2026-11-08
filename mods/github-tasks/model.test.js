@@ -152,34 +152,19 @@ test("a save needs a title and a status the project has", () => {
   assert.equal(checkTask({ title: "T", status: null }, options), null);
 });
 
-import { normalizeSettings, groupByStage, groomPrompt, setupPrompt, groomArgv, normalizeGroomer, DEFAULT_STATUSES, runStatuses, recentlyDone, middleEllipsis } from "./model.js";
+import { groupByStage, groomPrompt, setupPrompt, groomArgv, normalizeGroomer, STATUSES, spelled, sameStatus, recentlyDone, middleEllipsis } from "./model.js";
 
-test("grooming statuses default to To Do and Up Next", () => {
-  assert.deepEqual(normalizeSettings(undefined), DEFAULT_STATUSES);
-  assert.deepEqual(normalizeSettings({ backlog: " Ideas ", groomed: "" }), { ...DEFAULT_STATUSES, backlog: "Ideas" });
+test("the statuses are fixed", () => {
+  assert.deepEqual(STATUSES, { backlog: "To Do", groomed: "Up Next", inProgress: "In Progress", inReview: "In Review", done: "Done" });
 });
 
-test("in progress and in review statuses default and can be renamed", () => {
-  assert.equal(DEFAULT_STATUSES.inProgress, "In Progress");
-  assert.equal(DEFAULT_STATUSES.inReview, "In Review");
-  const s = normalizeSettings({ inProgress: " Doing ", inReview: "" });
-  assert.equal(s.inProgress, "Doing");
-  assert.equal(s.inReview, "In Review");
-  assert.deepEqual(runStatuses({ inProgress: "Doing" }), { inProgress: "Doing", inReview: "In Review", done: "Done" });
-});
-
-test("the done status defaults to Done and can be renamed", () => {
-  assert.equal(DEFAULT_STATUSES.done, "Done");
-  assert.equal(normalizeSettings({ done: " Shipped " }).done, "Shipped");
-  assert.equal(normalizeSettings({ done: "" }).done, "Done");
-  assert.equal(runStatuses({ done: "Shipped" }).done, "Shipped");
-});
-
-test("groups tickets by the configured in progress and in review names", () => {
-  const open = [ticket("a", "2026-01-01T00:00:00Z", { status: "Doing" }), ticket("b", "2026-01-01T00:00:00Z", { status: "Checking" }), ticket("c", "2026-01-01T00:00:00Z", { status: "In Progress" })];
-  const g = groupByStage(open, { inProgress: "Doing", inReview: "Checking" });
-  assert.deepEqual(g.inProgress.map((t) => t.key), ["a"]);
-  assert.deepEqual(g.inReview.map((t) => t.key), ["b"]);
+test("spelled gives a status as the project spells it, else the fixed name", () => {
+  const options = [{ name: "Todo" }, { name: "In-Progress" }];
+  assert.equal(spelled(options, STATUSES.backlog), "Todo");
+  assert.equal(spelled(options, STATUSES.inProgress), "In-Progress");
+  assert.equal(spelled(options, STATUSES.groomed), "Up Next");
+  assert.equal(spelled(undefined, STATUSES.done), "Done");
+  assert.ok(sameStatus("To Do", "todo"));
 });
 
 test("groups open tickets by stage, newest first, dropping other statuses", () => {
@@ -195,12 +180,24 @@ test("groups open tickets by stage, newest first, dropping other statuses", () =
   assert.deepEqual(g.backlog.map((t) => t.key), ["b", "a"]);
   assert.deepEqual(g.groomed.map((t) => t.key), ["c"]);
   assert.deepEqual(g.inProgress.map((t) => t.key), ["d"]);
-  assert.deepEqual(groupByStage(open, { backlog: "In review", groomed: "To Do" }).groomed.map((t) => t.key), ["b", "a"]);
+  assert.deepEqual(g.inReview.map((t) => t.key), ["e"]);
 });
 
-test("the grooming prompt names the repo, project and both statuses", () => {
-  const p = groomPrompt({ repo: "me/app", project: { title: "Roadmap", url: "https://x/p" }, backlog: "Ideas", groomed: "Ready" });
-  for (const s of ["me/app", "Roadmap", "https://x/p", '"Ideas"', '"Ready"']) assert.ok(p.includes(s), s);
+test("the grooming prompt names the repo, project and both statuses as given", () => {
+  const p = groomPrompt({ repo: "me/app", project: { title: "Roadmap", url: "https://x/p" }, backlog: "Todo", groomed: "Ready" });
+  for (const s of ["me/app", "Roadmap", "https://x/p", '"Todo"', '"Ready"']) assert.ok(p.includes(s), s);
+});
+
+test("the grooming prompt uses the fixed statuses when none are given", () => {
+  const p = groomPrompt({ repo: "me/app", project: { title: "Roadmap" } });
+  assert.ok(p.includes('"To Do"') && p.includes('"Up Next"'));
+});
+
+test("the grooming prompt shows placeholders with no repo or project", () => {
+  const p = groomPrompt({});
+  assert.ok(p.includes("<repo>") && p.includes('"<project>"'));
+  assert.ok(p.includes('"To Do"') && !p.includes("undefined") && !p.includes("null"));
+  assert.ok(groomPrompt({ repo: "me/app" }).includes('"<project>"'));
 });
 
 test("status names match ignoring case, spaces and punctuation", () => {
@@ -257,7 +254,7 @@ test("middleEllipsis keeps both ends of a long name and leaves a short one alone
 
 test("groupByStage finds In review whatever its spelling", () => {
   const open = [ticket("r", "2026-01-01T00:00:00Z", { status: "In Review" }), ticket("p", "2026-01-01T00:00:00Z", { status: "In progress" })];
-  const g = groupByStage(open, {});
+  const g = groupByStage(open);
   assert.deepEqual(g.inReview.map((t) => t.key), ["r"]);
   assert.deepEqual(g.inProgress.map((t) => t.key), ["p"]);
 });

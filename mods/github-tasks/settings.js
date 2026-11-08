@@ -1,32 +1,30 @@
-// The Tasks settings page: a tab the Tasks panel opens (props.role "settings"). Which project statuses mean
-// "backlog" and "groomed", and the exact prompt Start Grooming gives the grooming agent, as it would be sent now.
-// Not a View of its own: main.js builds one in init and draws it from render.
+// The Tasks settings page: the grooming agent (global, not per project) and the exact prompt Start Grooming gives it,
+// as it would be sent now. It works with no repo or project linked: the prompt then shows placeholders.
+// Not a View of its own: main.js builds one and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { shared, setShared, theme } from "herdr";
-import { normalizeSettings, normalizeGroomer, sameStatus, groomPrompt, statusesKey, GROOMER_KEY, EFFORTS, CLAUDE_MODELS } from "./model.js";
+import { normalizeGroomer, spelled, groomPrompt, STATUSES, GROOMER_KEY, EFFORTS, CLAUDE_MODELS } from "./model.js";
 import { installedAgents } from "./groom.js";
 import { loadStatusField } from "./loader.js";
-import { S, icon, stop, note, iconButton, gh } from "./ui.js";
+import { S, stop, note, iconButton, gh } from "./ui.js";
 
 export class TaskSettings {
   constructor(props, cx, onClose) {
     this.onClose = onClose ?? null; // set when the settings sit in the side panel, which needs a way to close
-    this.repo = props?.repo ?? "";
-    this.project = props?.project ?? null;
+    this.repo = props?.repo ?? ""; // "" until a repo is known
+    this.project = props?.project ?? null; // null until the repo has a linked project
     this.where = props?.where ?? {};
-    this.options = null; // the project's Status field options; null while loading
+    this.options = []; // the project's Status field options, for spelling the prompt's statuses; empty with no project
     this.agents = []; // installed agents Start Grooming can use
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
     this.model = InputState.new({ value: this.groomer().model, placeholder: "Agent's default" });
     this.model.on("change", (_e, cx) => { this.saveGroomer({ model: this.model.value().trim() }); cx.notify(); });
-    cx.spawn(async (cx) => {
+    if (this.project) cx.spawn(async (cx) => {
       try { this.options = (await loadStatusField(gh, this.project.id, this.where))?.options ?? []; } catch { this.options = []; }
       cx.notify();
     });
   }
-
-  cfg() { return normalizeSettings(shared(statusesKey(this.repo))); }
 
   groomer() { return normalizeGroomer(shared(GROOMER_KEY)); }
   saveGroomer(patch) { setShared(GROOMER_KEY, { ...this.groomer(), ...patch }); }
@@ -37,26 +35,20 @@ export class TaskSettings {
     return this.agents.find((a) => a.key === saved) ?? this.agents.find((a) => a.key === "claude") ?? this.agents[0] ?? null;
   }
 
-  set(kind, name, cx) {
-    setShared(statusesKey(this.repo), { ...this.cfg(), [kind]: name });
-    cx.notify();
-  }
-
   render(cx) {
-    const t = theme(), cfg = this.cfg(), options = this.options ?? [];
-    // The prompt names statuses as the project spells them ("Todo", not the default "To Do").
-    const real = (name) => options.find((o) => sameStatus(o.name, name))?.name ?? name;
-    const prompt = groomPrompt({ repo: this.repo, project: this.project, backlog: real(cfg.backlog), groomed: real(cfg.groomed) });
+    const t = theme();
+    // The prompt names statuses as the project spells them ("Todo", not the fixed "To Do").
+    const prompt = groomPrompt({ repo: this.repo, project: this.project, backlog: spelled(this.options, STATUSES.backlog), groomed: spelled(this.options, STATUSES.groomed) });
+    const where = [this.repo, this.project?.title].filter(Boolean).join(" · ");
     return v_flex().id("task-settings").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
       .child(h_flex().flex_none().px(20).py(14).gap(8).items_start().border_b(1).border_color(t.border)
         .child(v_flex().flex_1().min_w(0).gap(4)
           .child(div().text_size(S().title).font_semibold().child("Task settings"))
-          .child(note(t, `${this.repo}${this.project?.title ? ` · ${this.project.title}` : ""}`)))
+          .child(note(t, where || "No repo or project linked yet.")))
         .when(Boolean(this.onClose), (el) => el.child(iconButton("settings-close", "close", t, () => this.onClose(), false, "Close"))))
       .child(div().id("task-settings-body").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(20).py(16).gap(20)
           .child(this.agentSection(t))
-          .child(this.statuses(t, cfg, this.options, cx))
           .child(this.promptSection(t, prompt))));
   }
 
@@ -83,37 +75,11 @@ export class TaskSettings {
         .child(h_flex().flex_wrap().gap(4).children(EFFORTS.map((e) => chip(`groom-effort-${e}`, e, g.effort === e, (_e, cx) => { this.saveGroomer({ effort: e }); cx.notify(); })))));
   }
 
-  statuses(t, cfg, options, cx) {
-    const group = (kind, title, hint) => v_flex().flex_none().gap(4)
-      .child(div().text_size(S().secondary).font_semibold().child(title))
-      .child(note(t, hint))
-      .child(v_flex().gap(2).children(options.map((o) => {
-        const on = sameStatus(o.name, cfg[kind]);
-        return h_flex().id(`status-${kind}-${o.id ?? o.name}`).h(30).flex_none().px(8).gap(8).items_center().rounded(6).cursor_pointer()
-          .hover((s) => s.bg(t.hover)).when(on, (el) => el.bg(t.selected)).on_mouse_down("left", stop)
-          .on_click((_e, cx) => this.set(kind, o.name, cx))
-          .child(div().w(14).h(14).flex_none().child(on ? icon("check", 14, t.foreground) : div()))
-          .child(div().flex_1().min_w(0).truncate().child(o.name));
-      })))
-      .when(!options.some((o) => sameStatus(o.name, cfg[kind])), (el) => el.child(note(t, `The project has no "${cfg[kind]}" status.`, t.blocked)));
-    const body = this.options === null ? note(t, "Loading statuses…")
-      : !options.length ? note(t, "This project has no Status field.")
-      : v_flex().gap(14)
-        .child(group("backlog", "Backlog status", "Tickets here are the ones Start Grooming works through."))
-        .child(group("groomed", "Groomed status", "Ready tickets, listed under In Progress."))
-        .child(group("inProgress", "In progress status", "Where a workflow run moves its ticket once a worker starts."))
-        .child(group("inReview", "In review status", "Where a workflow run moves its ticket once a reviewer starts; listed under In Review."))
-        .child(group("done", "Done status", "Where a workflow run moves its ticket once its work is merged."));
-    return v_flex().flex_none().gap(8)
-      .child(div().text_size(S().title).font_semibold().child("Statuses"))
-      .child(body);
-  }
-
   promptSection(t, prompt) {
     return v_flex().flex_none().gap(8)
       .child(v_flex().gap(2)
         .child(div().text_size(S().title).font_semibold().child("Grooming agent prompt"))
-        .child(note(t, "What Start Grooming tells the agent when it opens, with this repo, project and statuses filled in.")))
+        .child(note(t, "What Start Grooming tells the agent when it opens, with this repo and project filled in (<repo> and <project> until they are known).")))
       .child(div().p(12).rounded(8).bg(t.chrome).border_1().border_color(t.border)
         .child(v_flex().gap(2).children(prompt.split("\n").map((line) => div().min_h(S().body).text_size(S().secondary).child(line)))));
   }
