@@ -156,7 +156,8 @@ export default class GitHubTasks extends View {
       } catch (e) {
         if (current()) {
           this.error = e instanceof GitHubError ? e : { kind: "other", message: String(e?.message ?? e) };
-          if (this.error.kind === "not-a-repo") { this.forgetRepo(); this.publish(); }
+          if (this.error.kind === "not-a-repo") this.forgetRepo();
+          this.publish(); // whatever failed, the settings show what the list knows now, never an earlier space's repo
         }
       } finally {
         if (current()) { this.loading = false; cx.notify(); }
@@ -202,7 +203,7 @@ export default class GitHubTasks extends View {
     const ctx = this.context(), key = ctx ? `${ctx.space}|${ctx.on}` : null;
     const newSpace = key !== this.ctxKey;
     const newFolder = !newSpace && ctx?.folder !== this.ctx?.folder;
-    if (newSpace) { this.ctxKey = key; this.reset(ctx); }
+    if (newSpace) { this.ctxKey = key; this.reset(ctx); later(cx, () => this.publish()); } // the old space's repo is forgotten, so the settings forget it too
     else if (newFolder) { this.ctx = ctx; this.token++; this.loading = false; }
     if (ctx && (newSpace || newFolder)) later(cx, (cx) => this.refresh(cx));
 
