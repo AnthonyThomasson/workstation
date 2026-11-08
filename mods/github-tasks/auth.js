@@ -3,17 +3,14 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, readTextFile, settings } from "herdr";
-import { signInFrom } from "./model.js";
+import { signInFrom, REFRESH, LOGIN } from "./model.js";
 import { S, note, action } from "./ui.js";
 
 // gh's output goes to a new folder, which the script prints, and its exit code goes to code when it ends.
 const SIGN_IN = 'd=$(mktemp -d) || exit 1; ( GH_PROMPT_DISABLED=1 gh "$@" </dev/null >"$d/out" 2>"$d/err"; echo $? > "$d/code" ) >/dev/null 2>&1 &\necho "$d"';
 const SIGN_IN_SECONDS = 900; // GitHub's device codes last about 15 minutes
 
-// "project" lets Tasks read Projects and edit them; it includes read:project.
-const GRANT = ["-h", "github.com", "-s", "project"];
-export const REFRESH = ["auth", "refresh", ...GRANT];
-export const LOGIN = ["auth", "login", "-h", "github.com", "-p", "https", "-s", "project", "-w"];
+export { REFRESH, LOGIN };
 
 export class Auth {
   constructor() { this.state = null; } // a sign-in in progress, or the last one's failure

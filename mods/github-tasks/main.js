@@ -9,7 +9,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
-import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, spelled, STATUSES, GROOMER_KEY, chooseProject } from "./model.js";
+import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, spelled, STATUSES, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE } from "./model.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField } from "./loader.js";
 import { installedAgents, startGrooming, startProjectSetup } from "./groom.js";
 import { S, icon, stop, note, iconButton, action, gh, later } from "./ui.js";
@@ -23,11 +23,11 @@ import { PromptPage } from "./prompts-page.js";
 import { WorkflowList } from "./workflow-list.js";
 import { loadWorkflows } from "./workflow-env.js";
 import { startRun, liveRunFor, viewRun } from "./start.js";
+import { Doctor } from "./doctor-run.js";
+import { DOCTOR_KEY } from "./doctor.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
-const CONTEXT = "github-tasks.context"; // { repo, project, where }: what the sidebar looks at, for the settings in the side panel
-const PLACE = "github-tasks.place"; // { cwd, on }: where the selected space is, for the workflows in the settings. Set even with no repo
 const COLUMN = "sidebar"; // the layout column the list lives in: its width says how much of a name fits
 const SECTIONS = [ // the list's sections, top to bottom; open: whether each starts expanded
   { id: "next", label: "Up Next", open: true },
@@ -35,7 +35,6 @@ const SECTIONS = [ // the list's sections, top to bottom; open: whether each sta
   { id: "review", label: "In Review", open: true },
   { id: "backlog", label: "Backlog", open: false },
 ];
-const projectKey = (repo) => `github-tasks.project.${repo}`;
 const AGENT_KEY = "github-tasks.groomAgent"; // the agent saved before the settings page held it
 function find(node, id) {
   if (node?.id === id) return node;
@@ -87,6 +86,7 @@ export default class GitHubTasks extends View {
     this.agents = []; // installed agents Start Grooming can use
     this.grooming = false;
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
+    this.doctor = new Doctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
     cx.timer.every(POLL, (cx) => this.refresh(cx));
     cx.timer.every(3000, (cx) => cx.notify()); // a run starting or ending turns a row's Start into View and back
     cx.spawn(async (cx) => { for (;;) { if ((await nextCommand()) === "focus") this.handle.focus(); cx.notify(); } });
@@ -211,11 +211,12 @@ export default class GitHubTasks extends View {
     else if (newFolder) { this.ctx = ctx; this.token++; this.loading = false; later(cx, () => this.publish()); } // the settings follow the folder at once, not after the refresh
     if (ctx && (newSpace || newFolder)) later(cx, (cx) => this.refresh(cx));
 
+    const problems = shared(DOCTOR_KEY)?.issues?.length ?? 0;
     return v_flex().id("github-tasks").track_focus(this.handle).size_full().min_h(0).border_t(1).border_color(t.border)
       .text_color(t.foreground).text_size(S().body)
       .child(h_flex().h(36).flex_none().pl(14).pr(8).gap(2).items_center()
         .child(div().flex_1().text_size(S().label).font_semibold().text_color(t.muted).child("Tasks"))
-        .child(iconButton("settings", "settings", t, () => showSettings(), false, "Task settings"))
+        .child(iconButton("settings", "settings", t, () => showSettings(), false, problems ? `Task settings (${problems} ${problems === 1 ? "problem" : "problems"} found)` : "Task settings", undefined, problems ? t.ansi1 : undefined))
         .when(Boolean(ctx), (el) => el.child(iconButton("refresh", this.loading ? "ring" : "sync", t, (_e, cx) => this.refresh(cx), this.loading, "Refresh"))))
       .when(this.projects.length > 1, (el) => el.child(this.renderContext(t)))
       .child(this.renderBody(t, ctx));

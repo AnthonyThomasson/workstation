@@ -70,6 +70,19 @@ export function chooseProject(projects, savedId) {
   return projects.find((p) => p.id === savedId) ?? projects[0] ?? null;
 }
 
+// The gh commands that sign in with the permission Tasks needs. "project" lets Tasks read Projects and edit them;
+// it includes read:project. auth.js runs them; the doctor names them in its prompt.
+const GRANT = ["-h", "github.com", "-s", "project"];
+export const REFRESH = ["auth", "refresh", ...GRANT];
+export const LOGIN = ["auth", "login", "-h", "github.com", "-p", "https", "-s", "project", "-w"];
+
+// Shared state main.js publishes for the settings page and the doctor.
+export const CONTEXT = "github-tasks.context"; // { repo, project, where }: what the sidebar looks at
+export const PLACE = "github-tasks.place"; // { cwd, on }: where the selected space is. Set even with no repo
+
+// The shared key that holds the project chosen for a repo.
+export const projectKey = (repo) => `github-tasks.project.${repo}`;
+
 // What a gh failure means: no-write-scope, no-scope, no-auth, not-a-repo, or other.
 // GitHub names the scopes a field needs: a mutation on a project asks for plain "project", a read
 // for "read:project".

@@ -13,10 +13,12 @@ export const icon = (name, size, color) => svg(`mods/github-tasks/icons/${name}.
 export const stop = (_e, cx) => cx.stop_propagation();
 export const note = (t, text, color) => div().flex_none().text_size(S().secondary).text_color(color ?? t.muted).child(text);
 
-export function iconButton(id, name, t, onClick, spin, tip, color) {
+// badge: a color, to show a small dot at the button's top right.
+export function iconButton(id, name, t, onClick, spin, tip, color, badge) {
   const glyph = icon(name, 14, color ?? t.muted);
   return h_flex().id(id).size(24).flex_none().justify_center().items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover))
     .when(Boolean(tip), (el) => el.tooltip(tip))
+    .when(Boolean(badge), (el) => el.relative().child(div().absolute().top(3).right(3).size(7).rounded_full().bg(badge)))
     .on_mouse_down("left", stop).on_click(onClick).child(spin ? glyph.spin(900) : glyph);
 }
 
