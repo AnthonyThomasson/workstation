@@ -309,6 +309,73 @@ test("picking another project in the sidebar checks again at the next look", asy
   assert.equal(deps.calls.length, m, "and settles after one check");
 });
 
+test("after a timeout, going to another place and back checks the first again", async () => {
+  let hang = true;
+  const deps = fakes({ auth: () => (deps.store.get(PLACE).cwd === "/a" && hang ? new Promise(() => {}) : OK_AUTH) });
+  const doctor = watcher(deps);
+  at(deps, "/a");
+  await doctor.look(false, async () => {}); // A hangs
+  at(deps, "/b");
+  deps.answers.repo = notARepo;
+  await doctor.look(false); // B is fine
+  assert.equal(deps.store.get(DOCTOR_KEY).place.cwd, "/b");
+  hang = false;
+  at(deps, "/a");
+  await doctor.look(false);
+  assert.equal(deps.store.get(DOCTOR_KEY).place.cwd, "/a", "A is not held back by its old timeout");
+});
+
+test("after a timeout, moving about inside the same repo starts no new check", async () => {
+  const deps = fakes({ auth: () => new Promise(() => {}) });
+  const doctor = watcher(deps);
+  at(deps, "/repo/src");
+  await doctor.look(false, async () => {});
+  const stuck = deps.calls.length;
+  at(deps, "/repo/docs"); // a folder never asked about, inside the repo the check is stuck on
+  await doctor.look(false);
+  assert.equal(deps.calls.length, stuck);
+});
+
+test("after a timeout a new grooming agent or a newly picked project checks at the next look", async () => {
+  for (const change of ["agent", "project"]) {
+    let agent = null, picked, hang = false;
+    const deps = fakes({ auth: () => (hang ? new Promise(() => {}) : OK_AUTH), deps: { groomerAgent: () => agent, chosenProject: () => picked } });
+    const doctor = watcher(deps);
+    at(deps, "/repo");
+    await doctor.look(false); // answered once, so the repo is known
+    deps.store.set(WORKFLOWS_CHANGED, 7);
+    hang = true;
+    await doctor.look(false, async () => {}); // times out
+    const stuck = deps.calls.length;
+    hang = false;
+    await doctor.look(false);
+    assert.equal(deps.calls.length, stuck, "held back");
+    if (change === "agent") agent = "gemini"; else picked = "P2";
+    await doctor.look(false);
+    assert.ok(deps.calls.length > stuck, change);
+  }
+});
+
+test("a project picked while the check runs is not missed", async () => {
+  let picked, release;
+  const gate = new Promise((r) => { release = r; });
+  const field = { code: 0, stdout: JSON.stringify({ data: { node: { field: { id: "F", options: ALL.map((name, i) => ({ id: String(i), name })) } } } }), stderr: "" };
+  const deps = fakes({ field: () => gate.then(() => field), deps: { chosenProject: () => picked } });
+  const doctor = watcher(deps);
+  at(deps, "/repo");
+  const running = doctor.look(false);
+  await soon(); await soon(); await soon();
+  picked = "P2"; // after the check read the pick, before it finished
+  release();
+  await running;
+  const n = deps.calls.length;
+  await doctor.look(false);
+  assert.ok(deps.calls.length > n, "checked again for the new pick");
+  const m = deps.calls.length;
+  await doctor.look(false);
+  assert.equal(deps.calls.length, m, "and then settles");
+});
+
 test("a check that throws leaves the last answer and is tried again", async () => {
   const deps = fakes();
   const doctor = watcher(deps);

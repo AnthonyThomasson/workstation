@@ -1,6 +1,6 @@
 // Runs the doctor (doctor.js) on its own: it asks gh, the installed agents and the workflow files for itself, so it does not wait
-// for the ticket list. It checks when it starts, when the space or its repo changes (PLACE), when workflows change or the grooming
-// agent is chosen, and on a slow timer, and publishes what it finds to DOCTOR_KEY, which the settings page and the sidebar's gear
+// for the ticket list. It checks when it starts, when the space or its repo changes (PLACE), when workflows change, the grooming
+// agent is chosen or another project is picked in the sidebar (the repo's `projectKey`), and on a slow timer, and publishes what it finds to DOCTOR_KEY, which the settings page and the sidebar's gear
 // read. Everything it uses comes in as `deps` (doctor-env.js passes Herdr's), so node --test runs it against fakes:
 //   deps.shared(key)  deps.setShared(key, value)  deps.gh(args, where)  deps.knownAgents()  deps.loadWorkflows(where)
 //   deps.repoRootOf(where)  deps.groomerAgent()  deps.chosenProject(repo)
@@ -71,6 +71,8 @@ export class Doctor {
     this.deps = deps;
     this.sig = null; // what the last check started for; null to check at the next look
     this.stuck = null; // the state a check timed out in: the 2s looks start nothing more until it changes or the 60s check comes
+    this.began = null; // the place ({ cwd, on }) the running look is for
+    this.repos = new Map(); // a place's anchor -> the repo found there, to read the project picked for it
     this.running = false;
     this.generation = 0; // a check that was given up on is a past generation, and publishes nothing
     this.roots = new Map(); // cwd -> its repo's top folder, so a folder is asked about once
@@ -98,31 +100,46 @@ export class Doctor {
     return { cwd: at.cwd, on: at.on, root: this.roots.get(key) };
   }
 
-  // The inputs of the signature other than the place. The project is the one picked in the sidebar for the repo of the last
-  // answer for this place (`at`: { cwd, on }), so picking another is seen at the next look, not at the slow check.
+  // The folder a place is keyed on: its repo's top folder, from the lookups already made (also for a folder not asked about yet
+  // but inside a repo that was), else the folder itself. Never asks anything, so it is safe to use before a lookup.
+  anchor(at) {
+    if (!at) return null;
+    const own = this.roots.get(`${at.on ?? ""}|${at.cwd ?? ""}`);
+    if (own) return own;
+    for (const [key, root] of this.roots) {
+      if (root && key.startsWith(`${at.on ?? ""}|`) && at.cwd && (at.cwd === root || at.cwd.startsWith(`${root.replace(/\/+$/, "")}/`))) return root;
+    }
+    return at.cwd ?? null;
+  }
+
+  // The inputs of the signature other than the place. The project is the one picked in the sidebar for the repo last found at
+  // this place (`at`: { cwd, on }), so picking another is seen at the next look, not at the slow check.
   rest(at) {
-    const repo = doctorFor(this.deps.shared(DOCTOR_KEY), at ?? null)?.repo;
+    const repo = at ? this.repos.get(`${at.on ?? ""}|${this.anchor(at)}`) : null;
     return {
       workflowsChanged: this.deps.shared(WORKFLOWS_CHANGED), groomer: { agent: this.deps.groomerAgent() },
       project: repo ? this.deps.chosenProject(repo) ?? null : null,
     };
   }
 
-  // The state as the 2s look sees it before any lookup: the place as published, and the rest.
-  state() {
-    const at = this.deps.shared(PLACE) ?? null;
-    return JSON.stringify([at?.on ?? null, at?.cwd ?? null, this.rest(at)]);
-  }
+  // The state as the 2s look sees it for a place ({ cwd, on } or null), before any lookup: the place's anchor and the rest.
+  stateAt(at) { return JSON.stringify([at?.on ?? null, this.anchor(at), this.rest(at)]); }
 
   // A check, when forced or when something it depends on changed. One at a time, and none that takes longer than TIMEOUT. The
   // timeout starts only once there is something to wait for (a lookup or a check), so looks that find nothing to do leave nothing
   // pending. Without a place, only a forced check runs: the place is published a moment after the mod starts, and an answer for
-  // no place would only be thrown away. sleep(ms): resolves after ms.
+  // no place would only be thrown away. After a timeout the 2s looks wait while the state stays what the stuck check started in
+  // (same anchor, workflows, grooming agent and picked project); a forced look or any change ends the wait. sleep(ms): resolves
+  // after ms.
   async look(force, sleep = () => new Promise(() => {})) {
     if (this.running) return;
-    const state = this.state();
+    const at = this.deps.shared(PLACE) ?? null;
     if (force) this.stuck = null;
-    else if (this.stuck === state) return; // a check timed out in this state: wait for the 60s check or a change
+    else if (this.stuck !== null) {
+      if (this.stuck === this.stateAt(at)) return; // a check timed out in this state: wait for the 60s check or a change
+      this.stuck = null;
+    }
+    this.began = at;
     this.running = true;
     const mine = ++this.generation;
     const TIMED_OUT = Symbol("timed out");
@@ -131,7 +148,9 @@ export class Doctor {
     const arm = () => { if (!armed) { armed = true; sleep(TIMEOUT).then(() => expire(TIMED_OUT)); } };
     try {
       const outcome = await Promise.race([this.work(force, mine, arm), timeout]);
-      if (outcome === TIMED_OUT) { this.generation++; this.sig = null; this.stuck = state; } // not again until the 60s check, or the place or its inputs change
+      // Not again until the 60s check, or the place or its inputs change. The state is the one the stuck check started in, as the
+      // lookups it made since have taught it (its repo's folder, its repo).
+      if (outcome === TIMED_OUT) { this.generation++; this.sig = null; this.stuck = this.stateAt(this.began); }
     } catch {
       this.sig = null; // the doctor never breaks the panel: the last answer stays, and the next look tries again
     } finally {
@@ -142,19 +161,29 @@ export class Doctor {
   async work(force, mine, arm) {
     const place = await this.place(arm);
     if (mine !== this.generation || (!place && !force)) return;
+    if (place) this.began = { cwd: place.cwd, on: place.on };
     const rest = this.rest(place), sig = doctorSignature({ place, ...rest });
     if (!force && sig === this.sig) return;
     this.sig = sig;
     arm();
+    // What the check reads of the picked project, so a pick made while it ran is not mistaken for part of its answer.
+    const read = {};
+    const deps = { ...this.deps, chosenProject: (repo) => {
+      read.repo = repo;
+      if (place) this.repos.set(`${place.on ?? ""}|${this.anchor(place)}`, repo); // known even if the check never finishes
+      return (read.picked = this.deps.chosenProject(repo));
+    } };
     const current = this.deps.shared(DOCTOR_KEY);
-    const found = await check(place, this.deps, current);
+    const found = await check(place, deps, current);
     if (mine !== this.generation) return; // given up on while it ran
+    if (place) this.repos.set(`${place.on ?? ""}|${this.anchor(place)}`, found.repo);
     // The place or what it depends on moved on while this ran: this answer is not for it, so look again.
     const now = this.deps.shared(PLACE) ?? null;
+    const used = { ...rest, project: read.repo ? read.picked ?? null : rest.project };
     if ((now?.cwd ?? null) !== (place?.cwd ?? null) || (now?.on ?? null) !== (place?.on ?? null)
-      || doctorSignature({ place, ...this.rest(place) }) !== sig) { this.sig = null; return; }
+      || doctorSignature({ place, ...this.rest(place) }) !== doctorSignature({ place, ...used })) { this.sig = null; return; }
     if (JSON.stringify(this.deps.shared(DOCTOR_KEY)) !== JSON.stringify(found)) this.deps.setShared(DOCTOR_KEY, found);
-    // The answer names the repo, so the picked project is now part of the signature: settle on it, or the next look checks again.
-    this.sig = doctorSignature({ place, ...this.rest(place) });
+    // The answer names the repo, so the picked project is now part of the signature: settle on what the check read.
+    this.sig = doctorSignature({ place, ...used });
   }
 }
