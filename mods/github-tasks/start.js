@@ -1,4 +1,4 @@
-// Starts a workflow on a ticket: gets the folder ready, writes what the agents read, and opens a tab with the
+// Starts a workflow on a ticket: gets the ticket's worktree ready, writes what the agents read, and opens a tab with the
 // orchestrator's terminal on the left and the Workflows mod's list of its agents on the right. From there the
 // orchestrator runs the ticket itself (run.js says how).
 import { exec, hc, home, knownAgents, notify, panes, readTextFile, run, shared, spaces, terminals, writeTextFile } from "herdr";
@@ -9,11 +9,12 @@ const ROLES = ["orchestrator", "worker", "reviewer"];
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 const out = (r) => (r.stderr || r.stdout).trim();
 
-// A live orchestrator with this label value.
-const liveOrchestrator = (label, value) => terminals().find((k) => k.state === "live" && k.labels?.[ROLE_LABEL] === "orchestrator" && k.labels?.[label] === value) ?? null;
-
-// The live run's orchestrator for a ticket, or null. Start becomes View while one is going.
-export const liveRunFor = (repo, ticket) => liveOrchestrator(TICKET_LABEL, ticketKey(repo, ticket));
+// The live run's orchestrator for a ticket, or null. Start becomes View while one is going. Runs on different
+// tickets can go at once, even in one repo: each has its own worktree.
+export const liveRunFor = (repo, ticket) => {
+  const key = ticketKey(repo, ticket);
+  return terminals().find((k) => k.state === "live" && k.labels?.[ROLE_LABEL] === "orchestrator" && k.labels?.[TICKET_LABEL] === key) ?? null;
+};
 
 // Brings a run's tab to the front with the run's own pane (the Workflows mod's list of its agents) beside the
 // orchestrator. The pane is opened again when it's gone: closed, or never made because that part of Start failed.
@@ -30,7 +31,7 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
       role: "run", id, orchestrator: running.address, title: ticketName(ticket), workflow: "", branch: branchName(ticket), folder: folder ?? "",
       ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null }, projectId: project?.id ?? null,
     };
-    // Start saved the full props (strategy, repoRoot, statusField, workflow name) beside the run's other files.
+    // Start saved the full props (repoRoot, statusField, workflow name) beside the run's other files.
     const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
     await app("pane.split", { pane, direction: "right", mod: "workflows", props: reopenProps(saved, partial, running.address) });
     run("pane.focus", { pane });
@@ -64,23 +65,10 @@ async function resolveAgents(workflow, runDir) {
   return argv;
 }
 
-const onBranch = async (dir) => (await git(dir, "branch", "--show-current")).stdout.trim();
 const branchExists = async (dir, branch) => (await git(dir, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`)).code === 0;
 
-// Work on the branch in the repo's own folder. Coming back to a branch resumes it. Otherwise uncommitted changes
-// stop it here, because they would go along into the ticket's commits.
-async function prepareBranch(repoRoot, branch) {
-  if ((await onBranch(repoRoot)) === branch) return repoRoot;
-  const status = await git(repoRoot, "status", "--porcelain");
-  if (status.code !== 0) throw new Error(`git couldn't read ${repoRoot}: ${out(status)}`);
-  const changed = status.stdout.split("\n").filter(Boolean);
-  if (changed.length) throw new Error(`${repoRoot} has ${changed.length} uncommitted change${changed.length > 1 ? "s" : ""}. Commit or stash ${changed.length > 1 ? "them" : "it"} first, or use a workflow with the Worktree strategy.`);
-  const r = (await branchExists(repoRoot, branch)) ? await git(repoRoot, "switch", branch) : await git(repoRoot, "switch", "-c", branch);
-  if (r.code !== 0) throw new Error(`Couldn't switch to ${branch}: ${out(r)}`);
-  return repoRoot;
-}
-
-// Work in a git worktree of its own, beside the repo. One that already has the branch is used again.
+// The ticket's own git worktree, beside the repo. The repo's folder is never switched. One that already has the branch
+// is used again.
 async function prepareWorktree(repoRoot, branch) {
   const list = await git(repoRoot, "worktree", "list", "--porcelain");
   if (list.code !== 0) throw new Error(`git couldn't list worktrees: ${out(list)}`);
@@ -98,7 +86,7 @@ async function prepareWorktree(repoRoot, branch) {
 }
 
 async function writeRunFolder(id, parts, argv) {
-  const { runDir, workDir } = parts;
+  const { runDir, workDir, repoRoot, branch } = parts;
   const made = await exec("mkdir", ["-p", runDir]);
   if (made.code !== 0) throw new Error(`Couldn't make ${runDir}: ${out(made)}`);
   await Promise.all([
@@ -106,7 +94,7 @@ async function writeRunFolder(id, parts, argv) {
     writeTextFile(`${runDir}/worker.md`, workerPrompt(parts), null),
     writeTextFile(`${runDir}/reviewer.md`, reviewerPrompt(parts), null),
     writeTextFile(`${runDir}/ticket.md`, ticketFile(parts.ticket, parts.repo), null),
-    writeTextFile(`${runDir}/spawn`, spawnScript({ id, runDir, workDir, argv }), null),
+    writeTextFile(`${runDir}/spawn`, spawnScript({ id, runDir, workDir, repoRoot, branch, argv }), null),
   ]);
   const chmod = await exec("chmod", ["+x", `${runDir}/spawn`]);
   if (chmod.code !== 0) throw new Error(`Couldn't make the spawn script runnable: ${out(chmod)}`);
@@ -124,13 +112,13 @@ async function paneOf(made, cx) {
 }
 
 // Starts it. ticket: as GitHub holds it. Throws with a message for the person; nothing is left running then,
-// though a branch or worktree already made stays for the next try. Returns { resumed } when the run was already going.
+// though the ticket's worktree and branch, once made, stay for the next try. Returns { resumed } when the run was already going.
 export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   if (where?.on) throw new Error(`This space is on ${where.on}. Workflows only run on this computer for now.`);
   if (!where?.cwd) throw new Error("This space has no folder to work in.");
 
   const key = ticketKey(repo, ticket);
-  const running = liveOrchestrator(TICKET_LABEL, key);
+  const running = liveRunFor(repo, ticket);
   if (running) {
     await viewRun(running, cx, { ticket, repo, project: board.project });
     return { resumed: true };
@@ -140,17 +128,12 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   if (top.code !== 0) throw new Error(`${where.cwd} isn't in a git repo: ${out(top)}`);
   const repoRoot = top.stdout.trim();
 
-  // Two runs on a branch in one folder would pull it out from under each other.
-  if (workflow.strategy !== "worktree" && liveOrchestrator(FOLDER_LABEL, repoRoot)) {
-    throw new Error(`Another run is already working in ${repoRoot}. Wait for it, or use a workflow with the Worktree strategy.`);
-  }
-
   const id = runId(ticket);
   const runDir = `${home()}/.herdr/workflow-runs/${id}`;
-  const argv = await resolveAgents(workflow, runDir); // before the branch: this fails without changing anything
+  const argv = await resolveAgents(workflow, runDir); // before the worktree: this fails without changing anything
   const branch = branchName(ticket);
-  const workDir = workflow.strategy === "worktree" ? await prepareWorktree(repoRoot, branch) : await prepareBranch(repoRoot, branch);
-  await writeRunFolder(id, { workflow, ticket, repo, runDir, workDir, branch }, argv);
+  const workDir = await prepareWorktree(repoRoot, branch);
+  await writeRunFolder(id, { workflow, ticket, repo, runDir, workDir, repoRoot, branch }, argv);
 
   const space = spaces().find((s) => s.active)?.id;
   const made = await app("tab.new", {
@@ -168,7 +151,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
     if (!pane) throw new Error("its pane didn't appear");
     const props = {
       role: "run", id, orchestrator: made.terminal, title: ticketName(ticket), workflow: workflow.name, branch, folder: workDir,
-      strategy: workflow.strategy, repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null },
+      repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null },
       projectId: board.project?.id ?? null, statusField: board.statusField ?? null, statuses: runStatuses(shared(statusesKey(repo))),
     };
     await writeTextFile(`${runDir}/pane.json`, JSON.stringify(props), null).catch(() => {}); // View reopens the pane from this
