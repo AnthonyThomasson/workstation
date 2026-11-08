@@ -43,6 +43,16 @@ test("cloneWorkflow gives a copy a unique name and slug id", () => {
   assert.equal(original.name, "Bug");
 });
 
+test("cloneWorkflow reserves room for a number when the copy slug is already 60 characters", () => {
+  const original = wf("A".repeat(60));
+  const first = cloneWorkflow(original, []);
+  assert.equal(first.id, "a".repeat(60));
+  const second = cloneWorkflow(original, [first.id]);
+  assert.equal(second.name, `${"A".repeat(60)} copy 2`);
+  assert.equal(second.id, `${"a".repeat(58)}-2`);
+  assert.equal(second.id.length, 60);
+});
+
 test("clone saves copies in the source scope without changing the source", async () => {
   const { store } = setup();
   await store.save(wf("Bug", { worker: { ...wf().worker, model: "sonnet" } }), "repo");

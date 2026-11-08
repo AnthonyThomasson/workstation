@@ -16,9 +16,12 @@ export class StoreError extends Error {
 // A copy keeps its contents and scope; its name is changed until the slug it produces is not an existing id.
 export function cloneWorkflow(workflow, existingIds) {
   const copy = normalize(workflow), base = `${copy.name} copy`, taken = new Set(existingIds);
-  let name = base, number = 2;
-  while (taken.has(slug(name))) name = `${base} ${number++}`;
-  return { ...copy, id: slug(name), name };
+  for (let number = 1; ; number++) {
+    const name = number === 1 ? base : `${base} ${number}`;
+    // slug() cuts to 60 characters, so reserve the suffix instead of letting a long name cut it off forever.
+    const id = number === 1 ? slug(base) : `${slug(base, 59 - String(number).length)}-${number}`;
+    if (!taken.has(id)) return { ...copy, id, name };
+  }
 }
 
 // Clipboard YAML becomes the replacement's contents, never its id: that still belongs to the destination file.
