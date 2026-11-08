@@ -19,7 +19,7 @@ const SAMPLE = {
     reviewer: { prompt: "<the workflow's reviewer prompt goes here>" },
   },
   ticket: { number: 0, title: "<ticket title>" },
-  repo: "<owner/repo>", runDir: "<run folder>", workDir: "<work folder>", branch: "<branch>",
+  repo: "<owner/repo>", runDir: "<run folder>", workDir: "<ticket worktree>", repoRoot: "<main checkout>", branch: "<branch>",
 };
 const clean = (text) => text.replace(/#0 <ticket title>/g, "<ticket>");
 

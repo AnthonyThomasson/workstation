@@ -9,7 +9,7 @@ import { agentArgv, branchName, jobName, jobWorktree, orchestratorPrompt, reopen
 const ticket = { number: 12, title: "Fix the login!", body: "It breaks.", labels: ["bug"], status: "Todo", url: "https://github.test/12" };
 const role = (extra = {}) => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium", ...extra });
 const workflow = (extra = {}) => ({ name: "Features", orchestrator: role(), worker: role(), reviewer: role(), ...extra });
-const place = { ticket, repo: "o/r", runDir: "/runs/1", workDir: "/src/app", branch: "workflow/12-fix-the-login" };
+const place = { ticket, repo: "o/r", runDir: "/runs/1", workDir: "/src/app-12-fix-the-login", repoRoot: "/src/app", branch: "workflow/12-fix-the-login" };
 
 test("branch names come from the number and title", () => {
   assert.equal(branchName(ticket), "workflow/12-fix-the-login");
@@ -98,7 +98,7 @@ test("the ticket file marks its text as data", () => {
 
 test("the orchestrator is told the protocol", () => {
   const text = orchestratorPrompt({ workflow: workflow(), ...place });
-  for (const expected of ["hc --skill", "120k", "exactly one worker", "/runs/1/spawn worker", "/runs/1/spawn reviewer", "hc wait --children any", "Keeping up with the main branch", "rebase origin/<main-branch>", "ask the person", "/src/app", "workflow/12-fix-the-login", "never write code"]) {
+  for (const expected of ["hc --skill", "120k", "exactly one worker", "/runs/1/spawn worker <job>", "/runs/1/spawn reviewer <name> <job>", "/runs/1/spawn reviewer <name> final", "hc wait --children any", "Keeping up with the main branch", "rebase origin/<main-branch>", "ask the person", "/src/app", "workflow/12-fix-the-login", "never write code"]) {
     assert.ok(text.includes(expected), expected);
   }
 });
@@ -132,8 +132,45 @@ test("workers go to the orchestrator, reviewers stay read-only", () => {
   assert.match(worker, /don't ask the person/);
   const reviewer = reviewerPrompt({ workflow: workflow(), ...place });
   assert.match(reviewer, /read-only/);
-  assert.match(reviewer, /ExitPlanMode/);
-  assert.match(reviewer, /last message/);
+  assert.match(reviewer, /can't edit files/);
+  assert.match(reviewer, /with `hc send`, and give them as your last message/);
+  assert.ok(!reviewer.includes("ExitPlanMode"));
+});
+
+test("every role is told which folder is the main checkout, the ticket's and its own", () => {
+  const folders = ["/src/app", "/src/app-12-fix-the-login", "/src/app-12-fix-the-login--<job>", "workflow/12-fix-the-login--<job>"];
+  for (const build of [orchestratorPrompt, workerPrompt, reviewerPrompt]) {
+    const text = build({ workflow: workflow(), ...place });
+    for (const expected of folders) assert.ok(text.includes(expected), `${build.name}: ${expected}`);
+    assert.match(text, /main checkout/);
+  }
+});
+
+test("live-environment steps wait for the Merge and run from the main checkout", () => {
+  for (const build of [orchestratorPrompt, workerPrompt]) {
+    const text = build({ workflow: workflow(), ...place });
+    assert.match(text, /mount\.sh/, build.name);
+    assert.match(text, /Skillshare/, build.name);
+    assert.match(text, /never run from a worktree/, build.name);
+  }
+  assert.match(orchestratorPrompt({ workflow: workflow(), ...place }), /list them in your final report for the person to approve/);
+});
+
+test("the orchestrator runs jobs in parallel, reviews and merges each, then reviews the whole ticket", () => {
+  const text = orchestratorPrompt({ workflow: workflow(), ...place });
+  assert.ok(!text.includes("share one branch and one folder"));
+  for (const expected of ["Run independent jobs in parallel, each in its own worktree", "start a reviewer on its job", "tell its worker with `hc send` to merge", "end the worker and its reviewer with `hc kill <name>`", "one reviewer over the whole ticket branch against the default branch", "end it with `hc kill <name>`", "Merge button", "Create PR", "Don't merge into the default branch, push or open a pull request yourself"]) {
+    assert.ok(text.includes(expected), expected);
+  }
+  assert.match(text, /rebase the ticket branch onto it, in the ticket worktree: `git -C \/src\/app-12-fix-the-login rebase origin\/<main-branch>`/);
+});
+
+test("a worker merges by rebasing, re-testing, fast-forwarding and cleaning up, and never pushes", () => {
+  const text = workerPrompt({ workflow: workflow(), ...place });
+  for (const expected of ["git rebase workflow/12-fix-the-login", "git -C /src/app-12-fix-the-login merge --ff-only workflow/12-fix-the-login--<job>", "worktree remove", "branch -d workflow/12-fix-the-login--<job>", "Never push", "git rebase --abort"]) {
+    assert.ok(text.includes(expected), expected);
+  }
+  assert.ok(!text.includes("Other workers may share it"));
 });
 
 test("shQuote survives quotes", () => {
