@@ -1,11 +1,11 @@
 // Herdr's side of the store: real files, and where they are. Everything else is store.js.
 import { exec, home, appHome, readTextFile, writeTextFile } from "herdr";
 import { makeStore } from "./store.js";
+import { WORKFLOWS_CHANGED } from "./model.js";
 import { parseCodexModels, parseKimiModels } from "./models.js";
 import { firstLine, workflowDirs, globalWorkflowsDir, tildePath } from "./places.js";
 
-// Set to the time of each save or delete, so the panel's list refreshes.
-export const WORKFLOWS_CHANGED = "github-tasks.workflows.changed";
+export { WORKFLOWS_CHANGED };
 
 const sh = (script, ...args) => exec("sh", ["-c", script, "github-tasks", ...args]);
 

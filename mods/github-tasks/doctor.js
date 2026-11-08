@@ -8,19 +8,20 @@ import { ROLES, ROLE_LABELS, CUSTOM } from "./workflow-model.js";
 export const DOCTOR_KEY = "github-tasks.doctor"; // { issues, repo, project }: what the last check found, for the settings and the sidebar
 
 // diagnose(inputs) -> [{ kind, message, ... }], in the order they should be read.
-//   repo           "owner/name", or null when the space is not in a GitHub repo (no project or status checks then)
+//   repo           "owner/name"; null when the space is not in a GitHub repo (no project or status checks then); undefined when not known
 //   project        { id, title, url } | null (the repo has no linked project) | undefined (not known: gh could not answer)
 //   statuses       the project's Status field options [{ name }] ([] with no such field) | undefined (not known)
-//   auth           { installed, signedIn, scopes: [string] | null (gh did not list them) } | undefined (not known)
-//   installedAgents  the keys of the installed agents | null (not known)
+//   carried        the project and status issues of the last check of this same place, kept for whatever above is not known
+//   auth           { installed, signedIn: true | false | null (not known), scopes: [string] | null (gh did not list them) } | undefined
+//   agents         what knownAgents() knows: [{ key, installed }] | null (not known)
 //   groomerAgent   the grooming agent saved on the settings page, or null
 //   workflows      { items: [workflow], errors: ["file.yaml: why"] } as store.loadAll gives them
 // Kinds: no-project, status-missing, status-misnamed, gh-auth, gh-scope, agent-missing, workflow-invalid.
-export function diagnose({ repo = null, project, statuses, auth, installedAgents = null, groomerAgent = null, workflows } = {}) {
+export function diagnose({ repo, project, statuses, carried = [], auth, agents = null, groomerAgent = null, workflows } = {}) {
   return [
     ...checkAuth(auth),
-    ...(repo ? checkProject(repo, project, statuses) : []),
-    ...checkAgents(installedAgents, groomerAgent, workflows?.items ?? []),
+    ...checkProject({ repo, project, statuses, carried }),
+    ...checkAgents(agents, groomerAgent, workflows?.items ?? []),
     ...(workflows?.errors ?? []).map((error) => ({ kind: "workflow-invalid", message: `A workflow file can't be read: ${error}`, file: error })),
   ];
 }
@@ -28,16 +29,20 @@ export function diagnose({ repo = null, project, statuses, auth, installedAgents
 function checkAuth(auth) {
   if (!auth) return [];
   if (!auth.installed) return [{ kind: "gh-auth", message: "gh isn't installed or can't run, so Tasks can't reach GitHub." }];
-  if (!auth.signedIn) return [{ kind: "gh-auth", message: "gh isn't signed in to GitHub." }];
+  if (auth.signedIn === false) return [{ kind: "gh-auth", message: "gh isn't signed in to GitHub." }];
   if (Array.isArray(auth.scopes) && !auth.scopes.includes("project")) {
     return [{ kind: "gh-scope", message: 'gh\'s token is missing the "project" scope, so Tasks can\'t read or edit GitHub Projects.', scopes: auth.scopes }];
   }
   return [];
 }
 
-function checkProject(repo, project, statuses) {
+const PROJECT_KINDS = ["no-project", "status-missing", "status-misnamed"];
+function checkProject({ repo, project, statuses, carried }) {
+  const kept = (kinds) => (carried ?? []).filter((i) => kinds.includes(i.kind));
+  if (repo === null) return [];
+  if (repo === undefined || project === undefined) return kept(PROJECT_KINDS);
   if (project === null) return [{ kind: "no-project", message: `No GitHub Project is linked to ${repo}.` }];
-  if (!project || !Array.isArray(statuses)) return [];
+  if (!Array.isArray(statuses)) return kept(PROJECT_KINDS.slice(1));
   const issues = [];
   for (const status of Object.values(STATUSES)) {
     if (statuses.some((o) => o.name === status)) continue;
@@ -49,11 +54,13 @@ function checkProject(repo, project, statuses) {
   return issues;
 }
 
-// One issue per agent that is not installed, listing everything that uses it. A custom agent runs its own command.
-function checkAgents(installed, groomerAgent, items) {
-  if (!Array.isArray(installed)) return [];
+// One issue per agent that knownAgents() knows and reports as not installed, listing everything that uses it. A custom agent
+// runs its own command, and a key knownAgents() does not know is run as a bare command (as a run does), so neither is flagged.
+function checkAgents(agents, groomerAgent, items) {
+  if (!Array.isArray(agents)) return [];
+  const missing = new Set(agents.filter((a) => !a.installed).map((a) => a.key));
   const uses = new Map(); // agent key -> what uses it, in the order found
-  const add = (agent, user) => { if (agent && agent !== CUSTOM && !installed.includes(agent)) uses.set(agent, [...(uses.get(agent) ?? []), user]); };
+  const add = (agent, user) => { if (agent && agent !== CUSTOM && missing.has(agent)) uses.set(agent, [...(uses.get(agent) ?? []), user]); };
   add(groomerAgent, "Grooming agent");
   for (const w of items) for (const role of ROLES) add(w[role]?.agent, `${w.name} ${ROLE_LABELS[role].toLowerCase()}`);
   return [...uses].map(([agent, usedBy]) => ({
@@ -61,21 +68,48 @@ function checkAgents(installed, groomerAgent, items) {
   }));
 }
 
-// What gh auth status said: { installed, signedIn, scopes }. The scopes of the active account; null when gh lists none.
+// What gh auth status said: { installed, signedIn, scopes }. signedIn is false only when gh says there is no account at all or
+// the active account's token is invalid; a network failure, a validation error, or a stale second account is not known to be
+// a problem (null). scopes: those of the active, logged-in account; null when gh lists none (a GH_TOKEN, say).
 export function parseAuthStatus({ code, stdout = "", stderr = "" }) {
   if (code === 127) return { installed: false, signedIn: false, scopes: null };
-  const signedIn = code === 0;
-  const blocks = `${stdout}\n${stderr}`.split(/(?=^\s*\S*\s*Logged in to )/m).filter((b) => /Logged in to /.test(b));
-  const block = blocks.find((b) => /Active account:\s*true/i.test(b)) ?? blocks[0] ?? "";
-  const line = block.match(/Token scopes:\s*(.*)/i)?.[1] ?? "";
-  const scopes = [...line.matchAll(/'([^']+)'/g)].map((m) => m[1]);
-  return { installed: true, signedIn, scopes: signedIn && scopes.length ? scopes : null };
+  const text = `${stdout}\n${stderr}`;
+  // One block per account: gh starts each with "✓ Logged in to <host> account <name>" or "X Failed to log in to <host> account <name>".
+  const blocks = text.split(/(?=^.*\b(?:Logged in to|Failed to log in to) \S+ account)/m).filter((b) => /(?:Logged in to|Failed to log in to) \S+ account/.test(b));
+  const active = blocks.filter((b) => /Active account:\s*true/i.test(b));
+  const judged = active.length ? active : blocks;
+  const good = judged.find((b) => /Logged in to /.test(b) && !/Failed to log in/.test(b));
+  if (good) {
+    const line = good.match(/Token scopes:\s*(.*)/i)?.[1] ?? "";
+    const scopes = [...line.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    return { installed: true, signedIn: true, scopes: scopes.length ? scopes : null };
+  }
+  const none = { installed: true, scopes: null };
+  if (/not logged in(to)? any/i.test(text)) return { ...none, signedIn: false };
+  if (judged.length) {
+    const invalid = /token .{0,40}\binvalid\b|bad credentials|HTTP 401|has been revoked|expired/i.test(judged.join("\n"));
+    return { ...none, signedIn: invalid ? false : null };
+  }
+  return { ...none, signedIn: code === 0 ? true : null };
 }
 
-// What a check depends on. When it changes, the check runs again.
-export const doctorSignature = ({ place, context, workflowsChanged, groomer }) => JSON.stringify([
-  place?.cwd ?? null, place?.on ?? null, context?.repo ?? null, context?.project?.id ?? null, workflowsChanged ?? null, groomer?.agent ?? null,
+// What a check depends on. When it changes, the check runs again. The place is its repo's top folder (cwd when it has none),
+// so moving about inside one repo is not a change.
+export const doctorSignature = ({ place, workflowsChanged, groomer }) => JSON.stringify([
+  place?.root ?? place?.cwd ?? null, place?.on ?? null, workflowsChanged ?? null, groomer?.agent ?? null,
 ]);
+
+// Whether a check made for `checked` ({ cwd, on, root }) still describes `place` ({ cwd, on }): the same machine, and the same
+// folder or one inside the checked repo.
+export function samePlace(checked, place) {
+  if (!checked || !place) return !checked && !place;
+  if ((checked.on ?? null) !== (place.on ?? null)) return false;
+  if (checked.cwd === place.cwd) return true;
+  return Boolean(checked.root && place.cwd && (place.cwd === checked.root || place.cwd.startsWith(`${checked.root.replace(/\/+$/, "")}/`)));
+}
+
+// What the settings page and the sidebar read from the shared key: the doctor's answer, or nothing when it was made for another place.
+export const doctorFor = (found, place) => (found && samePlace(found.place ?? null, place ?? null) ? found : null);
 
 // A prompt to copy to an agent: the repo and project, the problems, and what to do about each.
 // context: { repo, project: { title, url } | null }. "" when there is nothing wrong.

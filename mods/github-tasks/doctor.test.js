@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { diagnose, fixPrompt, parseAuthStatus, doctorSignature } from "./doctor.js";
+import { diagnose, fixPrompt, parseAuthStatus, doctorSignature, samePlace, doctorFor } from "./doctor.js";
 import { STATUSES, REFRESH, LOGIN } from "./model.js";
 
 const PROJECT = { id: "P1", title: "app", url: "https://github.com/users/me/projects/3" };
@@ -14,7 +14,7 @@ const workflow = (name, agents = {}, labels = []) => ({
 const healthy = (over = {}) => ({
   repo: "me/app", project: PROJECT, statuses: ALL,
   auth: { installed: true, signedIn: true, scopes: ["repo", "project"] },
-  installedAgents: ["claude", "codex"], groomerAgent: null,
+  agents: [{ key: "claude", installed: true }, { key: "codex", installed: true }, { key: "gemini", installed: false }], groomerAgent: null,
   workflows: { items: [workflow("Story")], errors: [] },
   ...over,
 });
@@ -28,7 +28,7 @@ test("a space that is not in a GitHub repo skips the project and status checks",
   const issues = diagnose(healthy({ repo: null, project: undefined, statuses: undefined }));
   assert.deepEqual(issues, []);
   const withProblems = diagnose(healthy({ repo: null, project: null, statuses: [], auth: { installed: true, signedIn: false, scopes: null },
-    installedAgents: [], groomerAgent: "codex", workflows: { items: [], errors: ["a.yaml: bad"] } }));
+    groomerAgent: "gemini", workflows: { items: [], errors: ["a.yaml: bad"] } }));
   assert.deepEqual(kinds(withProblems).sort(), ["agent-missing", "gh-auth", "workflow-invalid"]);
 });
 
@@ -98,7 +98,7 @@ test("a saved grooming agent that is not installed is an issue", () => {
 });
 
 test("no saved grooming agent means nothing to check there", () => {
-  assert.deepEqual(diagnose(healthy({ groomerAgent: null, installedAgents: [], workflows: { items: [], errors: [] } })), []);
+  assert.deepEqual(diagnose(healthy({ groomerAgent: null, workflows: { items: [], errors: [] } })), []);
 });
 
 test("each missing workflow agent is one issue listing every role that uses it", () => {
@@ -111,6 +111,15 @@ test("each missing workflow agent is one issue listing every role that uses it",
   assert.deepEqual(issues[0].usedBy, ["Grooming agent", "Bug orchestrator", "Bug reviewer", "Story worker"]);
 });
 
+test("an unknown project, repo or statuses carry the last check's project issues", () => {
+  const carried = [{ kind: "no-project", message: "x" }, { kind: "status-missing", status: "Done", message: "y" }];
+  assert.deepEqual(diagnose(healthy({ repo: undefined, project: undefined, statuses: undefined, carried })), carried);
+  assert.deepEqual(diagnose(healthy({ project: undefined, statuses: undefined, carried })), carried);
+  assert.deepEqual(diagnose(healthy({ statuses: undefined, carried })), [carried[1]]);
+  assert.deepEqual(diagnose(healthy({ repo: null, carried })), []);
+  assert.deepEqual(diagnose(healthy({ carried })), []); // a known, good project wins over what was carried
+});
+
 test("a custom agent is not checked", () => {
   const custom = { ...role("custom"), command: "my-agent --go" };
   const items = [{ ...workflow("Odd"), worker: custom }];
@@ -118,7 +127,11 @@ test("a custom agent is not checked", () => {
 });
 
 test("agents are not checked when the installed list is unknown", () => {
-  assert.deepEqual(diagnose(healthy({ installedAgents: null, groomerAgent: "gemini" })), []);
+  assert.deepEqual(diagnose(healthy({ agents: null, groomerAgent: "gemini" })), []);
+});
+
+test("an agent knownAgents() does not know is run as a bare command and is not flagged", () => {
+  assert.deepEqual(diagnose(healthy({ groomerAgent: "my-agent", workflows: { items: [workflow("W", { worker: "other-bin" })], errors: [] } })), []);
 });
 
 test("an unparseable workflow file is an issue that names the file and why", () => {
@@ -139,25 +152,69 @@ test("diagnose does not change its inputs", () => {
   assert.deepEqual(inputs, copy);
 });
 
+const ACTIVE_OK = "github.com\n  ✓ Logged in to github.com account me (keyring)\n  - Active account: true\n  - Git operations protocol: https\n  - Token: gho_****\n  - Token scopes: 'gist', 'project', 'read:org', 'repo'\n";
+const STALE = "  X Failed to log in to github.com account old (keyring)\n  - Active account: false\n  - The token in keyring is invalid.\n";
+
 test("parses gh auth status for sign-in and scopes", () => {
-  const ok = "github.com\n  ✓ Logged in to github.com account me (keyring)\n  - Active account: true\n  - Git operations protocol: https\n  - Token: gho_****\n  - Token scopes: 'gist', 'project', 'read:org', 'repo'\n";
-  assert.deepEqual(parseAuthStatus({ code: 0, stdout: ok, stderr: "" }), { installed: true, signedIn: true, scopes: ["gist", "project", "read:org", "repo"] });
+  assert.deepEqual(parseAuthStatus({ code: 0, stdout: ACTIVE_OK, stderr: "" }), { installed: true, signedIn: true, scopes: ["gist", "project", "read:org", "repo"] });
   // gh has printed this on stderr in some versions.
-  assert.deepEqual(parseAuthStatus({ code: 0, stdout: "", stderr: ok }).scopes, ["gist", "project", "read:org", "repo"]);
-  assert.deepEqual(parseAuthStatus({ code: 0, stdout: "  ✓ Logged in to github.com account me\n", stderr: "" }), { installed: true, signedIn: true, scopes: null });
+  assert.deepEqual(parseAuthStatus({ code: 0, stdout: "", stderr: ACTIVE_OK }).scopes, ["gist", "project", "read:org", "repo"]);
   assert.deepEqual(parseAuthStatus({ code: 1, stdout: "", stderr: "You are not logged into any GitHub hosts. To log in, run: gh auth login" }), { installed: true, signedIn: false, scopes: null });
   assert.deepEqual(parseAuthStatus({ code: 127, stdout: "", stderr: "spawn gh ENOENT" }), { installed: false, signedIn: false, scopes: null });
 });
 
+test("a GH_TOKEN login with no scopes line is signed in, scopes unknown", () => {
+  const env = "github.com\n  ✓ Logged in to github.com account me (GH_TOKEN)\n  - Active account: true\n  - Token: ghp_****\n";
+  assert.deepEqual(parseAuthStatus({ code: 0, stdout: env, stderr: "" }), { installed: true, signedIn: true, scopes: null });
+  assert.deepEqual(parseAuthStatus({ code: 0, stdout: "  ✓ Logged in to github.com account me\n", stderr: "" }), { installed: true, signedIn: true, scopes: null });
+});
+
+test("a stale second account does not make gh signed out, and its scopes are not used", () => {
+  const both = `github.com\n${STALE}\n${ACTIVE_OK.replace("github.com\n", "")}`;
+  assert.deepEqual(parseAuthStatus({ code: 1, stdout: both, stderr: "" }), { installed: true, signedIn: true, scopes: ["gist", "project", "read:org", "repo"] });
+  const activeLast = `github.com\n  ✓ Logged in to github.com account other (keyring)\n  - Active account: false\n  - Token scopes: 'repo'\n${ACTIVE_OK.replace("github.com\n", "")}`;
+  assert.deepEqual(parseAuthStatus({ code: 0, stdout: activeLast, stderr: "" }).scopes, ["gist", "project", "read:org", "repo"]);
+});
+
+test("an invalid active token is signed out", () => {
+  const bad = "github.com\n  X Failed to log in to github.com account me (keyring)\n  - Active account: true\n  - The token in keyring is invalid.\n  - To re-authenticate, run: gh auth login -h github.com\n";
+  assert.equal(parseAuthStatus({ code: 1, stdout: bad, stderr: "" }).signedIn, false);
+});
+
+test("a network or validation error is not known to be a problem", () => {
+  const offline = "github.com\n  X Failed to log in to github.com account me (keyring)\n  - Active account: true\n  - error validating token: Get \"https://api.github.com/\": dial tcp: lookup api.github.com: no such host\n";
+  assert.deepEqual(parseAuthStatus({ code: 1, stdout: offline, stderr: "" }), { installed: true, signedIn: null, scopes: null });
+  assert.equal(parseAuthStatus({ code: 1, stdout: "", stderr: "error connecting to api.github.com" }).signedIn, null);
+  assert.deepEqual(diagnose(healthy({ auth: { installed: true, signedIn: null, scopes: null } })), []);
+});
+
 test("the signature changes with what the check depends on, and only then", () => {
-  const base = { place: { cwd: "/a", on: undefined }, context: { repo: "me/app", project: { id: "P1" } }, workflowsChanged: 1, groomer: { agent: "claude" } };
+  const base = { place: { cwd: "/a/src", on: undefined, root: "/a" }, workflowsChanged: 1, groomer: { agent: "claude" } };
   const sig = doctorSignature(base);
   assert.equal(doctorSignature({ ...base, groomer: { agent: "claude" } }), sig);
-  assert.notEqual(doctorSignature({ ...base, place: { cwd: "/b" } }), sig);
-  assert.notEqual(doctorSignature({ ...base, place: { cwd: "/a", on: "box" } }), sig);
-  assert.notEqual(doctorSignature({ ...base, context: null }), sig);
+  assert.equal(doctorSignature({ ...base, place: { ...base.place, cwd: "/a/other" } }), sig, "moving within one repo is not a change");
+  assert.notEqual(doctorSignature({ ...base, place: { cwd: "/b", root: "/b" } }), sig);
+  assert.notEqual(doctorSignature({ ...base, place: { ...base.place, on: "box" } }), sig);
+  assert.notEqual(doctorSignature({ ...base, place: null }), sig);
   assert.notEqual(doctorSignature({ ...base, workflowsChanged: 2 }), sig);
   assert.notEqual(doctorSignature({ ...base, groomer: { agent: "codex" } }), sig);
+  assert.notEqual(doctorSignature({ ...base, place: { cwd: "/a/src" } }), sig, "with no repo the folder itself counts");
+});
+
+test("an answer is only for the place it was made for", () => {
+  const found = { issues: [1], place: { cwd: "/a/src", on: null, root: "/a" } };
+  assert.equal(doctorFor(found, { cwd: "/a/src" }), found);
+  assert.equal(doctorFor(found, { cwd: "/a/deep/er", on: undefined }), found);
+  assert.equal(doctorFor(found, { cwd: "/a" }), found);
+  assert.equal(doctorFor(found, { cwd: "/ab" }), null, "a sibling folder with the same prefix");
+  assert.equal(doctorFor(found, { cwd: "/b" }), null);
+  assert.equal(doctorFor(found, { cwd: "/a/src", on: "box" }), null);
+  assert.equal(doctorFor(found, null), null);
+  assert.equal(doctorFor(null, { cwd: "/a" }), null);
+  const noRepo = { issues: [], place: { cwd: "/tmp/x", root: null } };
+  assert.equal(doctorFor(noRepo, { cwd: "/tmp/x/y" }), null);
+  assert.equal(doctorFor({ issues: [], place: null }, null).issues.length, 0);
+  assert.equal(samePlace(null, { cwd: "/a" }), false);
 });
 
 // ---- The prompt ------------------------------------------------------------------------------------

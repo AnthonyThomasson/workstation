@@ -23,8 +23,8 @@ import { PromptPage } from "./prompts-page.js";
 import { WorkflowList } from "./workflow-list.js";
 import { loadWorkflows } from "./workflow-env.js";
 import { startRun, liveRunFor, viewRun } from "./start.js";
-import { Doctor } from "./doctor-run.js";
-import { DOCTOR_KEY } from "./doctor.js";
+import { startDoctor } from "./doctor-env.js";
+import { DOCTOR_KEY, doctorFor } from "./doctor.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
@@ -86,7 +86,7 @@ export default class GitHubTasks extends View {
     this.agents = []; // installed agents Start Grooming can use
     this.grooming = false;
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
-    this.doctor = new Doctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
+    this.doctor = startDoctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
     cx.timer.every(POLL, (cx) => this.refresh(cx));
     cx.timer.every(3000, (cx) => cx.notify()); // a run starting or ending turns a row's Start into View and back
     cx.spawn(async (cx) => { for (;;) { if ((await nextCommand()) === "focus") this.handle.focus(); cx.notify(); } });
@@ -211,7 +211,7 @@ export default class GitHubTasks extends View {
     else if (newFolder) { this.ctx = ctx; this.token++; this.loading = false; later(cx, () => this.publish()); } // the settings follow the folder at once, not after the refresh
     if (ctx && (newSpace || newFolder)) later(cx, (cx) => this.refresh(cx));
 
-    const problems = shared(DOCTOR_KEY)?.issues?.length ?? 0;
+    const problems = doctorFor(shared(DOCTOR_KEY), shared(PLACE))?.issues?.length ?? 0; // only an answer for the place shown
     return v_flex().id("github-tasks").track_focus(this.handle).size_full().min_h(0).border_t(1).border_color(t.border)
       .text_color(t.foreground).text_size(S().body)
       .child(h_flex().h(36).flex_none().pl(14).pr(8).gap(2).items_center()

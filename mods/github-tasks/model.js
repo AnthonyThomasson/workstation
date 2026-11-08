@@ -76,6 +76,9 @@ const GRANT = ["-h", "github.com", "-s", "project"];
 export const REFRESH = ["auth", "refresh", ...GRANT];
 export const LOGIN = ["auth", "login", "-h", "github.com", "-p", "https", "-s", "project", "-w"];
 
+// Set to the time of each workflow save or delete, so the lists (and the doctor) refresh.
+export const WORKFLOWS_CHANGED = "github-tasks.workflows.changed";
+
 // Shared state main.js publishes for the settings page and the doctor.
 export const CONTEXT = "github-tasks.context"; // { repo, project, where }: what the sidebar looks at
 export const PLACE = "github-tasks.place"; // { cwd, on }: where the selected space is. Set even with no repo

@@ -1,90 +1,127 @@
-// Runs the doctor (doctor.js) inside the Tasks mod, on its own: it asks gh, the installed agents and the workflow
-// files for itself, so it does not wait for the ticket list. It checks when the mod starts, when the space or its folder
-// changes (PLACE) or the repo or project does (CONTEXT), when workflows change, and on a slow timer, and publishes what it
-// finds to DOCTOR_KEY, which the settings page and the sidebar's gear read.
-import { shared, setShared, knownAgents } from "herdr";
-import { normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE } from "./model.js";
+// Runs the doctor (doctor.js) on its own: it asks gh, the installed agents and the workflow files for itself, so it does not wait
+// for the ticket list. It checks when it starts, when the space or its repo changes (PLACE), when workflows change or the grooming
+// agent is chosen, and on a slow timer, and publishes what it finds to DOCTOR_KEY, which the settings page and the sidebar's gear
+// read. Everything it uses comes in as `deps` (doctor-env.js passes Herdr's), so node --test runs it against fakes:
+//   deps.shared(key)  deps.setShared(key, value)  deps.gh(args, where)  deps.knownAgents()  deps.loadWorkflows(where)
+//   deps.repoRootOf(where)  deps.groomerAgent()  deps.chosenProject(repo)
+import { chooseProject, WORKFLOWS_CHANGED, PLACE } from "./model.js";
 import { findRepo, findProjects, loadStatusField } from "./loader.js";
-import { loadWorkflows, WORKFLOWS_CHANGED } from "./workflow-env.js";
-import { diagnose, parseAuthStatus, doctorSignature, DOCTOR_KEY } from "./doctor.js";
-import { gh } from "./ui.js";
+import { diagnose, parseAuthStatus, doctorSignature, doctorFor, DOCTOR_KEY } from "./doctor.js";
 
-const LEGACY_AGENT_KEY = "github-tasks.groomAgent"; // the agent saved before the settings page held it
 const WATCH = 2000; // how often the shared state is looked at; a check runs only when it changed
 const EVERY = 60000; // the slow check, for what no state change tells (a sign-in, an install, a project edited on GitHub)
+export const TIMEOUT = 45000; // a check that takes longer is given up on, so a hung program cannot stop the doctor
 
-const groomerAgent = () => normalizeGroomer(shared(GROOMER_KEY)).agent ?? shared(LEGACY_AGENT_KEY) ?? null;
-const attempt = (promise) => promise.then((value) => ({ value }), (error) => ({ error }));
+const attempt = (promise) => Promise.resolve(promise).then((value) => ({ value }), (error) => ({ error }));
 
-// The doctor's inputs for the place the sidebar looks at. Whatever cannot be found out stays unknown (undefined or
-// null as doctor.js says), so a failed question is never reported as a problem.
-export async function gather(place) {
+// The doctor's inputs for a place ({ cwd, on } or null). Whatever cannot be found out stays unknown (undefined, or null where
+// doctor.js says), so a failed question is never reported as a problem. repo is null only when gh says there is no GitHub repo.
+export async function gather(place, deps) {
   const where = { cwd: place?.cwd, on: place?.on };
   const [auth, agents, loaded] = await Promise.all([
-    gh(["auth", "status", "-h", "github.com"], where).then(parseAuthStatus),
-    attempt(knownAgents()),
-    attempt(loadWorkflows(where)),
+    attempt(deps.gh(["auth", "status", "-h", "github.com"], where)),
+    attempt(deps.knownAgents()),
+    attempt(deps.loadWorkflows(where)),
   ]);
   const inputs = {
-    auth,
-    installedAgents: agents.value ? agents.value.filter((a) => a.installed).map((a) => a.key) : null,
-    groomerAgent: groomerAgent(),
+    auth: auth.value ? parseAuthStatus(auth.value) : undefined,
+    agents: agents.value ? agents.value.map((a) => ({ key: a.key, installed: Boolean(a.installed) })) : null,
+    groomerAgent: deps.groomerAgent(),
     workflows: loaded.value,
-    repo: null, project: undefined, statuses: undefined,
+    repo: place?.cwd ? undefined : null, project: undefined, statuses: undefined,
   };
-  // The project checks need a repo, and gh signed in with the project scope to ask about its project.
-  if (!place?.cwd || !auth.installed || !auth.signedIn) return inputs;
-  const found = await attempt(findRepo(gh, where));
-  if (found.error) return inputs; // not a GitHub repo (or gh could not say): nothing about projects to check
+  // The project checks need a repo, and a gh that is there and not known to be signed out to ask about it.
+  if (!place?.cwd || inputs.auth?.installed === false || inputs.auth?.signedIn === false) return inputs;
+  const found = await attempt(findRepo(deps.gh, where));
+  if (found.error) {
+    if (found.error.kind === "not-a-repo") inputs.repo = null;
+    return inputs; // any other failure leaves the repo unknown
+  }
   inputs.repo = found.value;
-  const projects = await attempt(findProjects(gh, inputs.repo, where));
+  const projects = await attempt(findProjects(deps.gh, inputs.repo, where));
   if (projects.error) return inputs;
-  const project = chooseProject(projects.value, shared(projectKey(inputs.repo)));
+  const project = chooseProject(projects.value, deps.chosenProject(inputs.repo));
   inputs.project = project ? { id: project.id, title: project.title, url: project.url } : null;
   if (project) {
-    const field = await attempt(loadStatusField(gh, project.id, where));
+    const field = await attempt(loadStatusField(deps.gh, project.id, where));
     if (!field.error) inputs.statuses = field.value?.options ?? [];
   }
   return inputs;
 }
 
-// What the check found, in the shape DOCTOR_KEY holds.
-export async function check(place) {
-  const inputs = await gather(place);
-  return { issues: diagnose(inputs), repo: inputs.repo, project: inputs.project ?? null };
+// What the check found, in the shape DOCTOR_KEY holds. `place` is { cwd, on, root }. previous: the last answer, whose project
+// issues are kept for this place while gh cannot say.
+export async function check(place, deps, previous = null) {
+  const inputs = await gather(place && { cwd: place.cwd, on: place.on }, deps);
+  const prior = previous && doctorFor(previous, place) && (inputs.repo === undefined || previous.repo === inputs.repo) ? previous : null;
+  const issues = diagnose({ ...inputs, carried: prior?.issues });
+  return {
+    issues,
+    repo: inputs.repo ?? prior?.repo ?? null,
+    project: inputs.project !== undefined ? inputs.project : (prior && (inputs.repo === undefined || inputs.repo === prior.repo) ? prior.project : null) ?? null,
+    place: place ? { cwd: place.cwd ?? null, on: place.on ?? null, root: place.root ?? null } : null,
+  };
 }
 
 export class Doctor {
-  constructor(cx) {
-    this.sig = null; // what the last check started for
+  constructor(cx, deps) {
+    this.deps = deps;
+    this.sig = null; // what the last check started for; null to check at the next look
     this.running = false;
-    this.watch(cx, true);
+    this.generation = 0; // a check that was given up on is a past generation, and publishes nothing
+    this.roots = new Map(); // cwd -> its repo's top folder, so a folder is asked about once
+    this.watch(cx, false);
     cx.timer.every(WATCH, (cx) => this.watch(cx, false));
     cx.timer.every(EVERY, (cx) => this.watch(cx, true));
   }
 
-  signature() {
-    return doctorSignature({ place: shared(PLACE), context: shared(CONTEXT), workflowsChanged: shared(WORKFLOWS_CHANGED), groomer: { agent: groomerAgent() } });
+  watch(cx, force) {
+    cx.spawn((cx) => this.look(force, (ms) => cx.sleep(ms)));
   }
 
-  // A check, when forced or when something it depends on changed. One at a time: a change during a check is seen
-  // by the next look, because the signature is only kept once a check has started for it.
-  watch(cx, force) {
-    const sig = this.signature();
-    if (this.running || (!force && sig === this.sig)) return;
+  // The place as the checks see it: { cwd, on, root }, or null with no place yet.
+  async place() {
+    const at = this.deps.shared(PLACE);
+    if (!at) return null;
+    const key = `${at.on ?? ""}|${at.cwd ?? ""}`;
+    if (!this.roots.has(key)) this.roots.set(key, await attempt(this.deps.repoRootOf({ cwd: at.cwd, on: at.on })).then((r) => r.value ?? null));
+    return { cwd: at.cwd, on: at.on, root: this.roots.get(key) };
+  }
+
+  // The inputs of the signature other than the place.
+  rest() { return { workflowsChanged: this.deps.shared(WORKFLOWS_CHANGED), groomer: { agent: this.deps.groomerAgent() } }; }
+
+  // A check, when forced or when something it depends on changed. One at a time, and none that takes longer than TIMEOUT.
+  // Without a place, only a forced check runs: the place is published a moment after the mod starts, and an answer for no place
+  // would only be thrown away. sleep(ms): resolves after ms.
+  async look(force, sleep = () => new Promise(() => {})) {
+    if (this.running) return;
     this.running = true;
+    const mine = ++this.generation;
+    const TIMED_OUT = Symbol("timed out");
+    try {
+      const outcome = await Promise.race([this.work(force, mine), sleep(TIMEOUT).then(() => TIMED_OUT)]);
+      if (outcome === TIMED_OUT) { this.generation++; this.sig = null; } // the next look starts over
+    } catch {
+      this.sig = null; // the doctor never breaks the panel: the last answer stays, and the next look tries again
+    } finally {
+      this.running = false;
+    }
+  }
+
+  async work(force, mine) {
+    const place = await this.place();
+    if (mine !== this.generation || (!place && !force)) return;
+    const rest = this.rest(), sig = doctorSignature({ place, ...rest });
+    if (!force && sig === this.sig) return;
     this.sig = sig;
-    cx.spawn(async () => {
-      try {
-        const found = await check(shared(PLACE) ?? null);
-        if (this.signature() !== sig) return; // the place moved on while this was running: the next look checks again
-        const was = shared(DOCTOR_KEY);
-        if (JSON.stringify(was) !== JSON.stringify(found)) setShared(DOCTOR_KEY, found);
-      } catch {
-        // The doctor never breaks the panel: the last answer stays.
-      } finally {
-        this.running = false;
-      }
-    });
+    const current = this.deps.shared(DOCTOR_KEY);
+    const found = await check(place, this.deps, current);
+    if (mine !== this.generation) return; // given up on while it ran
+    // The place or what it depends on moved on while this ran: this answer is not for it, so look again.
+    const now = this.deps.shared(PLACE) ?? null;
+    if ((now?.cwd ?? null) !== (place?.cwd ?? null) || (now?.on ?? null) !== (place?.on ?? null)
+      || doctorSignature({ place, ...this.rest() }) !== sig) { this.sig = null; return; }
+    if (JSON.stringify(this.deps.shared(DOCTOR_KEY)) !== JSON.stringify(found)) this.deps.setShared(DOCTOR_KEY, found);
   }
 }

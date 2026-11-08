@@ -5,12 +5,12 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Popover, TextView } from "gpui-base";
 import { run, shared, setShared, theme } from "herdr";
-import { normalizeGroomer, GROOMER_KEY, EFFORTS } from "./model.js";
+import { normalizeGroomer, GROOMER_KEY, EFFORTS, PLACE } from "./model.js";
 import { CLAUDE_MODELS } from "./models.js";
 import { installedAgents } from "./groom.js";
 import { loadStatusField } from "./loader.js";
 import { normalizeSettingsSections, markdownLiteral } from "./settings-model.js";
-import { DOCTOR_KEY, fixPrompt } from "./doctor.js";
+import { DOCTOR_KEY, fixPrompt, doctorFor } from "./doctor.js";
 import { PROMPT_HINTS } from "./prompts-page.js";
 import { S, stop, note, icon, iconButton, action, gh } from "./ui.js";
 
@@ -69,6 +69,7 @@ export class TaskSettings {
 
   render(cx) {
     const t = theme();
+    if (!this.problems().length) this.doctorOpen = false; // a popover for nothing would reappear open with the next problem
     const where = [this.repo, this.project?.title].filter(Boolean).join(" · ");
     return v_flex().id("task-settings").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
       .child(h_flex().flex_none().px(20).py(14).gap(8).items_start().border_b(1).border_color(t.border)
@@ -83,12 +84,13 @@ export class TaskSettings {
           .when(Boolean(this.workflows), (el) => el.child(this.workflows.render(cx)))));
   }
 
-  // What the doctor found at its last check (published by doctor-run.js, not by this page).
-  problems() { return shared(DOCTOR_KEY)?.issues ?? []; }
+  // What the doctor found at its last check of this place (published by doctor-run.js, not by this page).
+  found() { return doctorFor(shared(DOCTOR_KEY), shared(PLACE)); }
+  problems() { return this.found()?.issues ?? []; }
 
   // The red doctor beside Close, shaking while there are problems. Pressing it opens what is wrong and a prompt for an agent.
   doctor(t) {
-    const found = shared(DOCTOR_KEY), issues = found?.issues ?? [];
+    const found = this.found(), issues = found?.issues ?? [];
     const prompt = fixPrompt(issues, { repo: found?.repo ?? (this.repo || null), project: found?.project ?? this.project });
     const count = `${issues.length} ${issues.length === 1 ? "problem" : "problems"} found`;
     const shaking = h_flex().id("doctor").relative().size(24).flex_none().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(count)
@@ -98,16 +100,19 @@ export class TaskSettings {
       .on_open_change((open, cx) => { this.doctorOpen = open; this.copied = false; cx.notify(); })
       .anchor("top_right")
       .trigger(shaking)
-      .content(v_flex().id("doctor-popover-content").w(360).max_h(520).p(14).gap(10).rounded(10).border_1().border_color(t.border).bg(t.popover).shadow_lg()
+      .content(v_flex().id("doctor-popover-content").w(360).max_h(480).p(14).gap(10).rounded(10).border_1().border_color(t.border).bg(t.popover).shadow_lg()
         .text_color(t.foreground).text_size(S().body)
-        .child(div().text_size(S().title).font_semibold().text_color(t.ansi1).child(count))
-        .child(v_flex().gap(4).children(issues.map((issue) => h_flex().gap(6).items_start().flex_none()
-          .child(div().flex_none().text_color(t.muted).child("•"))
-          .child(div().flex_1().min_w(0).child(issue.message)))))
-        .child(div().text_size(S().secondary).font_semibold().child("Prompt for an agent:"))
-        .child(div().id("doctor-prompt").flex_none().max_h(180).p(10).rounded(6).border_1().border_color(t.border).bg(t.chrome).overflow_y_scrollbar()
-          .text_size(S().secondary)
-          .child(TextView.markdown("doctor-prompt-text", markdownLiteral(prompt)).selectable(true)))
+        .child(div().flex_none().text_size(S().title).font_semibold().text_color(t.ansi1).child(count))
+        // The problems and the prompt scroll; the header and Copy prompt stay in view however many problems there are.
+        .child(div().id("doctor-scroll").flex_1().min_h(0).overflow_y_scrollbar()
+          .child(v_flex().gap(10)
+            .child(v_flex().gap(4).children(issues.map((issue) => h_flex().gap(6).items_start().flex_none()
+              .child(div().flex_none().text_color(t.muted).child("•"))
+              .child(div().flex_1().min_w(0).child(issue.message)))))
+            .child(div().text_size(S().secondary).font_semibold().child("Prompt for an agent:"))
+            .child(div().id("doctor-prompt").flex_none().p(10).rounded(6).border_1().border_color(t.border).bg(t.chrome)
+              .text_size(S().secondary)
+              .child(TextView.markdown("doctor-prompt-text", markdownLiteral(prompt)).selectable(true)))))
         .child(h_flex().flex_none().justify_end()
           .child(action("doctor-copy", this.copied ? "Copied" : "Copy prompt", t, (_e, cx) => { cx.write_to_clipboard(prompt); this.copied = true; cx.notify(); }))));
   }
