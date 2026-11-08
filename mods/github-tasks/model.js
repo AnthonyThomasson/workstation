@@ -180,7 +180,7 @@ export function groomArgv(agent, base, { model, effort }) {
   return argv;
 }
 
-export const DEFAULT_STATUSES = { backlog: "To Do", groomed: "Up Next", inProgress: "In Progress", inReview: "In Review" };
+export const DEFAULT_STATUSES = { backlog: "To Do", groomed: "Up Next", inProgress: "In Progress", inReview: "In Review", done: "Done" };
 
 export function normalizeSettings(raw) {
   const text = (v, fallback) => (typeof v === "string" && v.trim() ? v.trim() : fallback);
@@ -189,8 +189,8 @@ export function normalizeSettings(raw) {
 
 // The names a workflow run moves its ticket through; passed to the run pane, which cannot import this mod.
 export function runStatuses(raw) {
-  const { inProgress, inReview } = normalizeSettings(raw);
-  return { inProgress, inReview };
+  const { inProgress, inReview, done } = normalizeSettings(raw);
+  return { inProgress, inReview, done };
 }
 
 // Status names match ignoring case, spaces and punctuation: GitHub's own default is "Todo", not "To Do".

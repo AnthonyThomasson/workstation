@@ -102,7 +102,8 @@ export class TaskSettings {
         .child(group("backlog", "Backlog status", "Tickets here are the ones Start Grooming works through."))
         .child(group("groomed", "Groomed status", "Ready tickets, listed under In Progress."))
         .child(group("inProgress", "In progress status", "Where a workflow run moves its ticket once a worker starts."))
-        .child(group("inReview", "In review status", "Where a workflow run moves its ticket once a reviewer starts; listed under In Review."));
+        .child(group("inReview", "In review status", "Where a workflow run moves its ticket once a reviewer starts; listed under In Review."))
+        .child(group("done", "Done status", "Where a workflow run moves its ticket once its work is merged."));
     return v_flex().flex_none().gap(8)
       .child(div().text_size(S().title).font_semibold().child("Statuses"))
       .child(body);

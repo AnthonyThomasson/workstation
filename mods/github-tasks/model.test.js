@@ -165,7 +165,14 @@ test("in progress and in review statuses default and can be renamed", () => {
   const s = normalizeSettings({ inProgress: " Doing ", inReview: "" });
   assert.equal(s.inProgress, "Doing");
   assert.equal(s.inReview, "In Review");
-  assert.deepEqual(runStatuses({ inProgress: "Doing" }), { inProgress: "Doing", inReview: "In Review" });
+  assert.deepEqual(runStatuses({ inProgress: "Doing" }), { inProgress: "Doing", inReview: "In Review", done: "Done" });
+});
+
+test("the done status defaults to Done and can be renamed", () => {
+  assert.equal(DEFAULT_STATUSES.done, "Done");
+  assert.equal(normalizeSettings({ done: " Shipped " }).done, "Shipped");
+  assert.equal(normalizeSettings({ done: "" }).done, "Done");
+  assert.equal(runStatuses({ done: "Shipped" }).done, "Shipped");
 });
 
 test("groups tickets by the configured in progress and in review names", () => {
