@@ -8,11 +8,11 @@
 // workflow's agents, beside its orchestrator (run-page.js); "prompt", one read-only agent prompt (prompts-page.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
+import { run, spaces, focused, panes, terminals, notify, openOverlay, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
 import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, spelled, STATUSES, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE } from "./model.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField } from "./loader.js";
 import { installedAgents, startNewTask, startProjectSetup } from "./groom.js";
-import { S, icon, stop, note, iconButton, action, gh, later } from "./ui.js";
+import { S, icon, stop, note, iconButton, action, gh, later, app } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { TaskEditor, CHANGED } from "./editor.js";
 import { TaskSettings } from "./settings.js";
@@ -21,6 +21,8 @@ import { WorkflowEditor } from "./workflow-editor.js";
 import { openOnce, ticketSubject } from "./open-tabs.js";
 import { RunPage } from "./run-page.js";
 import { PromptPage } from "./prompts-page.js";
+import { CloseConfirm } from "./close-confirm.js";
+import { closeFocusedTab } from "./close-tab.js";
 import { WorkflowList } from "./workflow-list.js";
 import { loadWorkflows } from "./workflow-env.js";
 import { startRun, liveRunFor, viewRun } from "./start.js";
@@ -47,6 +49,11 @@ const shownHere = () => {
   return Boolean(panel && !panel.hidden && body?.active === SHOWN);
 };
 
+const CLOSE_DEPS = {
+  focused, panes, terminals, notify, run: app,
+  tabName: (id) => spaces().flatMap((s) => s.tabs ?? []).find((x) => x.id === id)?.name ?? "This task",
+  ask: ({ tab, name }) => openOverlay({ mod: "github-tasks", props: { role: "close-confirm", tab, name }, kind: "dialog", modal: true, width: 420 }),
+};
 const activeSpace = () => spaces().find((s) => s.active) ?? null;
 
 // Shows the settings in the layout's shared side panel.
@@ -76,6 +83,7 @@ export default class GitHubTasks extends View {
       return;
     }
     if (this.role === "prompt") { this.promptPage = new PromptPage(blockProps()); return; }
+    if (this.role === "close-confirm") { this.closeConfirm = new CloseConfirm(blockProps()); return; }
     if (this.role === "settings") {
       this.settingsKey = null;
       this.page = null;
@@ -95,7 +103,15 @@ export default class GitHubTasks extends View {
     this.doctor = startDoctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
     cx.timer.every(POLL, (cx) => this.refresh(cx));
     cx.timer.every(3000, (cx) => cx.notify()); // a run starting or ending turns a row's Start into View and back
-    cx.spawn(async (cx) => { for (;;) { if ((await nextCommand()) === "focus") this.handle.focus(); cx.notify(); } });
+    cx.spawn(async (cx) => {
+      for (;;) {
+        const command = await nextCommand();
+        if (command === "focus") this.handle.focus();
+        // keys.json binds the close-tab key to "github-tasks.close_tab"; a tab with a running workflow asks first (close-tab.js).
+        else if (command === "close_tab") closeFocusedTab(CLOSE_DEPS);
+        cx.notify();
+      }
+    });
   }
 
   // A new place starts over, and whatever is still loading for the old one is dropped.
@@ -201,6 +217,7 @@ export default class GitHubTasks extends View {
     if (this.role === "workflow-editor") return this.workflowEditor.render(cx);
     if (this.role === "run") return this.runPage.render(cx);
     if (this.role === "prompt") return this.promptPage.render(cx);
+    if (this.role === "close-confirm") return this.closeConfirm.render(cx);
     if (this.role === "settings") return this.renderSettings(cx);
     const t = theme();
 
