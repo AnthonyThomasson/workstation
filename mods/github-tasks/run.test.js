@@ -47,10 +47,12 @@ test("claude: a reviewer can't ask, can't edit, and may only run read-only git a
   assert.deepEqual(values(argv, "--allowedTools"), [
     "Bash(hc send:*)",
     "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
-    "Bash(git symbolic-ref:*)", "Bash(git rev-parse:*)", "Bash(git merge-base:*)", "Bash(git ls-files:*)", "Bash(git grep:*)",
+    "Bash(git rev-parse:*)", "Bash(git merge-base:*)", "Bash(git ls-files:*)", "Bash(git grep:*)",
+    "Bash(git symbolic-ref --short refs/remotes/origin/HEAD)", // exact: no `:*`, since other symbolic-ref arguments write
     "Bash(node --test:*)", "Bash(npm test:*)", "Bash(herdr-app check:*)",
   ]);
   assert.ok(!argv.includes("Bash(git branch:*)")); // `git branch` can create and delete
+  assert.ok(!argv.some((a) => a.startsWith("Bash(git symbolic-ref") && a.includes(":*"))); // `git symbolic-ref HEAD refs/heads/x` and `-d` write
   assert.ok(!argv.includes("--model"));
   assert.deepEqual(argv.slice(-2), ["--effort", "medium"]);
 });
@@ -202,9 +204,13 @@ test("the orchestrator names reviewers uniquely, apart from every job", () => {
 test("a reviewer is only told about git commands its allowlist permits, and not to check out other commits", () => {
   const text = reviewerPrompt({ workflow: workflow(), ...place });
   const argv = agentArgv("reviewer", { agent: "claude", tests: "" }, ["claude"], "/run");
-  const named = [...text.matchAll(/`(git [a-z-]+)[ `]/g)].map((m) => m[1]);
+  // Every full git command the prompt puts in backticks, however long, must be covered by a rule: a `:*` prefix rule or an exact one.
+  const named = [...text.matchAll(/`(git [^`]+)`/g)].map((m) => m[1]).filter((c) => !/[<>]/.test(c));
   assert.ok(named.length >= 9);
-  for (const cmd of named) assert.ok(argv.includes(`Bash(${cmd}:*)`), cmd);
+  const permitted = (cmd) => argv.some((r) => r === `Bash(${cmd})` || (r.endsWith(":*)") && (cmd === r.slice(5, -3) || cmd.startsWith(`${r.slice(5, -3)} `))));
+  for (const cmd of named) assert.ok(permitted(cmd), cmd);
+  assert.ok(named.includes("git symbolic-ref --short refs/remotes/origin/HEAD"));
+  assert.ok(!named.includes("git symbolic-ref")); // the prompt names that one command, not symbolic-ref in general
   assert.match(text, /checking out another commit/);
   assert.ok(text.includes("git show <commit>:<path>"));
 });

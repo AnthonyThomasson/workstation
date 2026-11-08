@@ -37,10 +37,12 @@ const PLUMBING = {
   orchestrator: (runDir) => [`Bash(${runDir}/spawn:*)`, "Bash(hc --skill:*)", "Bash(hc send:*)", "Bash(hc wait:*)", "Bash(hc read:*)", "Bash(hc get:*)", "Bash(hc ls:*)", "Bash(hc interrupt:*)", "Bash(hc kill:*)"],
   worker: () => ["Bash(hc send:*)"],
   // Read-only git, and the workflow's test commands: one command prefix per line of its `tests`.
-  reviewer: (_runDir, tests) => ["Bash(hc send:*)", ...READ_ONLY_GIT.map((c) => `Bash(${c}:*)`), ...testLines(tests).map((c) => `Bash(${c}:*)`)],
+  reviewer: (_runDir, tests) => ["Bash(hc send:*)", ...READ_ONLY_GIT.map((c) => `Bash(${c}:*)`), SYMBOLIC_REF_RULE, ...testLines(tests).map((c) => `Bash(${c}:*)`)],
 };
-// Not `git branch`, which can create and delete.
-const READ_ONLY_GIT = ["git status", "git diff", "git log", "git show", "git symbolic-ref", "git rev-parse", "git merge-base", "git ls-files", "git grep"];
+// Not `git branch`, which can create and delete. Not `git symbolic-ref` as a prefix either: it also writes (`HEAD refs/heads/x`, `-d`).
+const READ_ONLY_GIT = ["git status", "git diff", "git log", "git show", "git rev-parse", "git merge-base", "git ls-files", "git grep"];
+// The one symbolic-ref a reviewer needs, to find the default branch: an exact rule, with no `:*` to let other arguments through.
+const SYMBOLIC_REF_RULE = "Bash(git symbolic-ref --short refs/remotes/origin/HEAD)";
 const testLines = (text) => String(text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
 // A reviewer never asks: what isn't allowed is refused (dontAsk), and it can't edit at all.
 const CLAUDE_MODE = { worker: "acceptEdits", reviewer: "dontAsk" }; // the orchestrator keeps the person's own
@@ -187,7 +189,7 @@ export function reviewerPrompt({ workflow, ticket, repo, runDir, workDir, repoRo
     `- The final review, when the orchestrator says so: you were started in the ticket worktree, ${workDir}, on ${branch}. Review everything the branch changed against the default branch (the one \`git symbolic-ref --short refs/remotes/origin/HEAD\` names), as a whole: what is broken, what the ticket asked for that is missing, what was added beyond it, and how the jobs fit together.`,
     `- The main checkout, ${repoRoot}, is the person's own: stay out of it. A step that would change the person's live environment never runs from a worktree; flag one that does.`, "",
     "- Your brief comes from the orchestrator and names the area to review. Stay in that area.",
-    "- You are read-only: you can't edit files, so change nothing, commit nothing, and don't start other agents. You may run read-only git (`git status`, `git diff`, `git log`, `git show`, `git symbolic-ref`, `git rev-parse`, `git merge-base`, `git ls-files`, `git grep`) and the repo's test commands you are allowed; anything else is refused, which includes checking out another commit (it would also move the worktree under its worker). To see a file as it was at another commit, use `git show <commit>:<path>`. Run the tests to check what you claim, and don't try to work around a refusal.",
+    "- You are read-only: you can't edit files, so change nothing, commit nothing, and don't start other agents. You may run read-only git (`git status`, `git diff`, `git log`, `git show`, `git symbolic-ref --short refs/remotes/origin/HEAD`, `git rev-parse`, `git merge-base`, `git ls-files`, `git grep`) and the repo's test commands you are allowed; anything else is refused, which includes checking out another commit (it would also move the worktree under its worker). To see a file as it was at another commit, use `git show <commit>:<path>`. Run the tests to check what you claim, and don't try to work around a refusal.",
     "- Report what is broken, what the ticket asked for that is missing, and what was added beyond it. Give each finding its file and line, its proof, and how much it matters.",
     "- Send your findings to the orchestrator with `hc send`, and give them as your last message too, then end your turn. Don't write them to a file. Say plainly when you found nothing that needs fixing.",
     "- Stay available. The orchestrator will come back after the fixes and ask whether your findings are addressed. The branch may also have been rebased or fixed meanwhile: read the code again (`git log`, `git diff`, the files) and check each finding against it, then report what is still open.", "",
