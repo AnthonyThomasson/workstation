@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentArgv, branchName, orchestratorPrompt, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt, worktreePath } from "./run.js";
+import { agentArgv, branchName, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt, worktreePath } from "./run.js";
 
 const ticket = { number: 12, title: "Fix the login!", body: "It breaks.", labels: ["bug"], status: "Todo", url: "https://github.test/12" };
 const role = (extra = {}) => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium", ...extra });
@@ -83,7 +83,7 @@ test("claude: the orchestrator keeps the person's permission mode and can't run 
   const argv = agentArgv("orchestrator", role(), ["claude"], "/runs/1");
   assert.ok(!argv.includes("--permission-mode"));
   const tools = values(argv, "--allowedTools");
-  for (const rule of ["Bash(/runs/1/spawn:*)", "Bash(hc wait:*)", "Bash(hc kill:*)"]) assert.ok(tools.includes(rule), rule);
+  for (const rule of ["Bash(/runs/1/spawn:*)", "Bash(/runs/1/merge:*)", "Bash(hc wait:*)", "Bash(hc kill:*)"]) assert.ok(tools.includes(rule), rule);
   assert.ok(!tools.some((t) => t.includes("hc run")));
   assert.ok(!tools.includes("Bash(hc:*)"));
 });
@@ -177,25 +177,34 @@ test("live-environment steps wait for the Merge and run from the main checkout",
 test("the orchestrator runs jobs in parallel, reviews and merges each, then reviews the whole ticket", () => {
   const text = orchestratorPrompt({ workflow: workflow(), ...place });
   assert.ok(!text.includes("share one branch and one folder"));
-  for (const expected of ["Run independent jobs in parallel, each in its own worktree", "start a reviewer on its job", "tell its worker with `hc send` to merge", "end the worker and its reviewer with `hc kill <name>`", "one reviewer over the whole ticket branch against the default branch", "end it with `hc kill <name>`", "Merge button", "Create PR", "Don't merge into the default branch, push or open a pull request yourself"]) {
+  for (const expected of ["Run independent jobs in parallel, each in its own worktree", "start a reviewer on its job", "run `/runs/1/merge <job>`", "Workers never merge", "one reviewer over the whole ticket branch against the default branch", "end it with `hc kill <name>`", "Merge button", "opens a pull request by itself", "Create PR button is only a retry", "squash-merges that pull request", "Don't merge into the default branch, push or open a pull request yourself"]) {
     assert.ok(text.includes(expected), expected);
   }
   assert.match(text, /rebase the ticket branch onto it, in the ticket worktree: `git -C \/src\/app-12-fix-the-login rebase origin\/<main-branch>`/);
 });
 
-test("a worker merges by rebasing, re-testing, fast-forwarding and cleaning up, and never pushes", () => {
-  const text = workerPrompt({ workflow: workflow(), ...place });
-  for (const expected of ["git rebase workflow/12-fix-the-login", "git -C /src/app-12-fix-the-login merge --ff-only workflow/12-fix-the-login--<job>", "worktree remove", "branch -d workflow/12-fix-the-login--<job>", "Never push", "git rebase --abort"]) {
-    assert.ok(text.includes(expected), expected);
-  }
-  assert.ok(!text.includes("Other workers may share it"));
+test("the orchestrator merges a job with the script, and a conflict goes back to its worker", () => {
+  const text = orchestratorPrompt({ workflow: workflow(), ...place });
+  assert.match(text, /run `\/runs\/1\/merge <job>`/);
+  assert.match(text, /Merge one job at a time/);
+  assert.match(text, /The script ends the job's agents itself, so don't `hc kill` them/);
+  assert.match(text, /stops on a conflict, it has already aborted the rebase and left the worktree, branch and agents as they were, and it names the conflicting files/);
+  assert.ok(text.includes("rebase onto the ticket branch in its worktree (`git rebase workflow/12-fix-the-login`)"));
+  assert.match(text, /call `merge <job>` again/);
+  assert.ok(!text.includes("tell its worker with `hc send` to merge"));
+  assert.ok(!text.includes("Their merge step does that anyway"));
+  assert.ok(!text.includes("in the middle of its merge step"));
 });
 
-test("a worker removes its own folder and reports in one command run from the ticket worktree", () => {
+test("a worker never merges: it commits, reports, and rebases only to settle a conflict it was sent", () => {
   const text = workerPrompt({ workflow: workflow(), ...place });
-  assert.ok(text.includes('cd /src/app-12-fix-the-login && git worktree remove <your worktree> && git branch -d workflow/12-fix-the-login--<job> && hc send <orchestrator> "<report>"'));
-  assert.match(text, /Don't remove your worktree in a separate step before reporting/);
-  assert.ok(!text.includes("5. `hc send` the orchestrator that the merge is done"));
+  assert.ok(!text.includes("## Merging"));
+  for (const gone of ["merge --ff-only", "worktree remove", "branch -d", "only to merge your job into it", "until the orchestrator tells you to"]) assert.ok(!text.includes(gone), gone);
+  assert.match(text, /never merge: the orchestrator merges your job/);
+  assert.match(text, /## Resolving a conflict/);
+  assert.ok(text.includes("`git rebase workflow/12-fix-the-login`"));
+  assert.ok(text.includes("`git rebase --abort`"));
+  assert.ok(!text.includes("Other workers may share it"));
 });
 
 test("the orchestrator names reviewers uniquely, apart from every job", () => {
@@ -416,7 +425,243 @@ test("the orchestrator ends agents once they have nothing left to do", () => {
     workDir: "/src/app-1-fix-the-login", repoRoot: "/src/app", branch: "workflow/1-fix-the-login",
   });
   assert.match(text, /Keep the reviewer running after it reports/);
-  assert.match(text, /end the worker and its reviewer with `hc kill <name>`/);
+  assert.match(text, /The script ends the job's agents itself/);
+  assert.ok(!text.includes("end the worker and its reviewer"));
   assert.match(text, /Once its findings are addressed, end it with `hc kill <name>`/);
   assert.match(text, /End every worker and reviewer of this run with `hc kill <name>` first/);
+});
+
+// merge: the same scratch repo, with a ticket worktree and a job whose worker has done some work. hc is a stand-in
+// that logs its calls; `hc ls --label …` answers from the terminals it is given, filtering the way hc does.
+function runMerge(args, { terminals = [], setup = () => {}, number = 12, failKill = false } = {}) {
+  const w = scratch();
+  const jobs = jobAt(w.ticketDir, w.branch, "auth");
+  const commit = (cwd, msg) => git(cwd, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", msg);
+  const addJob = (name = "auth") => {
+    const j = jobAt(w.ticketDir, w.branch, name);
+    git(w.ticketDir, "worktree", "add", "-q", "-b", j.branch, j.path);
+    return j;
+  };
+  const fixtures = join(w.dir, "terminals.json");
+  writeFileSync(fixtures, JSON.stringify(terminals));
+  writeFileSync(join(w.bin, "hc"), `#!/usr/bin/env node
+const { appendFileSync, readFileSync } = require("node:fs");
+const argv = process.argv.slice(2);
+appendFileSync(${JSON.stringify(w.log)}, argv.map((a) => "[" + a + "]").join("") + "\\n");
+if (argv[0] === "ls") {
+  const want = []; for (let i = 0; i < argv.length; i++) if (argv[i] === "--label") want.push(argv[++i]);
+  const all = JSON.parse(readFileSync(${JSON.stringify(fixtures)}, "utf8"));
+  const hit = all.filter((t) => t.state === "live" && want.every((k) => t.labels[k.split("=")[0]] === k.slice(k.indexOf("=") + 1)));
+  console.log(JSON.stringify({ hidden_finished: 0, terminals: hit.map((t) => ({ address: t.address, name: t.name, cwd: t.cwd, state: t.state })) }));
+}
+if (argv[0] === "kill" && ${failKill}) process.exit(1);
+`);
+  chmodSync(join(w.bin, "hc"), 0o755);
+  setup({ ...w, job: jobs, addJob, commit });
+  const script = join(w.dir, "merge");
+  writeFileSync(script, mergeScript({ id: "12-abc", workDir: w.ticketDir, branch: w.branch, number }));
+  chmodSync(script, 0o755);
+  const env = { PATH: `${w.bin}:${process.env.PATH}`, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+  const r = spawnSync(script, args, { env, encoding: "utf8" });
+  let calls = [];
+  try { calls = readFileSync(w.log, "utf8").trim().split("\n"); } catch { /* it never called hc */ }
+  return { ...r, calls, ...w, job: jobs };
+}
+
+const term = (address, name, folder, run = "12-abc") => ({ address, name, state: "live", cwd: folder, labels: { "herdr.workflow.run": run, "herdr.workflow.folder": folder } });
+const exists = (cwd, ...ref) => { try { git(cwd, ...ref); return true; } catch { return false; } };
+
+// a job with some work committed and some left over, in a ticket where somebody else has since committed too
+function aJob(w, { moveTicket = true } = {}) {
+  const j = w.addJob();
+  writeFileSync(join(j.path, "auth.txt"), "auth\n");
+  git(j.path, "add", "auth.txt");
+  w.commit(j.path, "add auth");
+  writeFileSync(join(j.path, "left.txt"), "left over\n"); // never committed
+  if (moveTicket) { writeFileSync(join(w.ticketDir, "other.txt"), "x\n"); git(w.ticketDir, "add", "other.txt"); w.commit(w.ticketDir, "someone else's job"); }
+  return j;
+}
+
+test("merge: commits what was left, rebases, fast-forwards, prints the commits, ends this job's terminals only, removes the job", () => {
+  const job = jobAt;
+  const r = runMerge(["Auth"], {
+    terminals: [
+      term("t1", "12-abc-auth", "FOLDER"), // the worker
+      term("t2", "12-abc-auth-review", "FOLDER"), // a reviewer, named anything
+      term("t3", "12-abc-other", "OTHERFOLDER"), // another job's
+      term("t4", "12-abc-final-review", "TICKET"), // the final reviewer, in the ticket worktree
+      term("t5", "elsewhere-auth", "FOLDER", "99-zzz"), // another run's, same folder name
+      { ...term("t6", "12-abc-old", "FOLDER"), state: "finished" },
+    ],
+    setup: (w) => {
+      aJob(w);
+      // the fixtures name folders by placeholder, because the scratch folder is only known here
+      const fix = join(w.dir, "terminals.json");
+      const text = readFileSync(fix, "utf8").replaceAll("FOLDER", job(w.ticketDir, w.branch, "auth").path).replaceAll("OTHERFOLDER", job(w.ticketDir, w.branch, "other").path).replaceAll("TICKET", w.ticketDir);
+      writeFileSync(fix, text);
+    },
+  });
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  const log = git(r.ticketDir, "log", "--format=%s").split("\n");
+  assert.deepEqual(log.slice(0, 3), ["Job auth: commit what was left in the worktree (ticket #12)", "add auth", "someone else's job"]); // rebased on top of the other job, linear
+  assert.equal(git(r.ticketDir, "show", "HEAD:left.txt"), "left over");
+  assert.equal(git(r.ticketDir, "rev-list", "--merges", "--count", "HEAD"), "0");
+  assert.match(r.stdout, /Merged workflow\/12-fix--auth into workflow\/12-fix:/);
+  assert.match(r.stdout, /[0-9a-f]+ Job auth: commit what was left/);
+  assert.match(r.stdout, /[0-9a-f]+ add auth/);
+  assert.ok(!r.stdout.includes("someone else's job")); // already there: not one of the commits it added
+  const kills = r.calls.filter((c) => c.startsWith("[kill]"));
+  assert.deepEqual(kills, ["[kill][t1]", "[kill][t2]"]);
+  const ls = r.calls.find((c) => c.startsWith("[ls]"));
+  assert.ok(ls.includes("[--label][herdr.workflow.run=12-abc]") && ls.includes(`[--label][herdr.workflow.folder=${r.job.path}]`), ls);
+  assert.equal(exists(r.ticketDir, "worktree", "list") && git(r.ticketDir, "worktree", "list").includes("--auth"), false);
+  assert.equal(exists(r.ticketDir, "show-ref", "--verify", "--quiet", `refs/heads/${r.job.branch}`), false);
+  assert.ok(r.stdout.includes("Removed"));
+});
+
+test("merge: a numberless draft names no ticket in the commit it makes, and a clean job makes no commit", () => {
+  const dirty = runMerge(["auth"], { number: null, setup: (w) => { const j = w.addJob(); writeFileSync(join(j.path, "a.txt"), "a\n"); } });
+  assert.equal(dirty.status, 0, dirty.stderr);
+  assert.equal(git(dirty.ticketDir, "log", "-1", "--format=%s"), "Job auth: commit what was left in the worktree");
+  const clean = runMerge(["auth"], { setup: (w) => { const j = w.addJob(); w.commit(j.path, "work"); } });
+  assert.equal(clean.status, 0, clean.stderr);
+  assert.deepEqual(git(clean.ticketDir, "log", "--format=%s", "-2").split("\n"), ["work", "first"]);
+});
+
+test("merge: a conflict aborts the rebase, names the files, exits non-zero and leaves everything as it was", () => {
+  const r = runMerge(["auth"], {
+    terminals: [term("t1", "12-abc-auth", "X")],
+    setup: (w) => {
+      const j = w.addJob();
+      writeFileSync(join(w.ticketDir, "shared.txt"), "ticket\n"); git(w.ticketDir, "add", "shared.txt"); w.commit(w.ticketDir, "ticket side");
+      writeFileSync(join(j.path, "shared.txt"), "job\n"); git(j.path, "add", "shared.txt"); w.commit(j.path, "job side");
+      writeFileSync(join(j.path, "left.txt"), "left\n"); // committed by the script first
+    },
+  });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /conflicts with workflow\/12-fix in:\n  shared\.txt/);
+  assert.match(r.stderr, /rebase was aborted/);
+  assert.equal(git(r.job.path, "status", "--porcelain"), ""); // no rebase left half done
+  assert.equal(exists(r.job.path, "rev-parse", "--verify", "REBASE_HEAD"), false);
+  assert.equal(git(r.job.path, "branch", "--show-current"), r.job.branch);
+  assert.equal(git(r.ticketDir, "log", "-1", "--format=%s"), "ticket side"); // the ticket branch is untouched
+  assert.ok(git(r.ticketDir, "worktree", "list").includes("--auth")); // worktree and branch stay
+  assert.ok(exists(r.ticketDir, "show-ref", "--verify", "--quiet", `refs/heads/${r.job.branch}`));
+  assert.ok(!r.calls.some((c) => c.startsWith("[kill]")));
+});
+
+test("merge: a second run after the worker settled the conflict goes through", () => {
+  const r = runMerge(["auth"], {
+    setup: (w) => {
+      const j = w.addJob();
+      writeFileSync(join(w.ticketDir, "shared.txt"), "ticket\n"); git(w.ticketDir, "add", "shared.txt"); w.commit(w.ticketDir, "ticket side");
+      writeFileSync(join(j.path, "shared.txt"), "ticket\njob\n"); git(j.path, "add", "shared.txt"); w.commit(j.path, "job side");
+      spawnSync("git", ["-C", j.path, "rebase", w.branch], { encoding: "utf8" }); // stops on the conflict, as the worker would see
+      writeFileSync(join(j.path, "shared.txt"), "ticket'+BS+'njob'+BS+'n"); git(j.path, "add", "shared.txt");
+      execFileSync("git", ["-C", j.path, "rebase", "--continue"], { env: { ...process.env, GIT_EDITOR: "true" }, stdio: "ignore" });
+    },
+  });
+  assert.equal(r.status, 0, r.stderr);
+});
+
+test("merge refuses what it can't merge, and changes nothing", () => {
+  const cases = [
+    [[], /usage: merge <job>/, 2],
+    [["a", "b"], /usage: merge <job>/, 2],
+    [["final"], /final is the ticket's own review/, 2],
+    [["FINAL!"], /final is the ticket's own review/, 2],
+    [["!!!"], /needs a letter or a number/, 2],
+    [["nothing"], /unknown job nothing: there is no branch workflow\/12-fix--nothing/, 1],
+  ];
+  for (const [args, message, code] of cases) {
+    const r = runMerge(args, { setup: (w) => w.addJob() });
+    assert.equal(r.status, code, args.join(" "));
+    assert.match(r.stderr, message);
+    assert.ok(!r.calls.some((c) => c.startsWith("[kill]")));
+    assert.ok(git(r.ticketDir, "worktree", "list").includes("--auth"));
+  }
+});
+
+test("merge: a job whose worktree is gone says so, and a ticket worktree that is gone too", () => {
+  const noTree = runMerge(["auth"], { setup: (w) => { const j = w.addJob(); rmSync(j.path, { recursive: true }); } });
+  assert.equal(noTree.status, 1);
+  assert.match(noTree.stderr, /job auth has no worktree at /);
+  assert.ok(exists(noTree.ticketDir, "show-ref", "--verify", "--quiet", `refs/heads/${noTree.job.branch}`));
+  const noTicket = runMerge(["auth"], { setup: (w) => { w.addJob(); rmSync(w.ticketDir, { recursive: true }); } });
+  assert.equal(noTicket.status, 1);
+  assert.match(noTicket.stderr, /the ticket's worktree .* is gone/);
+});
+
+test("merge: a job worktree in the middle of a rebase is left to its worker", () => {
+  const r = runMerge(["auth"], {
+    setup: (w) => {
+      const j = w.addJob();
+      writeFileSync(join(w.ticketDir, "s.txt"), "t\n"); git(w.ticketDir, "add", "s.txt"); w.commit(w.ticketDir, "t");
+      writeFileSync(join(j.path, "s.txt"), "j\n"); git(j.path, "add", "s.txt"); w.commit(j.path, "j");
+      spawnSync("git", ["-C", j.path, "rebase", w.branch], { encoding: "utf8" }); // stops on the conflict
+    },
+  });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /in the middle of a rebase or merge/);
+  assert.ok(exists(r.job.path, "rev-parse", "--verify", "REBASE_HEAD")); // still as the worker left it
+});
+
+test("merge: a ticket branch that moved during the merge is reported, with nothing cleaned up", () => {
+  // the ticket branch moves while the rebase runs: a post-rewrite hook in the job worktree commits to it
+  const r = runMerge(["auth"], {
+    terminals: [term("t1", "12-abc-auth", "X")],
+    setup: (w) => {
+      const j = w.addJob();
+      writeFileSync(join(w.ticketDir, "o.txt"), "o\n"); git(w.ticketDir, "add", "o.txt"); w.commit(w.ticketDir, "o");
+      w.commit(j.path, "work");
+      const hooks = join(w.dir, "hooks"); mkdirSync(hooks);
+      writeFileSync(join(hooks, "post-rewrite"), `#!/bin/sh\nenv -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C ${shQuote(w.ticketDir)} -c user.name=t -c user.email=t@t commit -q --allow-empty -m "sneaked in"\n`);
+      chmodSync(join(hooks, "post-rewrite"), 0o755);
+      git(w.repo, "config", "core.hooksPath", hooks);
+    },
+  });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /workflow\/12-fix moved during the merge .* Nothing was merged or removed/);
+  assert.equal(git(r.ticketDir, "log", "-1", "--format=%s"), "sneaked in");
+  assert.ok(git(r.ticketDir, "worktree", "list").includes("--auth"));
+  assert.ok(exists(r.ticketDir, "show-ref", "--verify", "--quiet", `refs/heads/${r.job.branch}`));
+  assert.ok(!r.calls.some((c) => c.startsWith("[kill]")));
+});
+
+test("merge: when a terminal can't be ended, the merge stays done and the job is kept for another run", () => {
+  const r = runMerge(["auth"], {
+    failKill: true,
+    terminals: [term("t1", "12-abc-auth", "X")],
+    setup: (w) => { const j = w.addJob(); w.commit(j.path, "work"); const f = join(w.dir, "terminals.json"); writeFileSync(f, readFileSync(f, "utf8").replace('"X"', JSON.stringify(j.path)).replace(/"herdr.workflow.folder":"X"/, `"herdr.workflow.folder":${JSON.stringify(j.path)}`)); },
+  });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /merged, but could not end t1/);
+  assert.equal(git(r.ticketDir, "log", "-1", "--format=%s"), "work");
+  assert.ok(git(r.ticketDir, "worktree", "list").includes("--auth"));
+  // a second run: nothing new to merge, and the cleanup is done
+  writeFileSync(join(r.bin, "hc"), "#!/bin/sh\necho '{\"terminals\":[]}'\n");
+  const again = spawnSync(join(r.dir, "merge"), ["auth"], { env: { PATH: `${r.bin}:${process.env.PATH}` }, encoding: "utf8" });
+  assert.equal(again.status, 0, again.stderr);
+  assert.match(again.stdout, /had nothing new/);
+  assert.ok(!git(r.ticketDir, "worktree", "list").includes("--auth"));
+});
+
+test("merge cleans a job's name as spawn does, whatever is in the arguments", () => {
+  const r = runMerge(["  Auth Flow!! "], { setup: (w) => { const j = w.addJob("auth-flow"); w.commit(j.path, "work"); } });
+  assert.equal(r.status, 0, r.stderr);
+  const long = "Very long job name that goes on and on past forty characters";
+  const spawned = runSpawn(["worker", long, "b"]);
+  const folder = spawned.calls[0].match(/\[--cwd\]\[([^\]]*)\]/)[1];
+  const script = mergeScript({ id: "12-abc", workDir: spawned.ticketDir, branch: spawned.branch });
+  const m = spawnSync("sh", ["-c", script, "merge", long], { env: { PATH: `${spawned.bin}:${process.env.PATH}` }, encoding: "utf8" });
+  assert.equal(m.status, 0, m.stderr); // found the same worktree and branch spawn made
+  assert.ok(!existsSync(folder));
+});
+
+test("the merge script quotes whatever is in the paths and ids", () => {
+  const text = mergeScript({ id: "12-abc", workDir: "/src/it's here", branch: "workflow/12-fix", number: 12 });
+  assert.ok(text.includes(`ticket_dir=${shQuote("/src/it's here")}`));
+  assert.ok(text.startsWith("#!/bin/sh\n"));
+  const syntax = spawnSync("sh", ["-n"], { input: text, encoding: "utf8" });
+  assert.equal(syntax.status, 0, syntax.stderr);
 });
