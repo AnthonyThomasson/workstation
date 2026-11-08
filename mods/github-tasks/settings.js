@@ -1,5 +1,5 @@
 // The Tasks settings page: four collapsible agent sections, each with a read-only prompt tab, then the workflows
-// (workflow-list.js), which main.js builds once so they keep their place between renders. The grooming controls are
+// (workflow-list.js), which main.js builds once so they keep their place between renders. The agent controls are
 // global; the prompt tabs carry a snapshot of the current repo/project/status spellings. Not a View of its own:
 // main.js builds one and draws it from render.
 import { div } from "gpui-kit";
@@ -17,7 +17,6 @@ import { S, stop, note, icon, iconButton, action, gh } from "./ui.js";
 const SECTIONS_KEY = "github-tasks.settingsSections";
 const SECTIONS = [
   { role: "newTask", label: "New Task", hint: PROMPT_HINTS.newTask },
-  { role: "grooming", label: "Grooming" },
   { role: "orchestrator", label: "Orchestrator", hint: PROMPT_HINTS.orchestrator },
   { role: "worker", label: "Worker", hint: PROMPT_HINTS.worker },
   { role: "reviewer", label: "Reviewer", hint: PROMPT_HINTS.reviewer },
@@ -31,7 +30,7 @@ export class TaskSettings {
     this.project = props?.project ?? null; // null until the repo has a linked project
     this.where = props?.where ?? {};
     this.options = []; // the project's Status field options, for spelling the prompt's statuses; empty with no project
-    this.agents = []; // installed agents Start Grooming can use
+    this.agents = []; // installed agents New Task can use
     this.doctorOpen = false; // the doctor's popover
     this.copied = false; // the prompt was just copied
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
@@ -128,17 +127,17 @@ export class TaskSettings {
           .child(div().truncate().text_size(S().title).font_semibold().child(label)))
         .child(action(`settings-${role}-prompt`, "Prompt", t, () => this.openPrompt(role), true)))
       .when(open, (el) => el.child(div().pl(20).pb(4)
-        .child(role === "grooming" || role === "newTask" ? this.agentBody(t, role) : note(t, hint))));
+        .child(role === "newTask" ? this.agentBody(t) : note(t, hint))));
   }
 
-  agentBody(t, role) {
+  agentBody(t) {
     const g = this.groomer(), agent = this.agent();
     const chip = (id, label, on, onClick) => h_flex().id(id).h(28).px(10).items_center().rounded(6).cursor_pointer()
       .border_1().border_color(t.border).bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted)
       .hover((s) => s.bg(on ? t.selected : t.hover)).on_mouse_down("left", stop).on_click(onClick).child(label);
     const heading = (text) => div().text_size(S().secondary).font_semibold().child(text);
     return v_flex().flex_none().gap(10)
-      .child(note(t, `${role === "newTask" ? "The + beside Backlog opens this agent. " : "Start Grooming and Set Up Project open this agent. "}Grooming and New Task share these settings. The model and effort are passed to the agent when it starts.`))
+      .child(note(t, `The + beside Backlog and Set Up Project open this agent. The model and effort are passed to the agent when it starts.`))
       .child(v_flex().gap(4).child(heading("Agent"))
         .child(h_flex().flex_wrap().gap(4).children(this.agents.length
           ? this.agents.map((a) => chip(`groom-agent-${a.key}`, a.name, a.key === agent?.key, (_e, cx) => { this.saveGroomer({ agent: a.key }); cx.notify(); }))

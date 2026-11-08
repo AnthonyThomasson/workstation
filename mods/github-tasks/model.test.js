@@ -152,7 +152,7 @@ test("a save needs a title and a status the project has", () => {
   assert.equal(checkTask({ title: "T", status: null }, options), null);
 });
 
-import { groupByStage, groomPrompt, setupPrompt, groomArgv, normalizeGroomer, STATUSES, spelled, sameStatus, recentlyDone, middleEllipsis } from "./model.js";
+import { groupByStage, setupPrompt, groomArgv, normalizeGroomer, STATUSES, spelled, sameStatus, recentlyDone, middleEllipsis } from "./model.js";
 
 test("the statuses are fixed", () => {
   assert.deepEqual(STATUSES, { backlog: "To Do", groomed: "Up Next", inProgress: "In Progress", inReview: "In Review", done: "Done" });
@@ -183,34 +183,10 @@ test("groups open tickets by stage, newest first, dropping other statuses", () =
   assert.deepEqual(g.inReview.map((t) => t.key), ["e"]);
 });
 
-test("the grooming prompt names the repo, project and both statuses as given", () => {
-  const p = groomPrompt({ repo: "me/app", project: { title: "Roadmap", url: "https://x/p" }, backlog: "Todo", groomed: "Ready" });
-  for (const s of ["me/app", "Roadmap", "https://x/p", '"Todo"', '"Ready"']) assert.ok(p.includes(s), s);
-});
-
-test("the grooming prompt uses the fixed statuses when none are given", () => {
-  const p = groomPrompt({ repo: "me/app", project: { title: "Roadmap" } });
-  assert.ok(p.includes('"To Do"') && p.includes('"Up Next"'));
-});
-
-test("the grooming prompt shows placeholders with no repo or project", () => {
-  const p = groomPrompt({});
-  assert.ok(p.includes("<repo>") && p.includes('"<project>"'));
-  assert.ok(p.includes('"To Do"') && !p.includes("undefined") && !p.includes("null"));
-  assert.ok(groomPrompt({ repo: "me/app" }).includes('"<project>"'));
-});
-
 test("status names match ignoring case, spaces and punctuation", () => {
   const g = groupByStage([ticket("a", "2026-01-01T00:00:00Z", { status: "Todo" }), ticket("b", "2026-01-01T00:00:00Z", { status: "Up next" })]);
   assert.deepEqual(g.backlog.map((t) => t.key), ["a"]);
   assert.deepEqual(g.groomed.map((t) => t.key), ["b"]);
-});
-
-test("the grooming prompt has the agent ask the person how to clean up and prioritize before changing anything", () => {
-  const p = groomPrompt({ repo: "me/app", project: { title: "Roadmap", url: "https://x/p" }, backlog: "Todo", groomed: "Up Next" });
-  assert.match(p, /grill the person/);
-  for (const s of ["Audit the codebase", "Clean up old tickets", "Prepare tickets for new work"]) assert.ok(p.includes(s), s);
-  assert.match(p, /Don't change anything yet/);
 });
 
 test("the grooming agent's command carries the chosen model and effort", () => {

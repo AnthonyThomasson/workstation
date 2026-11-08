@@ -14,7 +14,7 @@ export const DOCTOR_KEY = "github-tasks.doctor"; // { issues, repo, project }: w
 //   carried        the project and status issues of the last check of this same place, kept for whatever above is not known
 //   auth           { installed, signedIn: true | false | null (not known), scopes: [string] | null (gh did not list them) } | undefined
 //   agents         what knownAgents() knows: [{ key, installed }] | null (not known)
-//   groomerAgent   the grooming agent saved on the settings page, or null
+//   groomerAgent   the task agent saved on the settings page, or null
 //   workflows      { items: [workflow], errors: ["file.yaml: why"] } as store.loadAll gives them
 // Kinds: no-project, status-missing, status-misnamed, gh-auth, gh-scope, agent-missing, workflow-invalid.
 export function diagnose({ repo, project, statuses, carried = [], auth, agents = null, groomerAgent = null, workflows } = {}) {
@@ -61,7 +61,7 @@ function checkAgents(agents, groomerAgent, items) {
   const missing = new Set(agents.filter((a) => !a.installed).map((a) => a.key));
   const uses = new Map(); // agent key -> what uses it, in the order found
   const add = (agent, user) => { if (agent && agent !== CUSTOM && missing.has(agent)) uses.set(agent, [...(uses.get(agent) ?? []), user]); };
-  add(groomerAgent, "Grooming agent");
+  add(groomerAgent, "Task agent");
   for (const w of items) for (const role of ROLES) add(w[role]?.agent, `${w.name} ${ROLE_LABELS[role].toLowerCase()}`);
   return [...uses].map(([agent, usedBy]) => ({
     kind: "agent-missing", agent, usedBy, message: `The agent "${agent}" isn't installed (used by ${usedBy.join(", ")}).`,

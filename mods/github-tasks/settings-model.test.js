@@ -3,26 +3,11 @@ import assert from "node:assert/strict";
 import { markdownLiteral, normalizeSettingsSections, promptForRole } from "./settings-model.js";
 
 test("settings sections start collapsed and only saved booleans reopen them", () => {
-  const closed = { newTask: false, grooming: false, orchestrator: false, worker: false, reviewer: false };
+  const closed = { newTask: false, orchestrator: false, worker: false, reviewer: false };
   assert.deepEqual(normalizeSettingsSections(), closed);
   assert.deepEqual(normalizeSettingsSections(null), closed);
-  assert.deepEqual(normalizeSettingsSections({ grooming: true, worker: true }), { ...closed, grooming: true, worker: true });
-  assert.deepEqual(normalizeSettingsSections({ grooming: "true", orchestrator: 1, reviewer: false, unknown: true }), closed);
-});
-
-test("the grooming prompt keeps the current repo, project and status spellings", () => {
-  const prompt = promptForRole("grooming", {
-    repo: "me/app",
-    project: { title: "Work" },
-    options: [{ name: "Todo" }, { name: "Up next" }],
-  });
-  assert.match(prompt, /me\/app/);
-  assert.match(prompt, /Work/);
-  assert.match(prompt, /Todo/);
-  assert.match(prompt, /Up next/);
-  const empty = promptForRole("grooming");
-  assert.match(empty, /<repo>/);
-  assert.match(empty, /<project>/);
+  assert.deepEqual(normalizeSettingsSections({ newTask: true, worker: true }), { ...closed, newTask: true, worker: true });
+  assert.deepEqual(normalizeSettingsSections({ newTask: "true", orchestrator: 1, reviewer: false, unknown: true }), closed);
 });
 
 test("built-in role prompts use the sample run placeholders", () => {

@@ -1,7 +1,7 @@
-// Start Grooming and Set Up Project: each opens an agent in a tab of its own, in the repo's folder, told what
+// New Task and Set Up Project: each opens an agent in a tab of its own, in the repo's folder, told what
 // to do (the prompts are in model.js).
 import { knownAgents, spaces } from "herdr";
-import { groomPrompt, newTaskPrompt, groomArgv, setupPrompt } from "./model.js";
+import { newTaskPrompt, groomArgv, setupPrompt } from "./model.js";
 import { app } from "./ui.js";
 
 export const installedAgents = () => knownAgents().then((list) => list.filter((a) => a.installed), () => []);
@@ -17,11 +17,6 @@ async function openAgent({ agent, name, task, groomer, where }) {
     name: name.slice(0, 40), folder: where.cwd, argv: groomArgv(agent.key, agent.run, groomer ?? {}), task,
     ...(space ? { space } : {}),
   });
-}
-
-export async function startGrooming({ agent, repo, project, settings, groomer, where }) {
-  const name = `Groom ${String(repo).split("/").pop()}`;
-  await openAgent({ agent, name, task: groomPrompt({ repo, project, backlog: settings.backlog, groomed: settings.groomed }), groomer, where });
 }
 
 export async function startNewTask({ agent, repo, project, settings, groomer, where }) {

@@ -11,7 +11,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
 import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, spelled, STATUSES, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE } from "./model.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField } from "./loader.js";
-import { installedAgents, startGrooming, startNewTask, startProjectSetup } from "./groom.js";
+import { installedAgents, startNewTask, startProjectSetup } from "./groom.js";
 import { S, icon, stop, note, iconButton, action, gh, later } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { TaskEditor, CHANGED } from "./editor.js";
@@ -83,8 +83,7 @@ export default class GitHubTasks extends View {
     this.reset(null);
     this.open = Object.fromEntries(SECTIONS.map((x) => [x.id, x.open])); // which sections are expanded
     this.starting = new Set(); // the tickets whose Start is working
-    this.agents = []; // installed agents Start Grooming can use
-    this.grooming = false;
+    this.agents = []; // installed agents New Task can use
     this.startingTask = false;
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
     this.doctor = startDoctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
@@ -303,23 +302,22 @@ export default class GitHubTasks extends View {
     return this.agents.find((a) => a.key === saved) ?? this.agents.find((a) => a.key === "claude") ?? this.agents[0] ?? null;
   }
 
-  groom(cx, kind = "grooming") {
+  startTask(cx) {
     const ctx = this.ctx, project = this.project, agent = this.agent();
-    const busy = kind === "grooming" ? this.grooming : this.startingTask;
-    if (!ctx || !project || !agent || busy) return;
-    if (kind === "grooming") this.grooming = true; else this.startingTask = true;
+    if (!ctx || !project || !agent || this.startingTask) return;
+    this.startingTask = true;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
         // The prompt names the statuses as the project spells them ("Todo", not the fixed "To Do").
         const where = { cwd: ctx.folder, on: ctx.on };
         const options = (await loadStatusField(gh, project.id, where).catch(() => null))?.options ?? [];
-        await (kind === "grooming" ? startGrooming : startNewTask)({ agent, repo: this.repo, project, settings: { backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) }, groomer: normalizeGroomer(shared(GROOMER_KEY)), where });
+        await startNewTask({ agent, repo: this.repo, project, settings: { backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) }, groomer: normalizeGroomer(shared(GROOMER_KEY)), where });
         this.error = null;
       } catch (e) {
         this.error = { kind: "other", message: String(e?.message ?? e) };
       } finally {
-        if (kind === "grooming") this.grooming = false; else this.startingTask = false;
+        this.startingTask = false;
         cx.notify();
       }
     });
@@ -356,16 +354,10 @@ export default class GitHubTasks extends View {
     });
   }
 
-  // The broom beside Backlog: starts a grooming session.
-  groomButton(t) {
-    const agent = this.agent();
-    return iconButton("groom", "broom", t, (_e, cx) => this.groom(cx), false, this.grooming ? "Starting grooming…" : agent ? "Start a grooming session" : "No agent is installed to groom with");
-  }
-
-  // The + beside the broom: starts a session that helps write one new ticket.
+  // The + beside Backlog: starts a session that helps write one new ticket.
   newTaskButton(t) {
     const agent = this.agent();
-    return iconButton("new-task", "plus", t, (_e, cx) => this.groom(cx, "task"), false, this.startingTask ? "Starting…" : agent ? "Start a new task with an agent" : "No agent is installed to help with a task");
+    return iconButton("new-task", "plus", t, (_e, cx) => this.startTask(cx), false, this.startingTask ? "Starting…" : agent ? "Start a new task with an agent" : "No agent is installed to help with a task");
   }
 
   // A section's header: pressing it expands or collapses the tickets under it.
@@ -375,7 +367,7 @@ export default class GitHubTasks extends View {
       .on_mouse_down("left", stop).on_click((_e, cx) => { this.open[id] = !this.open[id]; cx.notify(); })
       .child(icon(open ? "chevron-down" : "chevron-right", 12, t.muted))
       .child(div().flex_1().child(`${label} · ${count}`))
-      .when(id === "backlog", (el) => el.child(this.newTaskButton(t)).child(this.groomButton(t)));
+      .when(id === "backlog", (el) => el.child(this.newTaskButton(t)));
   }
 
   // A click opens the ticket in a tab to edit. Its folder and machine go along, so the editor asks
