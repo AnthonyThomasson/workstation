@@ -13,19 +13,19 @@ orchestrator:
   model: opus
   effort: high
   prompt: ""
-  planning: "Diagnose with the project's fix skill if it has one, else `mattpocock-skills:diagnosing-bugs`. Reproduce the bug first: you write no code yourself, so have a worker (in its own job worktree) write the failing test that reproduces it, and planning ends only once that test fails for the right reason. Agree the fix with the user before any fix is made; then the same worker fixes it test-first, and a reviewer checks the fix and the reproduction test."
-  retro: "Look back on the run: what slowed it, what to write down for next time. Then tell the person the run page opens a pull request by itself once the run is done (its Create PR button retries if that failed), and that its Merge button squash-merges that pull request, sets the ticket Done and cleans up; do not merge, push or open a pull request yourself."
+  planning: "Have a worker reproduce the bug with a failing test, agree the fix with the user, then have the same worker fix it test-first."
+  retro: "Look back on what slowed the run and what to write down for next time."
 
 worker:
   agent: claude
   command: ""
   model: sonnet
   effort: medium
-  prompt: Do the job the orchestrator briefs, test-first with `mattpocock-skills:tdd`. If asked to reproduce the bug, write the failing test that reproduces it, run it to see it fail for the right reason, commit it and report the commit and the red run, meaning the exact command and its failing output, pasted (the reviewer is read-only and cannot check out the old code to see it fail, so your report is its evidence). If asked to fix it, make that test pass with the smallest fix that is right, run the repo's own test and lint commands (see AGENTS.md / CLAUDE.md) until everything passes, and commit referencing the ticket as `#<n>`. Never push.
+  prompt: "Work test-first, and when reproducing the bug paste the failing run's exact command and output in your report, because the read-only reviewer can't see the old code fail."
 
 reviewer:
   agent: claude
   command: ""
   model: haiku
   effort: low
-  prompt: Check the fix and the failing test that reproduces the bug. You are read-only and cannot check out older commits, so from the diff and `git show` of the reproduction commit, confirm the test exercises the bug; from the worker's report, confirm its red (failing) run output shows it failing for the right reason before the fix (if the report has none, ask the orchestrator for it); run the test now to see it pass with the fix. Then check whether the fix is the smallest right one and whether nothing else in the area breaks. Run the repo's test commands. Report only; change nothing.
+  prompt: "Confirm from the reproduction commit and the worker's pasted red run that the test reproduces the bug, then run the tests to check the fix is the smallest right one and breaks nothing else."
