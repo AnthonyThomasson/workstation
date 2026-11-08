@@ -283,7 +283,8 @@ echo "$term"
 // The only way a job joins the ticket branch, so every merge is done the same way whoever asks for it. The orchestrator
 // calls it once a job's review passes. number: the ticket's number, for the commit message (none for a draft).
 // It finds the job's terminals with `hc ls --label`, so no JSON has to be parsed here except the addresses in its answer
-// (grep on `"address":"…"`; no jq or python is needed, and nothing else in the answer can look like that key).
+// (grep on `"address" : "…"`, spaces around the colon allowed; no jq or python is needed). If terminals are listed but no
+// address can be read, it fails rather than clean up while agents may still be in the worktree.
 // Safe to run again after any failure: a job that is already on the ticket branch just goes on to the cleanup.
 export function mergeScript({ id, workDir, branch, number }) {
   const what = Number.isInteger(number) ? ` (ticket #${number})` : "";
@@ -292,7 +293,8 @@ export function mergeScript({ id, workDir, branch, number }) {
 #   merge <job>
 # It commits what is left in the job's worktree, rebases the job's branch onto the ticket branch, fast-forwards the
 # ticket branch, then ends the job's worker and reviewers, removes its worktree and deletes its branch.
-# A rebase conflict is aborted and the files are named, with nothing else touched: have the worker resolve it, then run this again.
+# A rebase conflict is aborted and the files are named; the worktree, branch and agents are left as they were, except that what was
+# left uncommitted in the worktree is now committed on the job's branch. Have the worker resolve it, then run this again.
 set -u
 run_id=${shQuote(id)}
 ticket_dir=${shQuote(workDir)}
