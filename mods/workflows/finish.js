@@ -53,7 +53,14 @@ const PUSH_REJECTED = /rejected|non-fast-forward|fetch first|failed to push some
 // project has no such option, or nothing when there is no project to set it in. number: the issue to close, if any.
 // workDirExists / branchExists: false when an earlier Merge already removed the folder / merged and deleted the branch;
 // the steps for them are left out, so pressing Merge again finishes what was left.
-export function mergeSteps({ repoRoot, workDir, branch, base, number, status, workDirExists = true, branchExists = true }) {
+// Only a child of a .herdr/workflow-runs folder can be removed. In particular, never rm the parent or a path
+// reached through a run id containing traversal; Merge builds this path from home() and the run id.
+const safeRunDir = (runDir) => {
+  const id = typeof runDir === "string" ? runDir.match(/^\/(?:.*\/)?\.herdr\/workflow-runs\/([^/]+)$/)?.[1] : null;
+  return Boolean(id && id !== "." && !id.includes(".."));
+};
+
+export function mergeSteps({ repoRoot, workDir, branch, base, number, status, runDir, workDirExists = true, branchExists = true }) {
   const git = (args) => ({ cmd: "git", args });
   return [
     ...(workDirExists ? [{ name: "tree-status", ...git(["-C", workDir, "status", "--porcelain"]), fail: `Couldn't look at ${workDir}.`,
@@ -71,6 +78,7 @@ export function mergeSteps({ repoRoot, workDir, branch, base, number, status, wo
     ...(workDirExists ? [{ name: "remove-worktree", ...git(["-C", repoRoot, "worktree", "remove", workDir]), fail: `Couldn't remove the worktree ${workDir}.`, done: `removed the worktree ${workDir}` }]
       : [{ name: "prune-worktrees", ...git(["-C", repoRoot, "worktree", "prune"]), fail: `Couldn't clear the removed worktree ${workDir} from git's list.` }]),
     ...(branchExists ? [{ name: "delete-branch", ...git(["-C", repoRoot, "branch", "-d", branch]), fail: `Couldn't delete the branch ${branch}.`, done: `deleted ${branch}` }] : []),
+    ...(safeRunDir(runDir) ? [{ name: "remove-run-files", cmd: "rm", args: ["-rf", runDir], fail: `Couldn't remove the run files ${runDir}.`, done: `removed the run files ${runDir}` }] : []),
   ];
 }
 

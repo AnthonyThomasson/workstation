@@ -4,7 +4,7 @@
 // forgets those. Not a View of its own: main.js builds one in init and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, hc, notify, run, setShared, shared, terminals, theme } from "herdr";
+import { exec, hc, home, notify, run, setShared, shared, terminals, theme } from "herdr";
 import { S, icon, note, stop } from "./ui.js";
 import { agentsOf, orchestratorOf, statusColor, statusLabel, withGone } from "./runview.js";
 import { branchArgs, canMerge, defaultBranch, finalSeen, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, stageOf, statusArgs, worktreeArgs } from "./finish.js";
@@ -166,7 +166,8 @@ export class RunPage {
         const branchExists = (await exec("git", branchArgs(this.repoRoot, this.branch))).code === 0;
         const { warnings } = await runSteps(mergeSteps({
           repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, base: await this.baseBranch(),
-          number: this.ticket?.number, status: this.doneStatus(), workDirExists, branchExists,
+          number: this.ticket?.number, status: this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`,
+          workDirExists, branchExists,
         }), exec);
         for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
         if (!(await this.closeSession())) {
