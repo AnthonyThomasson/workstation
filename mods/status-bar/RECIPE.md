@@ -20,6 +20,7 @@ A slim, read-only bar for the bottom of a Herdr workspace. It identifies the act
 
 ## Built from
 
+- This recipe and `preview.png` sit inside `mods/status-bar/` beside the mod. An installing agent copies the mod code and icons but leaves `RECIPE.md` and `preview.png` out of `~/.config/herdr-app`.
 - `mods/status-bar/mod.json`: `{ "place": "none" }`. Add an explicit block for `status-bar` to the host layout, normally as a fixed-height bottom bar.
 - `mods/status-bar/main.js`: a `View` subclass whose `render()` uses `gpui-kit` `div` and `svg`, `gpui-base` `h_flex`, and Herdr's `spaces`, `agents` and `theme`. A small `label(name, text)` helper pairs each 13px SVG with text, with a 6px internal gap.
 - Used assets are `icons/monitor.svg`, `icons/server.svg` and `icons/branch.svg`: simple 24×24 viewBox, `currentColor` line icons with rounded strokes. The entry also carries unused `both.svg`, `git.svg` and `ring.svg` assets; they are not rendered by this version.

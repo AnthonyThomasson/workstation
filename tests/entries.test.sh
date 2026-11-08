@@ -1,5 +1,5 @@
 #!/bin/sh
-# Check that every Herdr gallery entry has the required files and shape.
+# Check the Tony layout and every standalone mod gallery entry.
 # Run with: sh tests/entries.test.sh
 
 set -u
@@ -12,30 +12,65 @@ fail() {
   failures=$((failures + 1))
 }
 
-for entry in "$repo"/herdr/*/; do
+[ -f "$repo/RECIPE.md" ] || fail "Tony: missing root RECIPE.md"
+[ -f "$repo/preview.png" ] || fail "Tony: missing root preview.png"
+[ -f "$repo/layouts/Tony.json" ] || fail "Tony: missing layouts/Tony.json"
+
+for entry in "$repo"/mods/*/; do
   [ -d "$entry" ] || continue
   name=${entry%/}
   name=${name##*/}
 
   [ -f "$entry/RECIPE.md" ] || fail "$name: missing RECIPE.md"
   [ -f "$entry/preview.png" ] || fail "$name: missing preview.png"
-
-  if [ "$name" != "tony" ] && [ -d "$entry/layouts" ]; then
-    fail "$name: mod entry must not contain a layouts/ directory"
-  fi
+  [ -f "$entry/mod.json" ] || fail "$name: missing mod.json"
 done
 
-preview="$repo/herdr/tony/preview.png"
+layout="$repo/layouts/Tony.json"
+if [ -f "$layout" ]; then
+  references=$(node -e '
+    const fs = require("fs");
+    const layout = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const mods = new Set();
+    function visit(node) {
+      if (!node || typeof node !== "object") return;
+      if (node.content && typeof node.content.mod === "string") mods.add(node.content.mod);
+      if (typeof node.terminal_menu === "string") mods.add(node.terminal_menu);
+      for (const value of Object.values(node)) {
+        if (value && typeof value === "object") visit(value);
+      }
+    }
+    visit(layout);
+    for (const mod of [...mods].sort()) console.log(mod);
+  ' "$layout" 2>&1)
+  status=$?
+  if [ "$status" -ne 0 ]; then
+    fail "Tony: could not read layouts/Tony.json: $references"
+  else
+    for name in $references; do
+      case "$name" in
+        spaces|agents|changes|files|pane|workspace-chrome)
+          # These mods ship with Herdr and deliberately are not copied here.
+          ;;
+        *)
+          [ -f "$repo/mods/$name/mod.json" ] || fail "Tony: referenced mod $name is missing from mods/"
+          ;;
+      esac
+    done
+  fi
+fi
+
+preview="$repo/preview.png"
 if [ -f "$preview" ]; then
   dimensions=$(sips -g pixelWidth -g pixelHeight "$preview" 2>&1)
   status=$?
   if [ "$status" -ne 0 ]; then
-    fail "tony: could not read preview.png dimensions: $dimensions"
+    fail "Tony: could not read preview.png dimensions: $dimensions"
   else
     width=$(printf '%s\n' "$dimensions" | awk '/pixelWidth:/ { print $2 }')
     height=$(printf '%s\n' "$dimensions" | awk '/pixelHeight:/ { print $2 }')
     if [ "$width" != "720" ] || [ "$height" != "450" ]; then
-      fail "tony: preview.png must be exactly 720x450, got ${width:-unknown}x${height:-unknown}"
+      fail "Tony: preview.png must be exactly 720x450, got ${width:-unknown}x${height:-unknown}"
     fi
   fi
 fi

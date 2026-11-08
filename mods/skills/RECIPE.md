@@ -28,7 +28,7 @@ A Skillshare control panel for the active Herdr space: browse global and project
 
 ## Built from
 
-- Install only `mods/skills/`. `mod.json` is `{ "place": "none", "title": "skills", "focusable": true }`; no key bindings ship. The optional mod command `focus` focuses the panel handle.
+- Install the mod code and assets from `mods/skills/`. This recipe and `preview.png` sit inside that folder; an installing agent leaves both out of `~/.config/herdr-app`. `mod.json` is `{ "place": "none", "title": "skills", "focusable": true }`; no key bindings ship. The optional mod command `focus` focuses the panel handle.
 - The default role is `panel`; `toggle` is the tab-bar button. The host layout should use column `panel` and stack `panel-body`, with this panel as child `skills`. Toggle calls `layout.select` and `layout.show` to open it, and `layout.hide` to close. Dialog roles are `install`, `uninstall`, `audit`, `text`, `skill`, `ignore` and `hook`, opened as `skills` overlays by the panel.
 - `main.js` implements all views, context, polling, dialogs and actions. `model.js` parses CLI JSON, normalizes/filter/groups rows, builds audit messages and holds shell scripts. `loader.js` reads resources and update state; `operations.js` performs update, hook, uninstall and diff operations. `jobs.js` implements short and detached command execution; `channel.js` provides per-machine locks, work requests and notices.
 - Herdr APIs used include `exec`, `hc`, `run`, `spaces`, `agents`, `focused`, `layout`, `theme`, `settings`, `props`, `shared`/`setShared`, `nextCommand`, `openOverlay`/`closeOverlay`, `readTextFile` and timers. App commands include `layout.select`, `layout.show`, `layout.hide`, `tab.new`, `agent.focus` and `terminal.paste`.

@@ -1,6 +1,6 @@
 # Tony
 
-Tony is a full Herdr window layout with a 268px navigation sidebar, icon-rich draggable tabs, framed terminal panes, a shared right-hand tool panel and a compact status bar. It combines Herdr's built-in workspace mods with Usage, Sync, Skills, GitHub Tasks, Workflows and Status Bar; its custom `tabs-icons` mod is included only in this entry.
+Tony is a full Herdr window layout with a 268px navigation sidebar, icon-rich draggable tabs, framed terminal panes, a shared right-hand tool panel and a compact status bar. It combines Herdr's built-in workspace mods with Usage, Sync, Skills, GitHub Tasks, Workflows, Status Bar and Tabs Icons, each kept in its own folder under `mods/`.
 
 ![Tony](preview.png)
 
@@ -16,18 +16,14 @@ Tony is a full Herdr window layout with a 268px navigation sidebar, icon-rich dr
 
 ## How it behaves
 
-- Built-in Spaces, Agents, Files, Changes, pane headers and workspace chrome retain Herdr's shipped behavior. Custom Usage, Status Bar, Skills, GitHub Tasks, Workflows and Sync behavior is defined by their own entry recipes; Tony supplies their layout positions and props rather than reimplementing them.
-- `tabs-icons` chooses a tab's first agent program icon, falling back to its first pane's program. A generated name matching `tb<number>` displays that program's name (or `Terminal`); a manually assigned tab name stays unchanged. Working status spins once every 900ms using `theme().working`; blocked and done dots use their matching theme colors; idle and unreported statuses add no status marker.
-- Click a tab to select it. Double-click its label to run `tab.rename`. Press one tab and release over another to move it to that position. Right-click opens the built-in `menu` popup for that tab and space. Vertical wheel scrolling over the tab row runs `tab.prev` or `tab.next`. The active tab's close icon runs `tab.close` without also selecting the tab.
-- **+** opens the built-in `new-menu` popup at 250×512. Files and Changes buttons appear when listed in shared `workspace.panels` (default `['files', 'changes']`). Each selects its child in `panel-body` and shows `panel`, or hides the panel if already selected. The Sync, Tasks, Skills and Workflows buttons select their own panel children in the same stack; the Tasks button opens **Task settings**, not the sidebar's ticket list.
-- `tabs-icons` remembers the selected open side panel per space in its own `localStorage` under `panels`. Switching spaces restores that space's enabled panel, or closes it; a panel outside `workspace.panels` is not restored. A one-second pending window prevents the restore from being saved over before it lands.
-- Where Herdr reports native window buttons, the row adds minimize, maximize/restore and close controls. Windows uses the included vector art; other platforms use text symbols and the built-in pane close asset. On macOS with the title bar hidden and not fullscreen, left padding grows to keep tabs clear of the configured traffic lights, including when the sidebar is hidden or narrow.
+- Built-in Spaces, Agents, Files, Changes, pane headers and workspace chrome retain Herdr's shipped behavior. Custom Usage, Status Bar, Skills, GitHub Tasks, Workflows, Sync and Tabs Icons behavior is defined by their own recipes; Tony supplies their layout positions and props rather than reimplementing them.
+- Tabs Icons handles tab selection, renaming, reordering, status, the + menu and per-space Files/Changes panel memory. The separate Sync, Tasks, Skills and Workflows toggles select their own child in `panel-body` and show `panel`, or hide it if already selected; the Tasks button opens **Task settings**, not the sidebar's ticket list.
 
 ## Built from
 
 ### Layout tree
 
-Copy `layouts/Tony.json` and every folder under `mods/`. The JSON records `cloned_from: { "name": "main", "version": "0.1.12" }` and has this exact structure:
+Copy `layouts/Tony.json` and the mod code and assets from every folder under `mods/`. The repository root is the Tony layout: there is one copy of each mod and no nested Tony folder or duplicate mod tree. An installing agent leaves the root `RECIPE.md` and `preview.png`, every mod's own `RECIPE.md` and `preview.png`, and `mods/workflows/starters/` out of `~/.config/herdr-app`. The JSON records `cloned_from: { "name": "main", "version": "0.1.12" }` and has this exact structure:
 
 ```json
 {
@@ -339,73 +335,18 @@ Copy `layouts/Tony.json` and every folder under `mods/`. The JSON records `clone
 
 The built-in mods Tony uses are **`spaces`, `agents`, `changes`, `files`, `pane`, and `workspace-chrome`**. It also invokes built-in `menu` and `new-menu` from the tab bar.
 
-### Custom mods from their own entries
+### Custom mods
 
-The six other custom mods are built from their own entry recipes; Tony only lists their placement and props in the layout above. **`tabs-icons` is the only mod built by this recipe.**
+All seven custom mods have their own recipes and previews in the same folders that hold their code. Tony only lists their placement and props in the layout above.
 
-- `mods/usage/` comes from [`herdr/usage/RECIPE.md`](../usage/RECIPE.md); it fills the 100px sidebar Usage block.
-- `mods/status-bar/` comes from [`herdr/status-bar/RECIPE.md`](../status-bar/RECIPE.md); it fills the 28px bottom status block.
-- `mods/skills/` comes from [`herdr/skills/RECIPE.md`](../skills/RECIPE.md); Tony mounts its `toggle` and default panel roles.
-- `mods/github-tasks/` and `mods/workflows/` come together from [`herdr/github-workflows/RECIPE.md`](../github-workflows/RECIPE.md); Tony mounts both toggles, Tasks' default ticket sidebar and its `settings` role in the right panel, and Workflows' default panel. That entry also supplies optional Bug and Story starter workflows.
-- `mods/sync/` comes from [`herdr/sync/RECIPE.md`](../sync/RECIPE.md); Tony mounts its always-running `button` role and its `details` panel. Its repository path, sync script and conflict agent are configured per machine in the panel.
-- These folders in Tony are real copies so the layout is self-contained. In the workstation repository, `sync.sh` refreshes them from the entry folders above; edit the owning entry rather than Tony's copy.
+- [`mods/usage/RECIPE.md`](mods/usage/RECIPE.md) fills the 100px sidebar Usage block.
+- [`mods/status-bar/RECIPE.md`](mods/status-bar/RECIPE.md) fills the 28px bottom status block.
+- [`mods/skills/RECIPE.md`](mods/skills/RECIPE.md) supplies the `toggle` and default panel roles.
+- [`mods/github-tasks/RECIPE.md`](mods/github-tasks/RECIPE.md) and [`mods/workflows/RECIPE.md`](mods/workflows/RECIPE.md) are companions. Tony mounts both toggles, Tasks' default ticket sidebar and its `settings` role in the right panel, and Workflows' default panel. Workflows also supplies optional Bug and Story starter files under `mods/workflows/starters/`.
+- [`mods/sync/RECIPE.md`](mods/sync/RECIPE.md) supplies the always-running `button` role and its `details` panel. Its repository path and sync script are configured per machine in the panel.
+- [`mods/tabs-icons/RECIPE.md`](mods/tabs-icons/RECIPE.md) supplies the icon-rich tab row and its window controls.
 
-### `tabs-icons` (included only here)
-
-`mods/tabs-icons/mod.json` is:
-
-```json
-{
-  "place": "none",
-  "title": "Tabs",
-  "cloned_from": { "name": "tabs", "version": "0.1.13" }
-}
-```
-
-It is derived from Herdr's built-in **`tabs`** mod, licensed **Apache-2.0**. `main.js` is a `gpui-kit` `View` built with `div`, `h_flex`, `svg` and `image`. It uses Herdr's `spaces`, `panes`, `run`, `openOverlay`, `theme`, `window`, `shared`, `layout`, `settings` and per-copy `localStorage`.
-
-Its data fields and command argument shapes are:
-
-- `spaces()` supplies the active space's `id` and `tabs`. Each tab uses `id`, `name`, `active`, `zoomed` and `status` (`working`, `blocked`, `done`, or another value for no marker). `panes()` supplies each pane's `tab` and optional `program`, whose `agent`, `name`, `icon` and `tint` fields select and render the program icon/name.
-- `layout()` supplies the root `traffic_lights` and a recursive `id`/`children` tree. The mod finds `sidebar`, `panel` and `panel-body`, reading `sidebar.hidden`, `sidebar.size.px`, `panel.hidden` and `panel-body.active`. `window()` supplies `platform`, `titlebar`, `fullscreen`, `buttons` and `maximized`. `shared("workspace.panels")` is the array of enabled panel child ids. The `localStorage` value `panels` is an object keyed by space id, with a panel child id or `null` for each space.
-- `tab.rename`, `tab.select` and `tab.close` receive `{ "id": "<tab-id>" }`. `tab.move` receives `{ "id": "<dragged-tab-id>", "index": <one-based-target-index> }`, where the target is the released-over tab's zero-based position plus one. `tab.prev` and `tab.next` receive no argument object.
-- `layout.select` receives `{ "stack": "panel-body", "child": "<panel-child-id>" }`; `layout.show` and `layout.hide` receive `{ "id": "panel" }`. `window.minimize`, `window.maximize` and `window.close` receive no argument object.
-- Right-click uses `openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: "<tab-id>", space: "<space-id>" } } })`. **+** uses `openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })`.
-
-On macOS with `titlebar === "none"`, not fullscreen, and root traffic lights present, the tab row's left padding is exactly:
-
-```js
-Math.max(10, (root.traffic_lights[0] + 64) / settings().zoom -
-  (sidebar?.hidden ? 0 : sidebar?.size?.px ?? 0))
-```
-
-Otherwise it is 10px. Thus the formula divides the traffic-light offset plus 64 by the zoom, subtracts the visible sidebar width (zero when hidden), and clamps the result to at least 10px.
-
-Its own art is `win-min.svg`, `win-max.svg`, `win-restore.svg` and `win-close.svg`. A truthy `program.tint` renders `program.icon` as a theme-muted, tinted `svg`; a falsy value renders it as a full-color `image`. The four window-control SVGs contain:
-
-`win-min.svg`:
-```svg
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><path d="M3 8.5h10"/></svg>
-```
-
-`win-max.svg`:
-```svg
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><rect x="3.5" y="3.5" width="9" height="9"/></svg>
-```
-
-`win-restore.svg`:
-```svg
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><path d="M5.5 3.5h7v7"/><rect x="3.5" y="5.5" width="7" height="7"/></svg>
-```
-
-`win-close.svg`:
-```svg
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1"><path d="m3.5 3.5 9 9m0-9-9 9"/></svg>
-```
-
-It also references shipped assets `mods/workspace-chrome/spinner.svg`, `mods/pane/close.svg`, `mods/files/file.svg` and `mods/changes/changes.svg`. The horizontal tab list uses `overflow_x_scrollbar`; mouse-down stops propagation so pills and controls do not start a window drag.
-
-No `keys.json` belongs to this entry: it supplies no layout-specific or mod-specific key bindings.
+No `keys.json` belongs to the Tony layout: it supplies no layout-specific key bindings. Individual mods also ship no key bindings.
 
 ## Watch out
 

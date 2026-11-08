@@ -25,6 +25,7 @@ A compact Usage block for a Herdr sidebar, with one row each for Claude and Kimi
 
 ## Built from
 
+- This recipe and `preview.png` sit inside `mods/usage/` beside the mod. An installing agent copies the mod code and icons but leaves `RECIPE.md` and `preview.png` out of `~/.config/herdr-app`.
 - `mods/usage/mod.json`: `{ "place": "none", "title": "usage" }`. The host layout must explicitly place the mod; the intended position is below an Agents panel.
 - `mods/usage/main.js`: a `View` subclass built with `gpui-kit` `View`, `div`, `image` and `svg`, plus `gpui-base` `v_flex` and `h_flex`. It uses Herdr's `theme`, `home`, `readTextFile`, `writeTextFile`, `exec`, `nextCommand`, timers and `localStorage`.
 - Claude's modification time is obtained with `sh -c 'stat -f %m "$1" 2>/dev/null || stat -c %Y "$1"'`, supporting macOS and GNU `stat`.
