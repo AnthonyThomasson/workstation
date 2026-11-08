@@ -1,7 +1,7 @@
 import test from "node:test";
 import { parse as parseYaml } from "./yaml.js";
 import assert from "node:assert/strict";
-import { makeStore, StoreError, cloneWorkflow, replacementFromYaml, restorePlan } from "./store.js";
+import { makeStore, StoreError, cloneWorkflow, replacementFromYaml, restorePlan, canRestoreDefaults } from "./store.js";
 import { blank, ROLES, serialize } from "./workflow-model.js";
 
 const GLOBAL = "/home/me/.config/herdr-app/workflows", REPO = "/proj/.herdr/workflows";
@@ -64,6 +64,17 @@ test("clone saves copies in the source scope without changing the source", async
   assert.deepEqual((await store.list()).map((i) => i.id).sort(), ["bug", "bug-copy", "bug-copy-2"]);
 });
 
+test("clone keeps its unique id when a long name fills the slug limit", async () => {
+  const { store } = setup();
+  const name = "A".repeat(60), originalId = "a".repeat(60);
+  await store.save(wf(name), "repo");
+  const first = await store.clone("repo", originalId);
+  const second = await store.clone("repo", originalId);
+  assert.equal(first.workflow.id, `${"a".repeat(58)}-2`);
+  assert.equal(second.workflow.id, `${"a".repeat(58)}-3`);
+  assert.deepEqual((await store.list()).map((item) => item.id).sort(), [originalId, first.workflow.id, second.workflow.id].sort());
+});
+
 test("replacementFromYaml takes the clipboard workflow but keeps the destination id", () => {
   const pasted = wf("Pasted", { id: "clipboard-id", trigger: { labels: ["pasted"], match: "all" } });
   const replacement = replacementFromYaml(serialize(pasted), "destination-id");
@@ -111,6 +122,13 @@ test("restorePlan captures the repo and deletes the selected tab's workflows", (
   assert.deepEqual(restorePlan([global, repo], "global", repoRoot), { repoRoot, deletions: [{ ...global }], createScope: "global" });
   assert.deepEqual(restorePlan([global, repo], "all", repoRoot), { repoRoot, deletions: [{ ...global }, { ...repo }], createScope: "global" });
   assert.deepEqual(restorePlan([global], "all", null), { repoRoot: null, deletions: [{ ...global }], createScope: "global" });
+});
+
+test("Restore defaults is available only after the current place has loaded", () => {
+  assert.equal(canRestoreDefaults({ loaded: false, placeChanged: false }), false);
+  assert.equal(canRestoreDefaults({ loaded: true, placeChanged: true }), false);
+  assert.equal(canRestoreDefaults({ loaded: false, placeChanged: true }), false);
+  assert.equal(canRestoreDefaults({ loaded: true, placeChanged: false }), true);
 });
 
 test("restore replaces Project workflows with the shipped starter text, even when Global has Bug and Story", async () => {

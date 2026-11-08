@@ -34,6 +34,9 @@ export function replacementFromYaml(source, id) {
   return replacement;
 }
 
+// Restore needs a real snapshot of the current place, not the initial empty list or the previous place's items.
+export const canRestoreDefaults = ({ loaded, placeChanged }) => loaded && !placeChanged;
+
 // Project resets only the repo; Global only the global files; All removes both but puts the starters in Global.
 // Capture the repo root so a place change while confirming cannot redirect the restore. With no repo there is
 // only Global, whatever tab was last selected while a repo was open.
@@ -128,15 +131,16 @@ export function makeStore({ io, dirs }) {
   }
 
   // Saves a workflow in a scope. `previous` is what load() gave (null for a new one). A new one gets its file
-  // name from its name. Moving to another scope writes the new file, then removes the old one.
-  // Returns { workflow, text, scope }.
-  async function save(workflow, scope, previous = null) {
+  // name from its name, unless clone() supplies the unique id it already chose. Moving to another scope writes
+  // the new file, then removes the old one. Returns { workflow, text, scope }.
+  async function save(workflow, scope, previous = null, newId = null) {
     const dir = folder(scope);
+    const id = previous ? previous.workflow.id : newId ?? slug(workflow.name);
     const taken = (await list()).map((i) => i.id).filter((id) => id !== previous?.workflow.id);
-    const problems = validate({ ...workflow, id: previous ? workflow.id : "" }, taken);
+    const problems = validate({ ...workflow, id: previous ? workflow.id : id }, previous ? taken : []);
+    if (!previous && taken.includes(id)) problems.unshift({ field: "name", message: "A workflow with that name already exists." });
     if (problems.length) throw Object.assign(new StoreError("invalid", problems[0].message), { problems });
 
-    const id = previous ? previous.workflow.id : slug(workflow.name);
     const text = serialize({ ...workflow, id }), path = fileOf(dir, id);
     await io.mkdir(dir);
     // Same place as before: replace what was read. A new file, or a move: nothing may be there yet.
@@ -154,7 +158,7 @@ export function makeStore({ io, dirs }) {
     const found = await load(scope, id);
     if (!found) throw new StoreError("missing", "That workflow is already gone.");
     const copy = cloneWorkflow(found.workflow, (await list()).map((item) => item.id));
-    return save(copy, scope);
+    return save(copy, scope, null, copy.id);
   }
 
   async function paste(scope, id, source) {

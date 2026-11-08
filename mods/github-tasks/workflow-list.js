@@ -7,13 +7,14 @@ import { v_flex, h_flex, Popover } from "gpui-base";
 import { run, shared, setShared, theme } from "herdr";
 import { S, icon, stop, note, iconButton, segmented, later, action, scrim } from "./ui.js";
 import { SCOPE_LABELS } from "./workflow-model.js";
-import { restorePlan } from "./store.js";
+import { restorePlan, canRestoreDefaults } from "./store.js";
 import { WORKFLOWS_CHANGED, store, repoRootOf, starterWorkflows } from "./workflow-env.js";
 
 // The tabs over the list: everything, the selected space's repo, or the global ones.
 export const TABS = [["all", "All"], ["repo", "Project"], ["global", "Global"]];
 const POLL = 5000; // a listing of a local folder costs nothing; this picks up files that arrive by git pull
 const baseName = (path) => String(path ?? "").split("/").filter(Boolean).pop() ?? "";
+const placeKeyOf = (where) => where ? `${where.on ?? ""}|${where.cwd ?? ""}` : "";
 
 export class WorkflowList {
   // place: () => { cwd, on } | null, where the selected space is. shown: () => whether the settings are on screen.
@@ -26,6 +27,7 @@ export class WorkflowList {
     this.error = null;
     this.repoRoot = null; // the repo of the selected space, whose .herdr workflows are listed
     this.placeKey = null;
+    this.loadedPlaceKey = null; // the place whose items were loaded, not merely the place currently selected
     this.confirming = null; // the workflow whose trash was pressed once; a second press deletes it
     this.menu = null; // scope/id of the row whose ⋯ menu is open
     this.restoring = null; // { plan, working, error } while the Restore defaults confirmation is open
@@ -43,7 +45,7 @@ export class WorkflowList {
     if (this.loading) { this.again = true; return; }
     this.loading = true;
     this.again = false;
-    const where = this.place();
+    const where = this.place(), placeKey = placeKeyOf(where);
     cx.spawn(async (cx) => {
       try {
         const repoRoot = await repoRootOf(where);
@@ -55,6 +57,7 @@ export class WorkflowList {
       } catch (e) {
         this.error = String(e?.message ?? e);
       }
+      this.loadedPlaceKey = placeKey;
       this.loaded = true;
       this.loading = false;
       cx.notify();
@@ -116,6 +119,8 @@ export class WorkflowList {
   }
 
   openRestore(cx) {
+    const placeChanged = placeKeyOf(this.place()) !== this.loadedPlaceKey;
+    if (!canRestoreDefaults({ loaded: this.loaded, placeChanged })) return;
     const plan = restorePlan(this.items, this.scope, this.repoRoot);
     // Both the plan and its store belong to the repo whose workflows the dialog names, even if the place changes.
     this.restoring = { plan, store: store({ repo: plan.repoRoot }), working: false, error: null };
@@ -171,9 +176,11 @@ export class WorkflowList {
   render(cx) {
     const t = theme(), where = this.place();
     // Another space, or another folder in it, may be in another repo: its workflows come and the last one's go.
-    const key = where ? `${where.on ?? ""}|${where.cwd ?? ""}` : "";
-    if (key !== this.placeKey) {
+    const key = placeKeyOf(where), placeChanged = key !== this.placeKey;
+    const restoreAvailable = canRestoreDefaults({ loaded: this.loaded, placeChanged: key !== this.loadedPlaceKey });
+    if (placeChanged) {
       this.placeKey = key;
+      this.loaded = false; // the old place's items cannot be restored while this place's refresh is pending
       this.restoring = null; // the dialog names the old place's workflows; never carry it across places
       later(cx, (cx) => this.refresh(cx));
     }
@@ -197,10 +204,11 @@ export class WorkflowList {
           .hover((s) => s.opacity(0.88)).on_mouse_down("left", stop).on_click(() => this.openWorkflow(null))
           .child(icon("plus", 14, t.solid_foreground))
           .child("New workflow"))
-        .child(h_flex().id("restore-defaults").h(30).px(12).items_center().rounded(6).cursor_pointer()
+        .child(h_flex().id("restore-defaults").h(30).px(12).items_center().rounded(6)
           .border_1().border_color(t.border).text_color(t.foreground).text_size(S().secondary)
-          .hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
-          .on_click((_e, cx) => this.openRestore(cx))
+          .opacity(restoreAvailable ? 1 : 0.5)
+          .when(restoreAvailable, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
+            .on_click((_e, cx) => this.openRestore(cx)))
           .child("Restore defaults")))
       .child(this.renderList(t, where))
       .when(Boolean(this.restoring), (el) => el.child(this.renderRestore(t)));
