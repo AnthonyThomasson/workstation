@@ -6,7 +6,8 @@ import assert from "node:assert/strict";
 import { execFileSync, execFile } from "node:child_process";
 import { realpathSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, cpSync, rmSync, readdirSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";import { checkRepo, syncHerdr, push, listTargets, switchBranch, CHECK } from "./ops.js";
+import { join, dirname } from "node:path";
+import { checkRepo, syncHerdr, push, listTargets, switchBranch, CHECK } from "./ops.js";
 import { syncWorld as world, cleanWorld as clean, laterMtime as later } from "./scratch-repos.js";
 import { badge, changedFiles, pushBlocked } from "./model.js";
 

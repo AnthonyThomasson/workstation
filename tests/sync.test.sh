@@ -79,7 +79,7 @@ new_world "dry-run-lists-only-the-mappings"
 expected="$T/expected"
 (
   cd "$R"
-  find mods -type f ! -name RECIPE.md ! -name preview.png ! -path 'mods/workflows/starters/*'
+  find mods -type f ! -name RECIPE.md ! -name preview.png ! -name gpui-kit.d.ts ! -name jsconfig.json ! -path 'mods/workflows/starters/*'
   echo layouts/Tony.json
   (cd personal/herdr-app && find themes workflows -type f)
 ) | sort > "$expected"
