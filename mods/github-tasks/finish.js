@@ -44,7 +44,8 @@ export const branchArgs = (repoRoot, branch) => ["-C", repoRoot, "rev-parse", "-
 //   pr-merge      gh pr merge <n> --squash (no --admin, no --auto). If GitHub refuses, its message is shown and nothing after it runs
 //   status        the ticket Done    remove-worktree / prune-worktrees    delete-branch (-D: a squash leaves the branch looking unmerged)    remove-run-files
 // number: the pull request's number. prMerged: the caller has just asked gh and the pull request is already MERGED, so the
-// merge step is skipped, and so are fetch and ahead (GitHub may have deleted the remote branch, and the work is already in).
+// merge step is skipped, and so are fetch and ahead (GitHub may have deleted the remote branch). headOid: the commit the PR was
+// merged from (headRefOid); then not-in-pr stops if the local branch has commits beyond it, which the PR never took in.
 // status: { args } to set the ticket Done, { warn } when the project has no such option, or nothing when there is no project.
 // workDirExists / branchExists: false when an earlier Merge already removed the folder / deleted the branch; the steps for
 // them are left out, so pressing Merge again finishes what was left.
@@ -55,18 +56,25 @@ const safeRunDir = (runDir) => {
   return Boolean(id && id !== "." && !id.includes(".."));
 };
 
-export function mergeSteps({ repoRoot, workDir, branch, number, prMerged = false, status, runDir, workDirExists = true, branchExists = true }) {
+export function mergeSteps({ repoRoot, workDir, branch, number, prMerged = false, headOid, status, runDir, workDirExists = true, branchExists = true }) {
   if (!prMerged && !number) throw new Error("Merge needs the pull request, and this run has none.");
   const git = (args) => ({ cmd: "git", args });
   const inTree = workDirExists ? workDir : repoRoot; // where the remote is asked: the ticket worktree, else the repo's git dir (no checkout is touched)
   const remote = `origin/${branch}`;
+  const push = `git -C ${inTree} push origin ${branch}`;
   return [
     ...(workDirExists ? [{ name: "tree-status", ...git(["-C", workDir, "status", "--porcelain"]), fail: `Couldn't look at ${workDir}.`,
       dirty: `${workDir} has uncommitted changes. Commit or discard them (and push, so the pull request has them), then press Merge again.` }] : []),
     ...(branchExists && !prMerged ? [
-      { name: "fetch", ...git(["-C", inTree, "fetch", "origin", branch]), fail: `Couldn't fetch ${branch} from origin.` },
+      // An explicit refspec, so a single-branch clone (whose default fetch refspec names only one branch) still updates origin/<branch>.
+      { name: "fetch", ...git(["-C", inTree, "fetch", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`]), fail: `Couldn't fetch ${branch} from origin.` },
       { name: "ahead", ...git(["-C", inTree, "rev-list", `${remote}..${branch}`]), fail: `Couldn't compare ${branch} with ${remote}.`,
-        dirty: `${branch} has commits that ${remote} doesn't. Push them so the pull request has them, then press Merge again.` },
+        dirty: `${branch} has commits that ${remote} doesn't. Run \`${push}\` so the pull request has them, then press Merge again.` },
+    ] : []),
+    // A pull request merged already: whatever the local branch has beyond the commit the PR was merged from never made it in.
+    ...(branchExists && prMerged && headOid ? [
+      { name: "not-in-pr", ...git(["-C", inTree, "rev-list", `${headOid}..${branch}`]), fail: `Couldn't compare ${branch} with the merged pull request (${headOid.slice(0, 8)}).`,
+        dirty: `${branch} has commits that the merged pull request doesn't. Don't clean up yet: open a new pull request for them, or drop them with \`git -C ${inTree} reset --hard ${headOid.slice(0, 8)}\`, then press Merge again.` },
     ] : []),
     ...(prMerged ? [] : [{ name: "pr-merge", cmd: "gh", args: ["pr", "merge", String(number), "--squash"], cwd: inTree, fail: `GitHub didn't merge pull request #${number}.`, done: `merged pull request #${number}` }]),
     ...(status ? [status.warn ? { name: "status", warn: status.warn } : { name: "status", cmd: "gh", args: status.args, fail: "Couldn't set the ticket's status.", done: "set the ticket's status" }] : []),
@@ -109,8 +117,8 @@ export function prArgs({ branch, title, number }) {
 export const parsePrUrl = (text) => String(text ?? "").match(/https:\/\/\S+\/pull\/\d+/)?.[0] ?? null;
 export const prNumber = (url) => url?.match(/\/pull\/(\d+)/)?.[1] ?? null;
 
-// gh args that say where the branch's pull request stands: prints JSON { url, state, number }.
-export const prViewArgs = (branch) => ["pr", "view", branch, "--json", "url,state,number"];
+// gh args that say where the branch's pull request stands: prints JSON { url, state, number, headRefOid }.
+export const prViewArgs = (branch) => ["pr", "view", branch, "--json", "url,state,number,headRefOid"];
 export function parsePr(text) {
-  try { const p = JSON.parse(text); return p?.url ? { url: p.url, state: String(p.state ?? "").toUpperCase(), number: p.number ?? prNumber(p.url) } : null; } catch { return null; }
+  try { const p = JSON.parse(text); return p?.url ? { url: p.url, state: String(p.state ?? "").toUpperCase(), number: p.number ?? prNumber(p.url), headOid: p.headRefOid || undefined } : null; } catch { return null; }
 }

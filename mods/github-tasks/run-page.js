@@ -85,7 +85,7 @@ export class RunPage {
     if (!shouldAutoPr({ ready, pr: this.pr, tried: this.autoPrTried, busy: this.busy })) return;
     this.autoPrTried = true;
     setShared(autoPrKey(this.id), 1);
-    this.createPr(cx);
+    this.createPr(cx, true);
   }
 
   // The ticket follows the run: In Progress once a worker has started, In Review once a reviewer has. It never goes back.
@@ -142,10 +142,13 @@ export class RunPage {
     return v_flex().gap(4).child(row).when(Boolean(this.error), (el) => el.child(div().text_size(S().secondary).text_color(t.blocked).child(this.error)));
   }
 
-  createPr(cx) {
+  // quiet: called from render, which is drawing right now, so the first redraw waits until the async part starts.
+  createPr(cx, quiet = false) {
     if (this.busy) return;
-    this.busy = "pr"; this.error = null; cx.notify();
+    this.busy = "pr"; this.error = null;
+    if (!quiet) cx.notify();
     cx.spawn(async (cx) => {
+      if (quiet) { await null; cx.notify(); }
       try {
         const cwd = { cwd: this.folder };
         const push = await exec("git", ["-C", this.folder, "push", "-u", "origin", this.branch]);
@@ -175,9 +178,10 @@ export class RunPage {
         const view = await exec("gh", prViewArgs(this.branch), { cwd: workDirExists ? this.folder : this.repoRoot });
         const found = view.code === 0 ? parsePr(view.stdout) : null;
         if (!found) throw new Error(`Couldn't look up the pull request: ${out(view)}`);
-        if (found.url !== this.pr.url || found.state !== this.pr.state) { this.pr = found; setShared(prKey(this.id), found); }
+        if (found.url !== this.pr.url) throw new Error(`The branch's pull request is ${found.url}, not ${this.pr.url} that this run opened. Nothing was merged.`);
+        if (found.state !== this.pr.state) { this.pr = found; setShared(prKey(this.id), found); }
         const { warnings } = await runSteps(mergeSteps({
-          repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, number: found.number, prMerged: found.state === "MERGED",
+          repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, number: found.number, prMerged: found.state === "MERGED", headOid: found.headOid,
           status: this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
         }), exec);
         for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });

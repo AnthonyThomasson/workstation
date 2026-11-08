@@ -13,7 +13,7 @@ orchestrator:
   effort: high
   prompt: ""
   planning: "Read the repo's AGENTS.md / CLAUDE.md and explore the code the ticket touches. Grill the user with `mattpocock-skills:grilling` until nothing material is open, then present the plan for acceptance. With a visual part, show the user a mock-up first."
-  retro: "Look back on the run: what slowed it, what to write down for next time. Then tell the person the run page's Merge button finishes the ticket (merge into the default branch, push, set Done, close the issue), and that Create PR is there if they want a pull request first; do not merge or push yourself."
+  retro: "Look back on the run: what slowed it, what to write down for next time. Then tell the person the run page opens a pull request by itself once the run is done (its Create PR button retries if that failed), and that its Merge button squash-merges that pull request, sets the ticket Done and cleans up; do not merge, push or open a pull request yourself."
 
 worker:
   agent: claude

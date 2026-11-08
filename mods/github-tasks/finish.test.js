@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, optionFor, statusArgs, mergeSteps, runSteps, prArgs, parsePrUrl, prNumber, parsePr } from "./finish.js";
+import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, optionFor, statusArgs, mergeSteps, runSteps, prArgs, prViewArgs, parsePrUrl, prNumber, parsePr } from "./finish.js";
 
 test("canMerge needs the final reviewer seen and nobody live", () => {
   const ended = { live: false }, live = { live: true, status: "idle" };
@@ -97,9 +97,10 @@ test("mergeSteps checks the worktree and the branch, squash-merges the PR, and c
   const s = Object.fromEntries(mergeSteps(ctx).map((x) => [x.name, x]));
   assert.deepEqual(s["tree-status"].args, ["-C", "/r-9-x", "status", "--porcelain"]);
   assert.ok(s["tree-status"].dirty.includes("/r-9-x"));
-  assert.deepEqual(s.fetch.args, ["-C", "/r-9-x", "fetch", "origin", "workflow/9-x"]);
+  assert.deepEqual(s.fetch.args, ["-C", "/r-9-x", "fetch", "origin", "+refs/heads/workflow/9-x:refs/remotes/origin/workflow/9-x"]);
   assert.deepEqual(s.ahead.args, ["-C", "/r-9-x", "rev-list", "origin/workflow/9-x..workflow/9-x"]);
   assert.ok(s.ahead.dirty.includes("origin/workflow/9-x"));
+  assert.ok(s.ahead.dirty.includes("`git -C /r-9-x push origin workflow/9-x`"), "the message names the exact command");
   assert.equal(s["pr-merge"].cmd, "gh");
   assert.deepEqual(s["pr-merge"].args, ["pr", "merge", "12", "--squash"]);
   assert.equal(s["pr-merge"].cwd, "/r-9-x");
@@ -131,6 +132,16 @@ test("mergeSteps leaves out the status when there is nothing to set, and warns w
 test("mergeSteps skips the PR merge, fetch and ahead check when the PR is already merged", () => {
   const steps = mergeSteps({ ...ctx, prMerged: true });
   assert.deepEqual(names(steps), ["tree-status", "status", "remove-worktree", "delete-branch", "remove-run-files"]);
+});
+
+test("mergeSteps checks a merged PR's head commit against the local branch, before any cleanup", () => {
+  const steps = mergeSteps({ ...ctx, prMerged: true, headOid: "0123456789abcdef" });
+  assert.deepEqual(names(steps), ["tree-status", "not-in-pr", "status", "remove-worktree", "delete-branch", "remove-run-files"]);
+  const s = steps.find((x) => x.name === "not-in-pr");
+  assert.deepEqual(s.args, ["-C", "/r-9-x", "rev-list", "0123456789abcdef..workflow/9-x"]);
+  assert.ok(s.dirty.includes("git -C /r-9-x reset --hard 01234567"));
+  assert.ok(!names(mergeSteps({ ...ctx, headOid: "0123456789abcdef" })).includes("not-in-pr"), "only for a PR that is already merged");
+  assert.ok(!names(mergeSteps({ ...ctx, prMerged: true, headOid: "0123456789abcdef", branchExists: false })).includes("not-in-pr"));
 });
 
 test("mergeSteps skips the worktree steps when the folder is already gone, and asks origin from the repo folder", () => {
@@ -207,6 +218,12 @@ test("an already merged PR is not merged again, and the cleanup runs", async () 
   assert.ok(!r.done.some((d) => /merged pull request/.test(d)));
 });
 
+test("a merged PR with local commits it never took in stops before any cleanup", async () => {
+  const f = fake({ "rev-list 0123456789abcdef..": { stdout: "abc\n" } });
+  await assert.rejects(runSteps(mergeSteps({ ...ctx, prMerged: true, headOid: "0123456789abcdef" }), f.exec), /commits that the merged pull request doesn't/);
+  assert.ok(!f.ran.some((l) => l.includes("graphql") || l.includes("worktree remove") || l.includes("branch -D") || l.startsWith("rm ")));
+});
+
 test("a failed status step says the PR is already merged", async () => {
   const f = fake({ graphql: { code: 1, stderr: "boom" } });
   await assert.rejects(runSteps(mergeSteps(ctx), f.exec), (e) => /Couldn't set the ticket's status/.test(e.message) && /merged pull request #12/.test(e.message));
@@ -230,7 +247,9 @@ test("prArgs and the URL", () => {
 });
 
 test("parsePr", () => {
-  assert.deepEqual(parsePr('{"url":"https://github.com/o/r/pull/3","state":"merged","number":3}'), { url: "https://github.com/o/r/pull/3", state: "MERGED", number: 3 });
+  assert.deepEqual(parsePr('{"url":"https://github.com/o/r/pull/3","state":"merged","number":3,"headRefOid":"abc123"}'), { url: "https://github.com/o/r/pull/3", state: "MERGED", number: 3, headOid: "abc123" });
+  assert.equal(parsePr('{"url":"https://github.com/o/r/pull/3","state":"open","number":3}').headOid, undefined);
+  assert.ok(prViewArgs("b").join(" ").includes("headRefOid"));
   assert.equal(parsePr("no pull requests found"), null);
 });
 
@@ -318,6 +337,28 @@ test("merge steps, run for real: an already merged PR (remote branch deleted) st
   assert.ok(r.done.length >= 3);
   assert.ok(!existsSync(w.workDir) && !existsSync(w.runDir));
   assert.equal(w.git(w.repoRoot, "branch", "--list", "workflow/9-x").trim(), "");
+});
+
+test("merge steps, run for real: a single-branch clone still gets origin/<branch> updated by the fetch", async () => {
+  const w = repoWithTicket();
+  const clone = join(w.repoRoot, "..", "single");
+  execFileSync("git", ["clone", "-q", "--single-branch", "-b", "main", w.origin, clone]);
+  w.git(clone, "worktree", "add", "-q", "-b", "workflow/9-x", join(clone, "..", "single-wt"), "origin/main");
+  const wt = join(clone, "..", "single-wt");
+  assert.equal(spawnSync("git", ["-C", clone, "rev-parse", "--verify", "--quiet", "origin/workflow/9-x"]).status, 1, "starts without the remote branch ref");
+  await runSteps(mergeSteps({ repoRoot: clone, workDir: wt, branch: "workflow/9-x", number: 12 }).slice(0, 2), realWith([]));
+  assert.equal(spawnSync("git", ["-C", clone, "rev-parse", "--verify", "--quiet", "origin/workflow/9-x"]).status, 0, "the fetch made origin/<branch>");
+});
+
+test("merge steps, run for real: a merged PR with a local commit beyond its head stops, and a clean one cleans up", async () => {
+  const w = repoWithTicket();
+  const oid = w.git(w.workDir, "rev-parse", "HEAD").trim();
+  writeFileSync(join(w.workDir, "late.txt"), "late\n"); w.git(w.workDir, "add", "."); w.git(w.workDir, "commit", "-qm", "late");
+  await assert.rejects(runSteps(mergeSteps({ ...w.ctx, prMerged: true, headOid: oid }), realWith([])), /commits that the merged pull request doesn't/);
+  assert.ok(existsSync(w.workDir) && existsSync(w.runDir));
+  w.git(w.workDir, "reset", "-q", "--hard", oid);
+  await runSteps(mergeSteps({ ...w.ctx, prMerged: true, headOid: oid }), realWith([]));
+  assert.ok(!existsSync(w.workDir) && !existsSync(w.runDir));
 });
 
 test("merge steps, run for real: a second Merge after everything is done is harmless", async () => {
