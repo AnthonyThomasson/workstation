@@ -1,19 +1,21 @@
 // One workflow run, beside its orchestrator: the mod pane Start opens to the right of the orchestrator's terminal
 // (props.role "run"). It lists the workers and reviewers the orchestrator has started, live from the core, and a
-// click looks in on one. All it keeps is the agents it has seen, to go on listing those that ended; a restart
-// forgets those. Not a View of its own: main.js builds one in init and draws it from render.
+// click looks in on one. The agents come from `hc ls --all` (running or finished, asked every few seconds) and from the
+// core's live terminals; the rows are saved per run, so a reload still lists those that ended. Not a View of its own:
+// main.js builds one in init, calls refresh on a timer and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, notify, run, setShared, shared, terminals, theme } from "herdr";
 import { S, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
-import { agentsOf, orchestratorOf, statusColor, statusLabel, withGone } from "./runview.js";
+import { agentsFor, lsQueries, orchestratorOf, parseLs, statusColor, statusLabel } from "./runview.js";
 import { branchArgs, canMerge, finalSeen, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
 
 const stageKey = (id) => `github-tasks.run.${id}.stage`;
 const prKey = (id) => `github-tasks.run.${id}.pr`;
 const finalKey = (id) => `github-tasks.run.${id}.final`; // the final reviewer has been seen: Merge waits for that
 const autoPrKey = (id) => `github-tasks.run.${id}.autopr`; // the page has tried to open the pull request by itself: it does that once per run
+const agentsKey = (id) => `github-tasks.run.${id}.agents`; // the workers and reviewers seen, so a reload still lists the finished ones
 const POLL_MS = 30000;
 
 export class RunPage {
@@ -36,14 +38,38 @@ export class RunPage {
     this.busy = null; // "pr" | "merge" while one runs
     this.error = null;
     this.polling = false;
-    this.seenWorkers = new Map();
-    this.seenReviewers = new Map();
+    const saved = shared(agentsKey(this.id));
+    this.saved = Array.isArray(saved) ? saved : []; // the rows kept from before (runview.js keep)
+    this.listed = { worker: null, reviewer: null, final: null }; // the last answer of each `hc ls --all` query
+    this.listing = false;
+  }
+
+  // Asks the core for this run's workers, reviewers and final reviewer, finished ones too (the answer has no labels: the
+  // query is the filter). A query that fails keeps its last answer. Called every few seconds by main.js.
+  async refresh(cx) {
+    if (this.listing || !this.id) return;
+    this.listing = true;
+    try {
+      const queries = lsQueries(this.id);
+      const got = await Promise.all(Object.entries(queries).map(async ([key, args]) => {
+        const r = await hc(args).catch(() => null);
+        return [key, r?.code === 0 ? parseLs(r.stdout) : null];
+      }));
+      for (const [key, list] of got) if (list) this.listed[key] = list;
+      cx?.notify();
+    } finally { this.listing = false; }
+  }
+
+  // The agents now: the live terminals, the core's list and what was saved. What there is to keep is saved when it changed.
+  agents(all) {
+    const found = agentsFor({ id: this.id, terminals: all, listed: this.listed, saved: this.saved });
+    if (JSON.stringify(found.kept) !== JSON.stringify(this.saved)) { this.saved = found.kept; setShared(agentsKey(this.id), found.kept); }
+    return found;
   }
 
   render(cx) {
     const t = theme(), all = terminals();
-    const live = agentsOf(all, this.id), needsYou = live.needsYou;
-    const workers = withGone(live.workers, this.seenWorkers), reviewers = withGone(live.reviewers, this.seenReviewers);
+    const { workers, reviewers, needsYou } = this.agents(all);
     const lead = orchestratorOf(all, this.orchestrator);
     this.noteFinal(reviewers);
     if (cx) { this.advance(cx, workers, reviewers); this.autoPr(cx, workers, reviewers); this.startPolling(cx); }
