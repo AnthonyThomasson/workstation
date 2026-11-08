@@ -1,25 +1,28 @@
-// What the run page does when the person is done: move the ticket along, merge the worktree, open a pull request.
+// What the run page does when the person is done: move the ticket along, merge the ticket branch, open a pull request.
 // Pure: no Herdr imports, so node --test runs it. run.js does the exec calls and the drawing.
 
 // Status names match ignoring case, spaces and punctuation ("In Progress", "in-progress", "InProgress").
 // A copy of github-tasks/model.js's statusKey (a mod cannot import another mod).
 export const statusKey = (name) => String(name ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
-export const STAGES = ["in progress", "in review"]; // what a ticket becomes as the run goes on, in order
+export const STAGES = ["in progress", "in review", "done"]; // what a ticket becomes as the run goes on, in order (Done is set by Merge)
 
 // The stage the run has reached: 0 nothing yet, 1 a worker started, 2 a reviewer started.
 // agents: { workers, reviewers }, with every agent seen (the ones that ended too).
 export const stageOf = (agents) => (agents.reviewers?.length ? 2 : agents.workers?.length ? 1 : 0);
 
-// Finish needs review to have started, every reviewer ended, and no worker still working.
-// Idle or done workers may stay live without holding up the run.
-export const canFinish = ({ stage, workers = [], reviewers = [] }) =>
-  stage >= 2 && !reviewers.some((r) => r.live) && !workers.some((w) => w.status === "working");
+// Whether a final reviewer has shown up: in the rows seen (the ones that ended too) or in what the page saved, so a restart
+// keeps it. saved: the value kept in shared state, any of 1, "1" or nothing.
+export const finalSeen = ({ reviewers = [], saved } = {}) => reviewers.some((r) => r.final) || Boolean(Number(saved));
+
+// Merge and Create PR wait for the final review to have started and every worker and reviewer to have ended.
+export const canMerge = ({ finalSeen: seen, workers = [], reviewers = [] }) =>
+  Boolean(seen) && !workers.some((w) => w.live) && !reviewers.some((r) => r.live);
 
 // The project's Status option for a stage, or null when the project has none by that name.
-// statuses: { inProgress, inReview } as configured in Tasks; absent (old runs) means the defaults in STAGES.
+// stage 3 is Done. statuses: { inProgress, inReview, done } as configured in Tasks; absent (old runs) means the defaults in STAGES.
 export function optionFor(options, stage, statuses) {
-  const name = (stage === 1 ? statuses?.inProgress : statuses?.inReview) || STAGES[stage - 1];
+  const name = [statuses?.inProgress, statuses?.inReview, statuses?.done][stage - 1] || STAGES[stage - 1];
   return (options ?? []).find((o) => statusKey(o.name) === statusKey(name)) ?? null;
 }
 
@@ -34,17 +37,52 @@ export const statusArgs = ({ projectId, itemId, fieldId, optionId }) =>
 // "origin/main" -> "main"; null when git had nothing to say.
 export const defaultBranch = (symbolicRef) => String(symbolicRef ?? "").trim().replace(/^origin\//, "") || null;
 
-// A merge's steps in order, as git args after `git`. Each is { args, fail }: fail is what to say when it fails.
-// The caller has already found the default branch (base). onBase: the repo's own folder is on it, clean.
-export function mergeSteps({ repoRoot, workDir, branch, base }) {
+// Merge as a list of steps, in order. A step is { name, cmd, args, cwd?, fail, done?, abort?, dirty?, ifOutput?, warn? }:
+//   fail   what to say when it fails; done  what to call it once it has happened ("Already done: ...")
+//   abort  { cmd, args } to run when it fails    dirty  stop with this when its output is not empty (a check)
+//   ifOutput  steps to run only when its output is not empty    warn  not run: runSteps passes this on as a warning
+// The caller has already found the default branch (base). status: { args } to set the ticket Done, { warn } when the
+// project has no such option, or nothing when there is no project to set it in. number: the issue to close, if any.
+export function mergeSteps({ repoRoot, workDir, branch, base, number, status }) {
+  const git = (args) => ({ cmd: "git", args });
   return [
-    { args: ["-C", workDir, "status", "--porcelain"], fail: "", dirty: `${workDir} has uncommitted changes. Commit or discard them first.` },
-    { args: ["-C", repoRoot, "status", "--porcelain"], fail: "", dirty: `${repoRoot} has uncommitted changes, so ${branch} can't be merged into ${base} there.` },
-    { args: ["-C", repoRoot, "switch", base], fail: `Couldn't switch ${repoRoot} to ${base}.` },
-    { args: ["-C", repoRoot, "merge", "--no-edit", branch], fail: `${branch} didn't merge into ${base}.`, abort: ["-C", repoRoot, "merge", "--abort"] },
-    { args: ["-C", repoRoot, "worktree", "remove", workDir], fail: `${branch} is merged, but the worktree ${workDir} couldn't be removed.` },
-    { args: ["-C", repoRoot, "branch", "-d", branch], fail: `${branch} is merged, but the branch couldn't be deleted.` },
+    { name: "tree-status", ...git(["-C", workDir, "status", "--porcelain"]), fail: `Couldn't look at ${workDir}.`,
+      ifOutput: [
+        { name: "commit-add", ...git(["-C", workDir, "add", "-A"]), fail: `Couldn't stage the changes left in ${workDir}.` },
+        { name: "commit", ...git(["-C", workDir, "commit", "-m", `Commit what was left in the worktree${number ? ` (#${number})` : ""}`]), fail: `Couldn't commit the changes left in ${workDir}.`, done: `committed what was left in ${workDir}` },
+      ] },
+    { name: "repo-clean", ...git(["-C", repoRoot, "status", "--porcelain"]), fail: `Couldn't look at ${repoRoot}.`, dirty: `${repoRoot} has uncommitted changes, so ${branch} can't be merged into ${base} there.` },
+    { name: "switch", ...git(["-C", repoRoot, "switch", base]), fail: `Couldn't switch ${repoRoot} to ${base}.`, done: `switched ${repoRoot} to ${base}` },
+    { name: "merge", ...git(["-C", repoRoot, "merge", "--no-edit", branch]), fail: `${branch} didn't merge into ${base} (the merge was aborted).`, abort: git(["-C", repoRoot, "merge", "--abort"]), done: `merged ${branch} into ${base}` },
+    { name: "push", ...git(["-C", repoRoot, "push", "origin", base]), fail: `${base} didn't push to origin.`, done: `pushed ${base} to origin` },
+    ...(status ? [status.warn ? { name: "status", warn: status.warn } : { name: "status", cmd: "gh", args: status.args, fail: "Couldn't set the ticket's status.", done: "set the ticket's status" }] : []),
+    ...(number ? [{ name: "close-issue", cmd: "gh", args: ["issue", "close", String(number)], cwd: repoRoot, fail: `Couldn't close issue #${number}.`, done: `closed issue #${number}` }] : []),
+    { name: "remove-worktree", ...git(["-C", repoRoot, "worktree", "remove", workDir]), fail: `Couldn't remove the worktree ${workDir}.`, done: `removed the worktree ${workDir}` },
+    { name: "delete-branch", ...git(["-C", repoRoot, "branch", "-d", branch]), fail: `Couldn't delete the branch ${branch}.`, done: `deleted ${branch}` },
   ];
+}
+
+// Runs steps with exec(cmd, args, opts) -> { code, stdout, stderr }. Resolves { done, warnings } with what happened and
+// what was said on the way; throws an Error at the first step that fails, saying which earlier steps already happened.
+export async function runSteps(steps, exec) {
+  const done = [], warnings = [];
+  const text = (r) => String(r.stderr || r.stdout || "").trim();
+  const stop = (message) => { throw new Error(done.length ? `${message} Already done: ${done.join(", ")}.` : message); };
+  const go = async (list) => {
+    for (const st of list) {
+      if (st.warn) { warnings.push(st.warn); continue; }
+      const r = await exec(st.cmd, st.args, st.cwd ? { cwd: st.cwd } : undefined);
+      if (st.dirty) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim()); if (String(r.stdout ?? "").trim()) stop(st.dirty); continue; }
+      if (r.code !== 0) {
+        if (st.abort) await exec(st.abort.cmd, st.abort.args);
+        stop(`${st.fail} ${text(r)}`.trim());
+      }
+      if (st.done) done.push(st.done);
+      if (st.ifOutput && String(r.stdout ?? "").trim()) await go(st.ifOutput);
+    }
+  };
+  await go(steps);
+  return { done, warnings };
 }
 
 // gh args for the pull request; the body links the ticket when it has a number.
@@ -60,14 +98,4 @@ export const prNumber = (url) => url?.match(/\/pull\/(\d+)/)?.[1] ?? null;
 export const prViewArgs = (branch) => ["pr", "view", branch, "--json", "url,state,number"];
 export function parsePr(text) {
   try { const p = JSON.parse(text); return p?.url ? { url: p.url, state: String(p.state ?? "").toUpperCase(), number: p.number ?? prNumber(p.url) } : null; } catch { return null; }
-}
-
-// Finish for a branch run, once its pull request is merged: leave the branch, then delete it locally.
-// -D because a squash merge leaves the branch looking unmerged to git; the PR being merged is what proves it.
-export function branchFinishSteps({ repoRoot, branch, base }) {
-  return [
-    { args: ["-C", repoRoot, "status", "--porcelain"], fail: "", dirty: `${repoRoot} has uncommitted changes. Commit or discard them first.` },
-    { args: ["-C", repoRoot, "switch", base], fail: `Couldn't switch ${repoRoot} to ${base}.` },
-    { args: ["-C", repoRoot, "branch", "-D", branch], fail: `Couldn't delete the local branch ${branch}.` },
-  ];
 }

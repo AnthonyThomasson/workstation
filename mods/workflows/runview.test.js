@@ -46,6 +46,19 @@ test("a row reads both the app's and hc's status shapes", () => {
   assert.equal(fromHc.detail, "All set");
 });
 
+test("a row carries whether it is the final reviewer", () => {
+  assert.equal(row(term("t1", "reviewer", { labels: { "herdr.workflow.final": "1" } })).final, true);
+  assert.equal(row(term("t1", "reviewer")).final, false);
+  assert.equal(agentsOf([term("t1", "reviewer", { labels: { "herdr.workflow.final": "1" } })], "r1").reviewers[0].final, true);
+});
+
+test("a final reviewer the core forgot stays marked final", () => {
+  const seen = new Map();
+  withGone(agentsOf([term("t1", "reviewer", { labels: { "herdr.workflow.final": "1" } })], "r1").reviewers, seen);
+  const later = withGone([], seen);
+  assert.deepEqual(later.map((r) => [r.final, r.live]), [[true, false]]);
+});
+
 test("a row falls back on the title, the name and the address", () => {
   assert.equal(row(term("t1", "worker", { title: "Fix login" })).detail, "Fix login");
   assert.equal(row({ address: "t1", state: "live", name: "x" }).name, "x");

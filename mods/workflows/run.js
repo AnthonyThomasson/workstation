@@ -7,12 +7,13 @@ import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, notify, run, setShared, shared, terminals, theme } from "herdr";
 import { S, icon, note, stop } from "./ui.js";
 import { agentsOf, orchestratorOf, statusColor, statusLabel, withGone } from "./runview.js";
-import { branchFinishSteps, canFinish, defaultBranch, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, stageOf, statusArgs } from "./finish.js";
+import { canMerge, defaultBranch, finalSeen, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, stageOf, statusArgs } from "./finish.js";
 
 const out = (r) => (r.stderr || r.stdout || "").trim();
 const RUN = "herdr.workflow.run";
 const stageKey = (id) => `workflows.run.${id}.stage`;
 const prKey = (id) => `workflows.run.${id}.pr`;
+const finalKey = (id) => `workflows.run.${id}.final`; // the final reviewer has been seen: Merge waits for that
 const POLL_MS = 30000;
 
 export class RunPage {
@@ -22,17 +23,17 @@ export class RunPage {
     this.title = props?.title ?? "Workflow run";
     this.workflow = props?.workflow ?? "";
     this.branch = props?.branch ?? "";
-    // What start.js hands over to move the ticket and finish the run (absent on runs from before this).
-    this.strategy = props?.strategy ?? "";
+    // What start.js hands over to move the ticket and merge the run (absent on runs from before this).
     this.repoRoot = props?.repoRoot ?? "";
     this.folder = props?.folder ?? "";
     this.ticket = props?.ticket ?? null; // { number, key }
     this.projectId = props?.projectId ?? null;
     this.statusField = props?.statusField ?? null; // { id, options }
-    this.statuses = props?.statuses ?? null; // { inProgress, inReview }: the names Tasks is set to move tickets through
+    this.statuses = props?.statuses ?? null; // { inProgress, inReview, done }: the names Tasks is set to move tickets through
     this.stage = Number(shared(stageKey(this.id))) || 0; // the furthest status already set
     this.pr = shared(prKey(this.id)) || null; // { url, state, number }
-    this.busy = null; // "pr" | "finish" while one runs
+    this.finalSeen = finalSeen({ saved: shared(finalKey(this.id)) });
+    this.busy = null; // "pr" | "merge" while one runs
     this.error = null;
     this.polling = false;
     this.seenWorkers = new Map();
@@ -44,6 +45,7 @@ export class RunPage {
     const live = agentsOf(all, this.id), needsYou = live.needsYou;
     const workers = withGone(live.workers, this.seenWorkers), reviewers = withGone(live.reviewers, this.seenReviewers);
     const lead = orchestratorOf(all, this.orchestrator);
+    this.noteFinal(reviewers);
     if (cx) { this.advance(cx, workers, reviewers); this.startPolling(cx); }
     return v_flex().id("workflow-run").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
       .child(this.renderHeader(t, lead, cx, workers, reviewers))
@@ -68,6 +70,13 @@ export class RunPage {
       .when(!ended || this.pr, (el) => el.child(this.renderActions(t, lead, cx, workers, reviewers)));
   }
 
+  // The final reviewer is seen once and remembered, so a restart of the page still lets Merge through.
+  noteFinal(reviewers) {
+    if (this.finalSeen || !finalSeen({ reviewers })) return;
+    this.finalSeen = true;
+    setShared(finalKey(this.id), 1);
+  }
+
   // The ticket follows the run: In Progress once a worker has started, In Review once a reviewer has. It never goes back.
   advance(cx, workers, reviewers) {
     const stage = stageOf({ workers, reviewers });
@@ -90,9 +99,9 @@ export class RunPage {
     });
   }
 
-  // A branch run's pull request: look for it now and then, so Create PR becomes a link and, once it is merged, Finish.
+  // The run's pull request: look for it now and then, so Create PR becomes a link and shows when it is merged.
   startPolling(cx) {
-    if (this.polling || this.strategy !== "branch" || !this.folder) return;
+    if (this.polling || !this.folder) return;
     this.polling = true;
     cx.spawn(async (cx) => {
       for (;;) {
@@ -108,39 +117,23 @@ export class RunPage {
   }
 
   renderActions(t, lead, cx, workers = [], reviewers = []) {
-    // Finish waits for review, every reviewer to stop, and no worker to still be working.
-    const finishing = canFinish({ stage: this.stage, workers, reviewers });
+    // Merge and Create PR wait for the final review and for every worker and reviewer to end.
+    const ready = canMerge({ finalSeen: this.finalSeen, workers, reviewers });
     const button = (id, label, onClick, on = true) => h_flex().id(id).h(26).px(10).items_center().rounded(6).text_size(S().secondary).font_medium()
       .when(on, (el) => el.cursor_pointer().bg(t.selected).hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click(onClick))
       .when(!on, (el) => el.text_color(t.muted)).child(label);
-    const row = h_flex().gap(8).items_center().pt(4);
-    if (this.strategy === "worktree") {
-      if (finishing) row.child(button("run-finish", this.busy === "finish" ? "Finishing…" : "Finish", (_e, cx) => this.finishWorktree(cx), !this.busy));
-    } else if (this.strategy === "branch") {
-      if (!this.pr) row.child(button("run-pr", this.busy === "pr" ? "Creating PR…" : "Create PR", (_e, cx) => this.createPr(cx), !this.busy));
-      else row.child(h_flex().id("run-pr-link").h(26).px(10).gap(6).items_center().rounded(6).cursor_pointer().bg(t.selected).hover((s) => s.bg(t.hover))
-        .text_size(S().secondary).font_medium().on_mouse_down("left", stop).on_click((_e, cx) => cx.open_url(this.pr.url))
-        .child(`PR #${this.pr.number}${this.pr.state === "MERGED" ? " · merged" : ""}`).child(icon("external", 12, t.muted)));
-      if (finishing && this.pr?.state === "MERGED") row.child(button("run-finish", this.busy === "finish" ? "Finishing…" : "Finish", (_e, cx) => this.finishBranch(cx), !this.busy));
-    } else return div();
+    const row = h_flex().gap(8).items_center().pt(4)
+      .child(button("run-merge", this.busy === "merge" ? "Merging…" : "Merge", (_e, cx) => this.merge(cx), ready && !this.busy));
+    if (!this.pr) row.child(button("run-pr", this.busy === "pr" ? "Creating PR…" : "Create PR", (_e, cx) => this.createPr(cx), ready && !this.busy));
+    else row.child(h_flex().id("run-pr-link").h(26).px(10).gap(6).items_center().rounded(6).cursor_pointer().bg(t.selected).hover((s) => s.bg(t.hover))
+      .text_size(S().secondary).font_medium().on_mouse_down("left", stop).on_click((_e, cx) => cx.open_url(this.pr.url))
+      .child(`PR #${this.pr.number}${this.pr.state === "MERGED" ? " · merged" : ""}`).child(icon("external", 12, t.muted)));
     return v_flex().gap(4).child(row).when(Boolean(this.error), (el) => el.child(div().text_size(S().secondary).text_color(t.blocked).child(this.error)));
   }
 
   async baseBranch() {
     const r = await exec("git", ["-C", this.repoRoot, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
     return (r.code === 0 && defaultBranch(r.stdout)) || "main";
-  }
-
-  // Runs steps from finish.js in order; throws what to tell the person at the first that fails.
-  async steps(list) {
-    for (const st of list) {
-      const r = await exec("git", st.args);
-      if (st.dirty) { if (r.code !== 0 || r.stdout.trim()) throw new Error(r.code !== 0 ? out(r) : st.dirty); continue; }
-      if (r.code !== 0) {
-        if (st.abort) await exec("git", st.abort);
-        throw new Error(`${st.fail} ${out(r)}`.trim());
-      }
-    }
   }
 
   createPr(cx) {
@@ -161,29 +154,29 @@ export class RunPage {
     });
   }
 
-  finishWorktree(cx) {
+  // Merge: commit what is left, merge the ticket branch into the default branch, push it, then set the ticket Done,
+  // close it, and clean up (finish.js has the steps). Nothing here waits for a pull request.
+  merge(cx) {
     if (this.busy) return;
-    this.busy = "finish"; this.error = null; cx.notify();
+    this.busy = "merge"; this.error = null; cx.notify();
     cx.spawn(async (cx) => {
       try {
-        await this.steps(mergeSteps({ repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, base: await this.baseBranch() }));
+        const { warnings } = await runSteps(mergeSteps({
+          repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, base: await this.baseBranch(),
+          number: this.ticket?.number, status: this.doneStatus(),
+        }), exec);
+        for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
         await this.closeSession();
       } catch (e) { this.error = String(e?.message ?? e); this.busy = null; cx.notify(); }
     });
   }
 
-  // The PR is merged on GitHub, which closes the ticket through "Closes #n". Check that, then drop the local branch.
-  finishBranch(cx) {
-    if (this.busy) return;
-    this.busy = "finish"; this.error = null; cx.notify();
-    cx.spawn(async (cx) => {
-      try {
-        const r = await exec("gh", prViewArgs(this.branch), { cwd: this.folder });
-        if (parsePr(r.stdout)?.state !== "MERGED") throw new Error("The pull request isn't merged yet.");
-        await this.steps(branchFinishSteps({ repoRoot: this.repoRoot, branch: this.branch, base: await this.baseBranch() }));
-        await this.closeSession();
-      } catch (e) { this.error = String(e?.message ?? e); this.busy = null; cx.notify(); }
-    });
+  // How Merge sets the ticket Done: the gh call, a warning when the project has no such option, or null when the run has no project.
+  doneStatus() {
+    if (!this.statusField || !this.projectId || !this.ticket?.key) return null;
+    const option = optionFor(this.statusField.options, 3, this.statuses);
+    if (!option) return { warn: `The project has no "${this.statuses?.done || "Done"}" status, so the ticket's status wasn't set. Set it by hand.` };
+    return { args: statusArgs({ projectId: this.projectId, itemId: this.ticket.key, fieldId: this.statusField.id, optionId: option.id }) };
   }
 
   // Ends the run's workers and reviewers, then its tab, which ends the orchestrator and this page with it.
