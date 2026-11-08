@@ -48,15 +48,25 @@ test("global workflows are in the workflows folder of the Herdr home, a repo's i
 });
 
 test("a YAML workflow file reads, and so does an old JSON one", () => {
-  const y = parseWorkflow("name: Features\ntrigger:\n  labels:\n    - feature\n  match: all\nworker:\n  testing: |\n    run it\n", { id: "f", scope: "global" });
+  const y = parseWorkflow("name: Features\ntrigger:\n  labels:\n    - feature\n  match: all\nworker:\n  prompt: |\n    ship it\n", { id: "f", scope: "global" });
   assert.deepEqual(y.trigger, { labels: ["feature"], match: "all" });
-  assert.equal(y.worker.testing, "run it\n");
+  assert.equal(y.worker.prompt, "ship it\n");
 });
 
-test("the reviewer's test commands are read, and a file without them has none", () => {
-  const y = parseWorkflow("name: F\nreviewer:\n  tests: |\n    node --test\n    npm test\n", { id: "f", scope: "global" });
-  assert.equal(y.reviewer.tests, "node --test\nnpm test\n");
-  assert.equal(parseWorkflow("name: F\n", { id: "f", scope: "global" }).reviewer.tests, "");
+test("worker and reviewer permissions are read, default to auto, and invalid values fall back to auto", () => {
+  const y = parseWorkflow("name: F\nworker:\n  permissions: ask\nreviewer:\n  permissions: invalid\norchestrator:\n  permissions: ask\n", { id: "f", scope: "global" });
+  assert.equal(y.worker.permissions, "ask");
+  assert.equal(y.reviewer.permissions, "auto");
+  assert.equal(y.orchestrator.permissions, undefined);
+  const blank = parseWorkflow("name: F\n", { id: "f", scope: "global" });
+  assert.equal(blank.worker.permissions, "auto");
+  assert.equal(blank.reviewer.permissions, "auto");
+});
+
+test("a file that still has testing or tests is read with both fields ignored", () => {
+  const y = parseWorkflow("name: F\nworker:\n  testing: npm test\nreviewer:\n  tests: node --test\n", { id: "f", scope: "global" });
+  assert.equal("testing" in y.worker, false);
+  assert.equal("tests" in y.reviewer, false);
 });
 
 test("a file that still has a strategy is read and the strategy is ignored", () => {

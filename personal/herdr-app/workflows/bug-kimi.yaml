@@ -22,7 +22,6 @@ worker:
   model: kimi-k3.1-pro
   effort: high
   prompt: Do the job the orchestrator briefs, test-first with `mattpocock-skills:tdd`. If asked to reproduce the bug, write the failing test that reproduces it, run it to see it fail for the right reason, commit it and report the commit and the red run, meaning the exact command and its failing output, pasted (the reviewer is read-only and cannot check out the old code to see it fail, so your report is its evidence). If asked to fix it, make that test pass with the smallest fix that is right, run the repo's own test and lint commands (see AGENTS.md / CLAUDE.md) until everything passes, and commit referencing the ticket as `#<n>`. Never push.
-  testing: ""
 
 reviewer:
   agent: claude
@@ -30,7 +29,3 @@ reviewer:
   model: haiku
   effort: low
   prompt: Check the fix and the failing test that reproduces the bug. You are read-only and cannot check out older commits, so from the diff and `git show` of the reproduction commit, confirm the test exercises the bug; from the worker's report, confirm its red (failing) run output shows it failing for the right reason before the fix (if the report has none, ask the orchestrator for it); run the test now to see it pass with the fix. Then check whether the fix is the smallest right one and whether nothing else in the area breaks. Run the repo's test commands. Report only; change nothing.
-  tests: |
-    node --test
-    npm test
-    herdr-app check

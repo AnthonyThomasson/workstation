@@ -16,10 +16,10 @@ function labelsOf(list) {
   return out;
 }
 
-// A role as it is run. A file without planning, retro, testing or tests fields has them empty.
-function roleOf(raw) {
+// A role as it is run. Only workers and reviewers carry a permission choice.
+function roleOf(raw, withPermissions = false) {
   const r = raw && typeof raw === "object" ? raw : {};
-  return { prompt: text(r.prompt), agent: text(r.agent) || "claude", command: text(r.command).trim(), model: text(r.model).trim(), effort: text(r.effort) || "medium", planning: text(r.planning), retro: text(r.retro), testing: text(r.testing), tests: text(r.tests) };
+  return { prompt: text(r.prompt), agent: text(r.agent) || "claude", command: text(r.command).trim(), model: text(r.model).trim(), effort: text(r.effort) || "medium", planning: text(r.planning), retro: text(r.retro), ...(withPermissions ? { permissions: r.permissions === "ask" ? "ask" : "auto" } : {}) };
 }
 
 // A workflow file's text as { id, name, scope, trigger: { labels, match }, orchestrator, worker, reviewer }.
@@ -36,7 +36,7 @@ export function parseWorkflow(source, { id, scope }) {
     id, scope,
     name: text(data.name).trim() || id,
     trigger: { labels: labels.length || typeof trigger.label !== "string" ? labels : labelsOf([trigger.label]), match: trigger.match === "all" ? "all" : "any" },
-    orchestrator: roleOf(data.orchestrator), worker: roleOf(data.worker), reviewer: roleOf(data.reviewer),
+    orchestrator: roleOf(data.orchestrator), worker: roleOf(data.worker, true), reviewer: roleOf(data.reviewer, true),
   };
 }
 

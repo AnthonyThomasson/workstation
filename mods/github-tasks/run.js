@@ -36,30 +36,28 @@ export const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 const PLUMBING = {
   orchestrator: (runDir) => [`Bash(${runDir}/spawn:*)`, "Bash(hc --skill:*)", "Bash(hc send:*)", "Bash(hc wait:*)", "Bash(hc read:*)", "Bash(hc get:*)", "Bash(hc ls:*)", "Bash(hc interrupt:*)", "Bash(hc kill:*)"],
   worker: () => ["Bash(hc send:*)"],
-  // Read-only git, and the workflow's test commands: one command prefix per line of its `tests`.
-  reviewer: (_runDir, tests) => ["Bash(hc send:*)", ...READ_ONLY_GIT.map((c) => `Bash(${c}:*)`), SYMBOLIC_REF_RULE, ...testLines(tests).map((c) => `Bash(${c}:*)`)],
+  // Read-only git only; auto mode decides which other commands are safe, and ask mode asks the person.
+  reviewer: () => ["Bash(hc send:*)", ...READ_ONLY_GIT.map((c) => `Bash(${c}:*)`), SYMBOLIC_REF_RULE],
 };
 // Not `git branch`, which can create and delete. Not `git symbolic-ref` as a prefix either: it also writes (`HEAD refs/heads/x`, `-d`).
 const READ_ONLY_GIT = ["git status", "git diff", "git log", "git show", "git rev-parse", "git merge-base", "git ls-files", "git grep"];
 // The one symbolic-ref a reviewer needs, to find the default branch: an exact rule, with no `:*` to let other arguments through.
 const SYMBOLIC_REF_RULE = "Bash(git symbolic-ref --short refs/remotes/origin/HEAD)";
-const testLines = (text) => String(text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
-// A reviewer never asks: what isn't allowed is refused (dontAsk), and it can't edit at all.
-const CLAUDE_MODE = { worker: "acceptEdits", reviewer: "dontAsk" }; // the orchestrator keeps the person's own
+// The orchestrator keeps the person's own permission mode; an ask reviewer keeps the default mode.
 const REVIEWER_DENIED = "Edit,Write,NotebookEdit,MultiEdit";
 
-// The command that opens a role's agent. settings: the workflow's { agent, command, model, effort }. base: the
-// agent's own command, from knownAgents(). A reviewer's settings carry `tests`. Only Claude has the permission flags; other agents keep their defaults.
+// The command that opens a role's agent. settings: the workflow's { agent, command, model, effort, permissions }.
+// base: the agent's own command, from knownAgents(). Only Claude has the permission flags; other agents keep their defaults.
 export function agentArgv(role, settings, base, runDir) {
   const { agent, command, model, effort } = settings;
   if (agent === "custom") return ["sh", "-c", command];
   const argv = [...(base?.length ? base : [agent])];
   if (agent === "claude") {
-    // --add-dir and --allowedTools take any number of values, so a single-value flag has to end them. One value per
-    // rule, not a comma-joined list: a test command may have a comma in it.
-    argv.push("--add-dir", runDir, "--allowedTools", ...PLUMBING[role](runDir, settings.tests));
+    // --add-dir and --allowedTools take any number of values, so a single-value flag has to end them.
+    argv.push("--add-dir", runDir, "--allowedTools", ...PLUMBING[role](runDir));
     if (role === "reviewer") argv.push("--disallowedTools", REVIEWER_DENIED);
-    if (CLAUDE_MODE[role]) argv.push("--permission-mode", CLAUDE_MODE[role]);
+    if (role === "worker") argv.push("--permission-mode", settings.permissions === "ask" ? "acceptEdits" : "auto");
+    else if (role === "reviewer" && settings.permissions !== "ask") argv.push("--permission-mode", "auto");
     if (model) argv.push("--model", model);
     argv.push("--effort", effort || "medium");
   } else if (agent === "codex") {
@@ -166,7 +164,6 @@ export function workerPrompt({ workflow, ticket, repo, runDir, workDir, repoRoot
     "- When you have a problem or a question, ask the orchestrator with `hc send`, then end your turn and wait for its answer. Don't decide it yourself, and don't ask the person.",
     `- Your job was sized to fit within about ${TOKEN_LIMIT} tokens. If it is turning out much bigger than the brief suggests, stop at a commit and tell the orchestrator what is done and what is left, so it can divide the rest.`,
     "- You must test the changes you make. Run the project's checks on what you changed, and exercise the change itself: run the code or the app and see it work, and add or update tests for new behavior. Fix what fails. Never report work as done without having tested it.",
-    ...(workflow.worker?.testing?.trim() ? ["- This workflow has its own testing rules, under \"Testing rules\" below. Follow them: they say how your changes must be tested here, and they come before your own idea of what is enough."] : []),
     "- When you are finished, `hc send` the orchestrator what you did, your commits, and how you tested it, with the results, plus any live-environment step you left for after the Merge. Say plainly if something failed, was not tested, or was left undone. A reviewer will read your worktree; the orchestrator may come back to you with its findings, to fix in the same worktree.", "",
     "## Merging", "",
     "Do this only when the orchestrator tells you to merge, because the review passed:",
@@ -175,7 +172,6 @@ export function workerPrompt({ workflow, ticket, repo, runDir, workDir, repoRoot
     `3. Fast-forward the ticket branch: \`git -C ${workDir} merge --ff-only ${branch}--<job>\`. If it refuses because the ticket branch moved on, go back to 1.`,
     `4. Clean up and report in one command, run from the ticket worktree and never from your own: \`cd ${workDir} && git worktree remove <your worktree> && git branch -d ${branch}--<job> && hc send <orchestrator> "<report>"\`. The report says the merge is done, with the commits it added and the test results; write it into the command up front. Don't remove your worktree in a separate step before reporting: you would be standing in a folder that no longer exists, with nothing to report from. If a part fails, the report is not sent: fix it and run the command again.`,
     "Never push, and never touch the main checkout.", "",
-    ...section("Testing rules", workflow.worker?.testing),
     ...section("This workflow's instructions", workflow.worker?.prompt),
   ].join("\n");
 }
@@ -189,7 +185,7 @@ export function reviewerPrompt({ workflow, ticket, repo, runDir, workDir, repoRo
     `- The final review, when the orchestrator says so: you were started in the ticket worktree, ${workDir}, on ${branch}. Review everything the branch changed against the default branch (the one \`git symbolic-ref --short refs/remotes/origin/HEAD\` names), as a whole: what is broken, what the ticket asked for that is missing, what was added beyond it, and how the jobs fit together.`,
     `- The main checkout, ${repoRoot}, is the person's own: stay out of it. A step that would change the person's live environment never runs from a worktree; flag one that does.`, "",
     "- Your brief comes from the orchestrator and names the area to review. Stay in that area.",
-    "- You are read-only: you can't edit files, so change nothing, commit nothing, and don't start other agents. You may run read-only git (`git status`, `git diff`, `git log`, `git show`, `git symbolic-ref --short refs/remotes/origin/HEAD`, `git rev-parse`, `git merge-base`, `git ls-files`, `git grep`) and the repo's test commands you are allowed; anything else is refused, which includes checking out another commit (it would also move the worktree under its worker). To see a file as it was at another commit, use `git show <commit>:<path>`. Run the tests to check what you claim, and don't try to work around a refusal.",
+    "- You are read-only: you can't edit files, so change nothing, commit nothing, and don't start other agents. You may run read-only git (`git status`, `git diff`, `git log`, `git show`, `git symbolic-ref --short refs/remotes/origin/HEAD`, `git rev-parse`, `git merge-base`, `git ls-files`, `git grep`) and the repo's tests; edits are always refused. Don't try checking out another commit (it would also move the worktree under its worker). To see a file as it was at another commit, use `git show <commit>:<path>`. Run the tests to check what you claim, and don't try to work around a refusal.",
     "- Report what is broken, what the ticket asked for that is missing, and what was added beyond it. Give each finding its file and line, its proof, and how much it matters.",
     "- Send your findings to the orchestrator with `hc send`, and give them as your last message too, then end your turn. Don't write them to a file. Say plainly when you found nothing that needs fixing.",
     "- Stay available. The orchestrator will come back after the fixes and ask whether your findings are addressed. The branch may also have been rebased or fixed meanwhile: read the code again (`git log`, `git diff`, the files) and check each finding against it, then report what is still open.", "",

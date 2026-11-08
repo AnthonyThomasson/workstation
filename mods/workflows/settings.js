@@ -15,7 +15,7 @@ const SAMPLE = {
   workflow: {
     name: "<workflow name>",
     orchestrator: { planning: "<the workflow's planning prompt goes here>", retro: "<the workflow's retro prompt goes here>", prompt: "<the workflow's orchestrator prompt goes here>" },
-    worker: { testing: "<the workflow's testing prompt goes here>", prompt: "<the workflow's worker prompt goes here>" },
+    worker: { prompt: "<the workflow's worker prompt goes here>" },
     reviewer: { prompt: "<the workflow's reviewer prompt goes here>" },
   },
   ticket: { number: 0, title: "<ticket title>" },

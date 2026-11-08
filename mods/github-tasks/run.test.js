@@ -35,21 +35,27 @@ const values = (argv, flag) => {
   return argv.slice(from, to === -1 ? undefined : to);
 };
 
-test("claude: a worker accepts edits and may reach the orchestrator", () => {
+test("claude: a worker defaults to auto mode and may reach the orchestrator", () => {
   const argv = agentArgv("worker", role({ model: "opus", effort: "high" }), ["claude"], "/runs/1");
-  assert.deepEqual(argv, ["claude", "--add-dir", "/runs/1", "--allowedTools", "Bash(hc send:*)", "--permission-mode", "acceptEdits", "--model", "opus", "--effort", "high"]);
+  assert.deepEqual(argv, ["claude", "--add-dir", "/runs/1", "--allowedTools", "Bash(hc send:*)", "--permission-mode", "auto", "--model", "opus", "--effort", "high"]);
 });
 
-test("claude: a reviewer can't ask, can't edit, and may only run read-only git and the workflow's test commands", () => {
+test("claude: an ask worker keeps acceptEdits so commands need approval", () => {
+  const argv = agentArgv("worker", role({ permissions: "ask" }), ["claude"], "/runs/1");
+  assert.equal(argv[argv.indexOf("--permission-mode") + 1], "acceptEdits");
+  assert.deepEqual(values(argv, "--allowedTools"), ["Bash(hc send:*)"]);
+  assert.ok(!argv.includes("--disallowedTools"));
+});
+
+test("claude: a reviewer defaults to auto mode, can't edit, and keeps its read-only git rules", () => {
   const argv = agentArgv("reviewer", role({ tests: "node --test\n  npm test \n\nherdr-app check" }), ["claude"], "/runs/1");
-  assert.equal(argv[argv.indexOf("--permission-mode") + 1], "dontAsk");
+  assert.equal(argv[argv.indexOf("--permission-mode") + 1], "auto");
   assert.equal(argv[argv.indexOf("--disallowedTools") + 1], "Edit,Write,NotebookEdit,MultiEdit");
   assert.deepEqual(values(argv, "--allowedTools"), [
     "Bash(hc send:*)",
     "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
     "Bash(git rev-parse:*)", "Bash(git merge-base:*)", "Bash(git ls-files:*)", "Bash(git grep:*)",
     "Bash(git symbolic-ref --short refs/remotes/origin/HEAD)", // exact: no `:*`, since other symbolic-ref arguments write
-    "Bash(node --test:*)", "Bash(npm test:*)", "Bash(herdr-app check:*)",
   ]);
   assert.ok(!argv.includes("Bash(git branch:*)")); // `git branch` can create and delete
   assert.ok(!argv.some((a) => a.startsWith("Bash(git symbolic-ref") && a.includes(":*"))); // `git symbolic-ref HEAD refs/heads/x` and `-d` write
@@ -57,18 +63,16 @@ test("claude: a reviewer can't ask, can't edit, and may only run read-only git a
   assert.deepEqual(argv.slice(-2), ["--effort", "medium"]);
 });
 
-test("claude: a test command with a comma in it stays one allowed rule", () => {
-  const argv = agentArgv("reviewer", role({ tests: "node --test --test-name-pattern=a,b\nnpm test" }), ["claude"], "/runs/1");
-  const rules = values(argv, "--allowedTools");
-  assert.ok(rules.includes("Bash(node --test --test-name-pattern=a,b:*)"));
-  assert.ok(rules.includes("Bash(npm test:*)"));
-  assert.ok(!rules.some((r) => r === "Bash(node --test --test-name-pattern=a"), "not split at the comma");
-  assert.equal(argv[argv.indexOf("--disallowedTools") - 1], "Bash(npm test:*)"); // the flag after the list ends it
-});
-
-test("claude: a reviewer with no test commands (an older workflow file) gets only the read-only ones", () => {
-  const rules = values(agentArgv("reviewer", role(), ["claude"], "/runs/1"), "--allowedTools");
-  assert.ok(rules.includes("Bash(git show:*)") && rules.every((r) => r.startsWith("Bash(git ") || r === "Bash(hc send:*)"));
+test("claude: an ask reviewer uses the default permission mode and still can't edit", () => {
+  const argv = agentArgv("reviewer", role({ permissions: "ask" }), ["claude"], "/runs/1");
+  assert.ok(!argv.includes("--permission-mode"));
+  assert.equal(argv[argv.indexOf("--disallowedTools") + 1], "Edit,Write,NotebookEdit,MultiEdit");
+  assert.deepEqual(values(argv, "--allowedTools"), [
+    "Bash(hc send:*)",
+    "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
+    "Bash(git rev-parse:*)", "Bash(git merge-base:*)", "Bash(git ls-files:*)", "Bash(git grep:*)",
+    "Bash(git symbolic-ref --short refs/remotes/origin/HEAD)",
+  ]);
 });
 
 test("claude: workers don't get the reviewer's restrictions", () => {
@@ -128,13 +132,12 @@ test("the workflow's own prompts go in, and empty ones leave no heading", () => 
   assert.ok(reviewerPrompt({ workflow: workflow({ reviewer: role({ prompt: "BE HARSH" }) }), ...place }).includes("BE HARSH"));
 });
 
-test("workers must test, and the workflow's testing prompt goes in", () => {
+test("workers must test, and a legacy testing field no longer adds a prompt section", () => {
   const base = workerPrompt({ workflow: workflow(), ...place });
   assert.match(base, /You must test the changes you make/);
   assert.ok(!base.includes("Testing rules"));
-  const full = workerPrompt({ workflow: workflow({ worker: role({ testing: "RUN NPM TEST" }) }), ...place });
-  assert.ok(full.includes("## Testing rules") && full.includes("RUN NPM TEST"));
-  assert.match(full, /its own testing rules, under "Testing rules" below\. Follow them/);
+  const old = workerPrompt({ workflow: workflow({ worker: role({ testing: "RUN NPM TEST" }) }), ...place });
+  assert.equal(old, base);
 });
 
 test("a file from before planning and retro prompts still works", () => {
@@ -199,6 +202,13 @@ test("the orchestrator names reviewers uniquely, apart from every job", () => {
   const text = orchestratorPrompt({ workflow: workflow(), ...place });
   assert.match(text, /unique in this run and differ from every job name/);
   assert.ok(text.includes("`<job>-review`"));
+});
+
+test("a reviewer may run repo tests without a legacy command allowlist, and edits stay refused", () => {
+  const text = reviewerPrompt({ workflow: workflow(), ...place });
+  assert.match(text, /the repo's tests/);
+  assert.match(text, /edits are always refused/i);
+  assert.doesNotMatch(text, /test commands you are allowed|anything else is refused/);
 });
 
 test("a reviewer is only told about git commands its allowlist permits, and not to check out other commits", () => {

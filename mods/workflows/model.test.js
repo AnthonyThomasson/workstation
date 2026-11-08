@@ -1,7 +1,7 @@
 import test from "node:test";
 import { parse as parseYaml } from "./yaml.js";
 import assert from "node:assert/strict";
-import { blank, normalize, validate, slug, snapshot, isDirty, serialize, parse, uniqueLabels, ROLES, EFFORTS, AGENTS, CUSTOM, AGENT_LABELS, MATCHES, SCOPES, SCOPE_LABELS, SCOPE_HINTS, isFallback } from "./model.js";
+import { blank, normalize, validate, slug, snapshot, isDirty, serialize, parse, uniqueLabels, ROLES, EFFORTS, PERMISSIONS, PERMISSION_LABELS, PERMISSION_HINTS, AGENTS, CUSTOM, AGENT_LABELS, MATCHES, SCOPES, SCOPE_LABELS, SCOPE_HINTS, isFallback } from "./model.js";
 
 const valid = (over = {}) => {
   const w = blank();
@@ -22,7 +22,7 @@ test("slug makes a file name from a name", () => {
 test("a blank workflow has every role with a default agent and effort", () => {
   const w = blank();
   const role0 = { prompt: "", agent: "claude", command: "", model: "", effort: "medium" };
-  for (const role of ROLES) assert.deepEqual(w[role], role === "orchestrator" ? { ...role0, planning: "", retro: "" } : role === "worker" ? { ...role0, testing: "" } : { ...role0, tests: "node --test\nnpm test\nherdr-app check" });
+  for (const role of ROLES) assert.deepEqual(w[role], role === "orchestrator" ? { ...role0, planning: "", retro: "" } : { ...role0, permissions: "auto" });
   assert.deepEqual(w.trigger, { labels: [], match: "any" });
   assert.equal("global" in w, false); // where it is kept is the folder's business
   assert.equal("strategy" in w, false);
@@ -36,16 +36,49 @@ test("a file that still has a strategy loads, ignores it, and drops it on the ne
   assert.equal(isDirty(valid(), { ...valid(), strategy: "worktree" }), false);
 });
 
-test("the reviewer's test commands are three lines in a new workflow, empty when a file lacks them, are kept as written, and make a workflow dirty", () => {
-  assert.equal(normalize({}).reviewer.tests, "");
-  assert.equal(normalize({ reviewer: { tests: 7 } }).reviewer.tests, "");
-  assert.equal(normalize({ reviewer: { tests: "node --test\nnpm test" } }).reviewer.tests, "node --test\nnpm test");
-  assert.equal(normalize({ worker: { tests: "x" } }).worker.tests, undefined);
+test("worker and reviewer permissions default to auto and only ask overrides that default", () => {
+  for (const role of ["worker", "reviewer"]) {
+    assert.equal(blank()[role].permissions, "auto");
+    assert.equal(normalize({})[role].permissions, "auto");
+    assert.equal(normalize({ [role]: { permissions: "ask" } })[role].permissions, "ask");
+    assert.equal(normalize({ [role]: { permissions: "invalid" } })[role].permissions, "auto");
+  }
+  assert.equal(normalize({ orchestrator: { permissions: "ask" } }).orchestrator.permissions, undefined);
+});
+
+test("the editor offers Auto and Ask with Claude-specific worker and reviewer hints", () => {
+  assert.deepEqual(PERMISSIONS, ["auto", "ask"]);
+  assert.deepEqual(PERMISSION_LABELS, { auto: "Auto", ask: "Ask" });
+  for (const role of ["worker", "reviewer"]) {
+    assert.match(PERMISSION_HINTS[role], /Auto: runs commands without asking/);
+    assert.match(PERMISSION_HINTS[role], /Ask: asks before each shell command/);
+    assert.match(PERMISSION_HINTS[role], /Claude/);
+  }
+  assert.match(PERMISSION_HINTS.reviewer, /edits are always refused/i);
+});
+
+test("worker and reviewer permissions survive a save and make the workflow dirty when changed", () => {
   const base = valid();
-  assert.equal(isDirty(base, { ...base, reviewer: { ...base.reviewer, tests: "npm test" } }), true);
-  const text = serialize({ ...base, reviewer: { ...base.reviewer, tests: "node --test\nnpm test\nherdr-app check" } });
-  assert.equal(parse(text).reviewer.tests, "node --test\nnpm test\nherdr-app check");
-  assert.deepEqual(Object.keys(parseYaml(text).reviewer), ["agent", "command", "model", "effort", "prompt", "tests"]);
+  const edited = { ...base, worker: { ...base.worker, permissions: "ask" }, reviewer: { ...base.reviewer, permissions: "ask" } };
+  assert.equal(isDirty(base, edited), true);
+  const saved = parseYaml(serialize(edited));
+  assert.equal(saved.worker.permissions, "ask");
+  assert.equal(saved.reviewer.permissions, "ask");
+  assert.equal(saved.orchestrator.permissions, undefined);
+  assert.deepEqual(parse(serialize(edited)), normalize(edited));
+});
+
+test("a file that still has testing or tests loads, ignores them, and drops them on the next save", () => {
+  const base = valid();
+  const old = { ...base, worker: { ...base.worker, testing: "npm test" }, reviewer: { ...base.reviewer, tests: "node --test" } };
+  const loaded = normalize(old);
+  assert.equal("testing" in loaded.worker, false);
+  assert.equal("tests" in loaded.reviewer, false);
+  assert.deepEqual(validate(old), []);
+  const saved = parseYaml(serialize(old));
+  assert.equal("testing" in saved.worker, false);
+  assert.equal("tests" in saved.reviewer, false);
+  assert.equal(isDirty(base, old), false);
 });
 
 test("the agent and effort lists hold what Herdr and the editor offer", () => {
@@ -128,7 +161,7 @@ test("serialize and parse round-trip, in a fixed key order", () => {
   assert.ok(text.endsWith("\n") && !text.startsWith("{"));
   assert.deepEqual(Object.keys(parseYaml(text)), ["version", "id", "name", "trigger", "orchestrator", "worker", "reviewer"]);
   assert.deepEqual(Object.keys(parseYaml(text).orchestrator), ["agent", "command", "model", "effort", "prompt", "planning", "retro"]);
-  assert.deepEqual(Object.keys(parseYaml(text).worker), ["agent", "command", "model", "effort", "prompt", "testing"]);
+  assert.deepEqual(Object.keys(parseYaml(text).worker), ["agent", "command", "model", "effort", "permissions", "prompt"]);
   assert.deepEqual(parse(text), normalize(w));
 });
 

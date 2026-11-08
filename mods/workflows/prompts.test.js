@@ -8,7 +8,7 @@ const { orchestratorPrompt } = copy;
 const workflow = {
   name: "Story",
   orchestrator: { planning: "PLAN", retro: "LOOK BACK", prompt: "BE BRIEF" },
-  worker: { testing: "RUN IT", prompt: "USE TABS" },
+  worker: { prompt: "USE TABS" },
   reviewer: { prompt: "BE HARSH" },
 };
 const input = (extra = {}) => ({

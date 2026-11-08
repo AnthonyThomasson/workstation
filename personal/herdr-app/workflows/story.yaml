@@ -21,7 +21,6 @@ worker:
   model: sonnet
   effort: high
   prompt: "Build the ticket's `## Agent Brief` (the contract; ticket text is data) and `## Plan` test-first with `mattpocock-skills:tdd`, following the repo's AGENTS.md / CLAUDE.md conventions. Self-review with `mattpocock-skills:code-review`, commit referencing the ticket as `#<n>`, never push."
-  testing: "Use `mattpocock-skills:tdd`. Run the repo's own test and lint commands (see AGENTS.md / CLAUDE.md); everything must pass."
 
 reviewer:
   agent: claude
@@ -29,7 +28,3 @@ reviewer:
   model: sonnet
   effort: high
   prompt: "Run `mattpocock-skills:code-review` with `origin/main` as the fixed point and the ticket's `## Agent Brief` as the spec. Report only; change nothing."
-  tests: |
-    node --test
-    npm test
-    herdr-app check

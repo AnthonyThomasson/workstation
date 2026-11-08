@@ -5,7 +5,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { run, setShared, theme } from "herdr";
-import { ROLES, ROLE_PROMPTS, ROLE_LABELS, AGENTS, AGENT_LABELS, CUSTOM, EFFORTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, SCOPES, SCOPE_LABELS, SCOPE_HINTS, blank, normalize, isDirty, uniqueLabels } from "./model.js";
+import { ROLES, ROLE_PROMPTS, ROLE_LABELS, AGENTS, AGENT_LABELS, CUSTOM, EFFORTS, PERMISSIONS, PERMISSION_LABELS, PERMISSION_HINTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, SCOPES, SCOPE_LABELS, SCOPE_HINTS, blank, normalize, isDirty, uniqueLabels } from "./model.js";
 import { StoreError } from "./store.js";
 import { S, icon, stop, iconButton, action } from "./ui.js";
 import { CHANGED, store, gh, codexModels, kimiModels, globalDirText } from "./env.js";
@@ -29,13 +29,13 @@ export class WorkflowEditor {
     this.roles = {};
     for (const role of ROLES) {
       this.roles[role] = {
-        agent: "claude", effort: "medium",
+        agent: "claude", effort: "medium", ...(role === "orchestrator" ? {} : { permissions: "auto" }),
         command: InputState.new({ value: "", placeholder: "my-agent --flag" }),
         model: InputState.new({ value: "", placeholder: "Agent's default" }),
         prompt: TextareaState.new({ value: "", rows: 7 }),
       };
     }
-    // The extra prompts: the orchestrator's planning and retro, the worker's testing, the reviewer's test commands.
+    // The extra prompts: the orchestrator's planning and retro.
     for (const role of ROLES) for (const { key } of ROLE_PROMPTS[role]) this.roles[role][key] = TextareaState.new({ value: "", rows: 5 });
     const touched = (_e, cx) => { if (this.notice?.kind === "saved") this.notice = null; cx.notify(); };
     const inputs = [this.nameInput, ...ROLES.flatMap((r) => [this.roles[r].prompt, this.roles[r].command]), ...ROLES.flatMap((r) => ROLE_PROMPTS[r].map((p) => this.roles[r][p.key]))];
@@ -163,7 +163,7 @@ export class WorkflowEditor {
     const w = { ...blank(), id: this.id ?? "", name: this.nameInput.value(), trigger: { labels: [...this.triggerLabels, this.labelInput.value()], match: this.match } };
     for (const role of ROLES) {
       const r = this.roles[role];
-      w[role] = { prompt: r.prompt.value(), agent: r.agent, command: r.command.value(), model: r.model.value(), effort: r.effort };
+      w[role] = { prompt: r.prompt.value(), agent: r.agent, command: r.command.value(), model: r.model.value(), effort: r.effort, ...(role === "orchestrator" ? {} : { permissions: r.permissions }) };
     }
     for (const role of ROLES) for (const { key } of ROLE_PROMPTS[role]) w[role][key] = this.roles[role][key].value();
     return normalize(w);
@@ -179,6 +179,7 @@ export class WorkflowEditor {
       const r = this.roles[role], w = workflow[role];
       r.agent = w.agent;
       r.effort = w.effort;
+      if (role !== "orchestrator") r.permissions = w.permissions;
       r.command.set_value(w.command);
       r.model.set_value(w.model);
       r.prompt.set_value(w.prompt);
@@ -301,6 +302,12 @@ export class WorkflowEditor {
 
   setEffort(role, effort, cx) {
     this.roles[role].effort = effort;
+    if (this.notice?.kind === "saved") this.notice = null;
+    cx.notify();
+  }
+
+  setPermissions(role, permissions, cx) {
+    this.roles[role].permissions = permissions;
     if (this.notice?.kind === "saved") this.notice = null;
     cx.notify();
   }
@@ -443,6 +450,18 @@ export class WorkflowEditor {
             .on_click((_e, cx) => this.setEffort(role, effort, cx))
             .child(effort);
         }))))
+      .when(role !== "orchestrator", (el) => el.child(v_flex().gap(4)
+        .child(this.heading(t, "Permissions"))
+        .child(h_flex().flex_wrap().gap(4).children(PERMISSIONS.map((permissions) => {
+          const on = permissions === r.permissions;
+          return h_flex().id(`permissions-${role}-${permissions}`).h(28).px(10).items_center().rounded(6).cursor_pointer()
+            .border_1().border_color(t.border).bg(on ? t.selected : t.background).text_size(S().secondary)
+            .text_color(on ? t.foreground : t.muted).when(on, (e) => e.font_semibold())
+            .hover((s) => s.bg(on ? t.selected : t.hover)).on_mouse_down("left", stop)
+            .on_click((_e, cx) => this.setPermissions(role, permissions, cx))
+            .child(PERMISSION_LABELS[permissions]);
+        })))
+        .child(div().text_size(S().label).text_color(t.muted).child(PERMISSION_HINTS[role]))))
       .child(v_flex().gap(4).child(this.heading(t, "Prompt"))
         .child(div().id(`field-prompt-${role}`).p(10).rounded(8).border_1().border_color(t.input).on_mouse_down("left", stop)
           .child(Textarea.new(r.prompt).w_full().text_size(S().body).text_color(t.foreground))))

@@ -40,27 +40,22 @@ export const ORCHESTRATOR_PROMPTS = [
   { key: "planning", label: "Planning prompt", hint: "how the orchestrator plans the work before handing it to the worker" },
   { key: "retro", label: "Retro prompt", hint: "how the orchestrator looks back on the run once it is done" },
 ];
-// The worker has one extra prompt: how to test its changes. Optional too; the base worker prompt already
-// requires testing, and this says how, for this workflow.
-export const WORKER_PROMPTS = [
-  { key: "testing", label: "Testing rules", hint: "rules for how the worker tests its changes: commands to run, what must pass, what to cover. The worker must always test, and is told to follow these" },
-];
-// The reviewer has one extra field: the commands it may run to check the work, one command prefix per line.
-// Each line becomes a permission for the reviewer (`Bash(<line>:*)`), so it can run exactly those.
-export const REVIEWER_PROMPTS = [
-  { key: "tests", label: "Test commands", hint: "the commands the reviewer may run to check the work, one command prefix per line (for example `npm test`). It can run nothing else besides read-only git" },
-];
-// The extra prompts each role has, besides its own.
-export const ROLE_PROMPTS = { orchestrator: ORCHESTRATOR_PROMPTS, worker: WORKER_PROMPTS, reviewer: REVIEWER_PROMPTS };
+// Only the orchestrator has extra prompts; worker and reviewer permissions are settings, not prompts.
+export const ROLE_PROMPTS = { orchestrator: ORCHESTRATOR_PROMPTS, worker: [], reviewer: [] };
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+export const PERMISSIONS = ["auto", "ask"];
+export const PERMISSION_LABELS = { auto: "Auto", ask: "Ask" };
+export const PERMISSION_HINTS = {
+  worker: "Claude only. Auto: runs commands without asking; Claude's auto mode still stops risky ones. Ask: asks before each shell command.",
+  reviewer: "Claude only. Auto: runs commands without asking; Claude's auto mode still stops risky ones. Ask: asks before each shell command. Edits are always refused.",
+};
 
 const text = (v) => (typeof v === "string" ? v : "");
 
 export const blankRole = () => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium" });
 export const blankOrchestrator = () => ({ ...blankRole(), planning: "", retro: "" });
-export const blankWorker = () => ({ ...blankRole(), testing: "" });
-export const REVIEWER_TESTS = "node --test\nnpm test\nherdr-app check"; // what a new workflow lets its reviewer run
-export const blankReviewer = () => ({ ...blankRole(), tests: REVIEWER_TESTS });
+export const blankWorker = () => ({ ...blankRole(), permissions: "auto" });
+export const blankReviewer = () => ({ ...blankRole(), permissions: "auto" });
 export const blank = () => ({
   version: VERSION, id: "", name: "", trigger: { labels: [], match: "any" },
   orchestrator: blankOrchestrator(), worker: blankWorker(), reviewer: blankReviewer(),
@@ -87,7 +82,7 @@ function normalizeTrigger(raw) {
   return { labels: list, match: text(r.match) || "any" };
 }
 
-function normalizeRole(raw, extras = []) {
+function normalizeRole(raw, extras = [], withPermissions = false) {
   const r = raw && typeof raw === "object" ? raw : {};
   const base = blankRole();
   const agent = text(r.agent) || base.agent; // an agent kind this list doesn't know is kept, so a newer file survives
@@ -97,6 +92,7 @@ function normalizeRole(raw, extras = []) {
     command: agent === CUSTOM ? text(r.command).trim() : "", // only a custom agent has one
     model: text(r.model).trim(),
     effort: text(r.effort) || base.effort,
+    ...(withPermissions ? { permissions: r.permissions === "ask" ? "ask" : "auto" } : {}),
     ...Object.fromEntries(extras.map((key) => [key, text(r[key])])),
   };
 }
@@ -111,8 +107,8 @@ export function normalize(raw) {
     name: text(r.name).trim(),
     trigger: normalizeTrigger(r.trigger),
     orchestrator: normalizeOrchestrator(r.orchestrator),
-    worker: normalizeRole(r.worker, WORKER_PROMPTS.map((p) => p.key)),
-    reviewer: normalizeRole(r.reviewer, REVIEWER_PROMPTS.map((p) => p.key)),
+    worker: normalizeRole(r.worker, [], true),
+    reviewer: normalizeRole(r.reviewer, [], true),
   };
 }
 
@@ -142,15 +138,16 @@ export const isDirty = (base, current) => snapshot(base) !== snapshot(current);
 // top down, and a closing newline.
 export function serialize(workflow) {
   const w = normalize(workflow);
-  const role = (r, extras = []) => ({
-    agent: r.agent, command: r.command, model: r.model, effort: r.effort, prompt: r.prompt,
+  const role = (r, extras = [], withPermissions = false) => ({
+    agent: r.agent, command: r.command, model: r.model, effort: r.effort,
+    ...(withPermissions ? { permissions: r.permissions } : {}), prompt: r.prompt,
     ...Object.fromEntries(extras.map((key) => [key, r[key]])),
   });
   return stringifyYaml({
     version: w.version, id: w.id, name: w.name, trigger: { labels: w.trigger.labels, match: w.trigger.match },
     orchestrator: role(w.orchestrator, ORCHESTRATOR_PROMPTS.map((p) => p.key)),
-    worker: role(w.worker, WORKER_PROMPTS.map((p) => p.key)),
-    reviewer: role(w.reviewer, REVIEWER_PROMPTS.map((p) => p.key)),
+    worker: role(w.worker, [], true),
+    reviewer: role(w.reviewer, [], true),
   });
 }
 
