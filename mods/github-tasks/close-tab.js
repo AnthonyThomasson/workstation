@@ -13,11 +13,10 @@ export const liveRunIn = (tab, deps) => {
   return deps.terminals().find((k) => here.has(k.address) && k.state === "live" && k.labels?.[ROLE_LABEL] === "orchestrator" && k.labels?.[RUN_LABEL]) ?? null;
 };
 
-// shared(ASKING): { [tab]: when the question opened }, so a second key press doesn't open a second one. An entry older than
-// ASKING_MS counts as gone, in case the dialog was closed without telling us.
+// shared(ASKING): { [tab]: when the question opened }, so a second key press doesn't open a second one. The dialog removes its
+// entry when it goes away (Cancel, Close, Esc and app quit all end in its close()), so an entry never expires by itself.
 export const ASKING = "github-tasks.closeAsking";
-export const ASKING_MS = 10000;
-export const isAsking = (map, tab, now = Date.now()) => now - (map?.[tab] ?? -Infinity) < ASKING_MS;
+export const isAsking = (map, tab) => Boolean(map && tab in map);
 
 export const closeMessage = (name) => `${name} is still running. Closing its tab stops the orchestrator and all its workers and reviewers.`;
 

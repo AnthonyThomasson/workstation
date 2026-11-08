@@ -63,11 +63,10 @@ test("a second key press while the question is on screen opens no second one", a
   assert.deepEqual(calls, []);
 });
 
-test("a question is only counted while it is recent", () => {
-  assert.equal(isAsking({ a: 1000 }, "a", 5000), true);
-  assert.equal(isAsking({ a: 1000 }, "a", 20000), false);
-  assert.equal(isAsking({ a: 1000 }, "b", 2000), false);
-  assert.equal(isAsking(undefined, "a", 2000), false);
+test("a question stays counted however long the dialog has been open", () => {
+  assert.equal(isAsking({ a: 1000 }, "a"), true); // an old entry still blocks a second dialog
+  assert.equal(isAsking({ a: 1000 }, "b"), false);
+  assert.equal(isAsking(undefined, "a"), false);
 });
 
 test("a tab without a run closes straight away, as the plain key does, even when another tab holds a live run", async () => {
