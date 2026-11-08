@@ -5,6 +5,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Popover } from "gpui-base";
 import { run, shared, setShared, theme } from "herdr";
+import { openOnce, workflowSubject } from "./open-tabs.js";
 import { S, icon, stop, note, iconButton, segmented, later, action, scrim } from "./ui.js";
 import { SCOPE_LABELS } from "./workflow-model.js";
 import { restorePlan, canRestoreDefaults, workflowRefreshState } from "./store.js";
@@ -68,10 +69,10 @@ export class WorkflowList {
     });
   }
 
-  openWorkflow(item) {
+  openWorkflow(item, cx) {
     // The scope and the repo go along, so the tab keeps working from where the workflow is even once another space is selected.
-    run("tab.new", { name: item?.name ?? "New workflow", mod: "github-tasks",
-      props: { role: "workflow-editor", id: item?.id ?? null, scope: item?.scope ?? "global", where: this.place() ?? {}, repoRoot: this.repoRoot } });
+    openOnce(workflowSubject(item?.scope ?? "global", item?.id), { name: item?.name ?? "New workflow", mod: "github-tasks",
+      props: { role: "workflow-editor", id: item?.id ?? null, scope: item?.scope ?? "global", where: this.place() ?? {}, repoRoot: this.repoRoot } }, cx);
   }
 
   // A clone or paste that succeeds announces it to every list; a failure stays on screen instead of being
@@ -204,7 +205,7 @@ export class WorkflowList {
       .child(h_flex().gap(8).items_center().flex_wrap()
         .child(h_flex().id("new-workflow").h(30).px(12).gap(6).items_center().rounded(6).cursor_pointer()
           .bg(t.solid).text_color(t.solid_foreground).text_size(S().secondary).font_semibold()
-          .hover((s) => s.opacity(0.88)).on_mouse_down("left", stop).on_click(() => this.openWorkflow(null))
+          .hover((s) => s.opacity(0.88)).on_mouse_down("left", stop).on_click((_e, cx) => this.openWorkflow(null, cx))
           .child(icon("plus", 14, t.solid_foreground))
           .child("New workflow"))
         .child(h_flex().id("restore-defaults").h(30).px(12).items_center().rounded(6)
@@ -287,7 +288,7 @@ export class WorkflowList {
     // Where it is kept, when the list mixes both: Global, or the repo's name.
     const where = !showWhere ? null : item.scope === "global" ? SCOPE_LABELS.global : item.scope === "repo" ? baseName(this.repoRoot) || SCOPE_LABELS.repo : null;
     return h_flex().id(`workflow-${item.scope}-${item.id}`).flex_none().px(8).py(7).gap(8).items_center().rounded(8)
-      .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click(() => this.openWorkflow(item))
+      .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => this.openWorkflow(item, cx))
       .child(v_flex().flex_1().min_w(0).gap(1)
         .child(div().truncate().text_size(S().body).font_medium().text_color(item.error ? t.ansi1 : t.foreground).child(item.name))
         .when(Boolean(item.error), (el) => el.child(div().truncate().text_size(S().label).text_color(t.ansi1).child(item.error))))

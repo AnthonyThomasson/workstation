@@ -18,6 +18,7 @@ import { TaskEditor, CHANGED } from "./editor.js";
 import { TaskSettings } from "./settings.js";
 import { matchWorkflows } from "./match.js";
 import { WorkflowEditor } from "./workflow-editor.js";
+import { openOnce, ticketSubject } from "./open-tabs.js";
 import { RunPage } from "./run-page.js";
 import { PromptPage } from "./prompts-page.js";
 import { WorkflowList } from "./workflow-list.js";
@@ -372,15 +373,15 @@ export default class GitHubTasks extends View {
 
   // A click opens the ticket in a tab to edit. Its folder and machine go along, so the editor asks
   // GitHub from the same place the panel does.
-  openTicket(ticket, extra = {}) {
+  openTicket(ticket, cx, extra = {}) {
     const ctx = this.ctx, project = this.project;
     if (!ctx || !project) return;
     const name = ticket.draft ? ticket.title : `#${ticket.number} ${ticket.title}`;
-    run("tab.new", {
+    openOnce(extra.autoStart ? null : ticketSubject(this.repo, ticket), {
       name,
       mod: "github-tasks",
       props: { role: "editor", ticket, repo: this.repo, project: { id: project.id, title: project.title }, where: { cwd: ctx.folder, on: ctx.on }, ...extra },
-    });
+    }, cx);
   }
 
   // Start: the one workflow the ticket's labels trigger starts at once. With several, or none, the ticket opens in
@@ -400,7 +401,7 @@ export default class GitHubTasks extends View {
           const statusField = await loadStatusField(gh, project.id, where).catch(() => null); // without it the ticket's status just isn't moved
           await startRun(matches[0], ticket, repo, where, cx, { project, statusField });
         } else {
-          this.openTicket(ticket, { autoStart: true });
+          this.openTicket(ticket, cx, { autoStart: true });
         }
       } catch (e) {
         this.startError = String(e?.message ?? e);
@@ -419,7 +420,7 @@ export default class GitHubTasks extends View {
     const room = width - 16 - 12 - 8 - 16 - (ticket.url ? 28 : 0) - 28; // what the name has left, in px
     const max = Math.max(12, Math.floor(room / (S().body * 0.55)));
     return h_flex().id(`ticket-${ticket.key}`).flex_none().mx(8).mb(1).px(6).h(28).gap(8).items_center().rounded(6)
-      .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click(() => this.openTicket(ticket))
+      .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => this.openTicket(ticket, cx))
       .child(div().w(8).h(8).flex_none().rounded_full().when(ticket.draft, (el) => el.border(1.5).border_color(color)).when(!ticket.draft, (el) => el.bg(color)))
       .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(ticket.title, max)))
       .when(Boolean(ticket.url), (el) => el.child(iconButton(`open-${ticket.key}`, "external", t, (_e, cx) => cx.open_url(ticket.url), false, "Open on GitHub")))
