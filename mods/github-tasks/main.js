@@ -213,6 +213,9 @@ export default class GitHubTasks extends View {
     if (ctx) this.auth.start(cx, args, ctx.on, (cx) => this.refresh(cx));
   }
 
+  // The close-tab question went away by Esc: tell it, so the next key press may ask again.
+  async close() { await this.closeConfirm?.close(); }
+
   render(cx) {
     if (this.role === "editor") return this.editor.render(cx);
     if (this.role === "workflow-editor") return this.workflowEditor.render(cx);
