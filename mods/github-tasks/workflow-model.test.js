@@ -18,6 +18,9 @@ test("slug makes a file name from a name", () => {
   assert.equal(slug("Café Ünïcode"), "cafe-unicode");
   assert.equal(slug("!!!"), "");
   assert.equal(slug(undefined), "");
+  assert.equal(slug("Fix the login page now", 12), "fix-the-logi");
+  assert.equal(slug("Fix the login page", 8), "fix-the"); // no dangling dash after the cut
+  assert.equal(slug("a".repeat(80)).length, 60);
 });
 
 test("a blank workflow has every role with a default agent and effort", () => {

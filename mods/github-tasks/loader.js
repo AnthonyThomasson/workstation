@@ -54,7 +54,7 @@ const ITEMS_QUERY = `query($id: ID!, $cursor: String) {
   }
 }`;
 
-function parse(stdout) {
+export function parseJson(stdout) {
   try { return JSON.parse(stdout); } catch { return null; }
 }
 
@@ -63,7 +63,7 @@ function parse(stdout) {
 async function graphql(gh, query, vars, where) {
   const fields = Object.entries(vars).flatMap(([k, v]) => ["-f", `${k}=${v}`]);
   const r = await gh(["api", "graphql", "-f", `query=${query}`, ...fields], where);
-  const data = parse(r.stdout)?.data;
+  const data = parseJson(r.stdout)?.data;
   if (r.code === 0 && data) return data;
   const failure = new GitHubError(r.stderr || r.stdout);
   if (failure.kind === "other" && data) return data;
@@ -72,7 +72,7 @@ async function graphql(gh, query, vars, where) {
 
 export async function findRepo(gh, where) {
   const r = await gh(["repo", "view", "--json", "nameWithOwner"], where);
-  const repo = r.code === 0 ? parse(r.stdout)?.nameWithOwner : null;
+  const repo = r.code === 0 ? parseJson(r.stdout)?.nameWithOwner : null;
   if (!repo) throw new GitHubError(r.stderr || r.stdout);
   return repo;
 }
@@ -103,7 +103,7 @@ export async function createProject(gh, repo, where) {
   if (!found?.id || !found.owner?.id) throw new GitHubError(`GitHub has no repo called ${repo}.`);
   const fields = ["-f", `owner=${found.owner.id}`, "-f", `repo=${found.id}`, "-f", `title=${name}`];
   const r = await gh(["api", "graphql", "-f", `query=${CREATE_PROJECT_MUTATION}`, ...fields], where);
-  const project = r.code === 0 ? parse(r.stdout)?.data?.createProjectV2?.projectV2 : null;
+  const project = r.code === 0 ? parseJson(r.stdout)?.data?.createProjectV2?.projectV2 : null;
   if (!project?.id) throw new GitHubError(r.stderr || r.stdout);
   return project;
 }
@@ -165,7 +165,7 @@ const ADD_DRAFT_MUTATION = `mutation($project: ID!, $title: String!) {
 export async function createDraft(gh, projectId, title, where) {
   const fields = ["-f", `project=${projectId}`, "-f", `title=${title}`];
   const r = await gh(["api", "graphql", "-f", `query=${ADD_DRAFT_MUTATION}`, ...fields], where);
-  const item = r.code === 0 ? parse(r.stdout)?.data?.addProjectV2DraftIssue?.projectItem : null;
+  const item = r.code === 0 ? parseJson(r.stdout)?.data?.addProjectV2DraftIssue?.projectItem : null;
   if (!item?.id) throw new GitHubError(r.stderr || r.stdout);
   const c = item.content ?? {};
   return { key: item.id, contentId: c.id ?? null, draft: true, number: null, title: c.title ?? title, url: null, state: "OPEN", reason: null, createdAt: c.createdAt ?? new Date().toISOString(), closedAt: null, status: null, labels: [] };
@@ -181,7 +181,7 @@ export async function loadTask(gh, repo, ticket, where) {
     return { title: draft.title ?? "", body: draft.body ?? "", labels: [], updatedAt: draft.updatedAt ?? null };
   }
   const r = await gh(["issue", "view", String(ticket.number), "-R", repo, "--json", "title,body,labels,updatedAt"], where);
-  const issue = r.code === 0 ? parse(r.stdout) : null;
+  const issue = r.code === 0 ? parseJson(r.stdout) : null;
   if (!issue) throw new GitHubError(r.stderr || r.stdout);
   return { title: issue.title ?? "", body: issue.body ?? "", labels: (issue.labels ?? []).map((l) => l.name), updatedAt: issue.updatedAt ?? null };
 }

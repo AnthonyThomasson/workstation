@@ -1,6 +1,8 @@
 // What a started workflow runs and what its agents are told. Pure: no Herdr imports, so node --test runs it.
 // start.js writes these out and opens the tab; the agents do the rest. The "run" role (run-page.js) shows them.
 
+import { slug } from "./workflow-model.js";
+
 export const TOKEN_LIMIT = "120k";
 export const SKILL = "hc --skill"; // the manual for the desktop app's herdr-core; the `herdr` skill is the older CLI's
 
@@ -11,9 +13,6 @@ export const FOLDER_LABEL = "herdr.workflow.folder"; // on every terminal: the f
 export const FINAL_LABEL = "herdr.workflow.final"; // "1" on the final reviewer, which reviews the whole ticket branch
 export const NAME_LABEL = "herdr.workflow.name"; // on a worker or reviewer: the name the orchestrator gave it
 export const ROLE_LABEL = "herdr.role"; // orchestrator | worker | reviewer
-
-const slug = (s, max) => String(s ?? "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-")
-  .replace(/^-+|-+$/g, "").slice(0, max).replace(/-+$/, "");
 
 // "#12 Fix login!" -> workflow/12-fix-login. A draft has no number.
 export function branchName(ticket) {
@@ -29,9 +28,10 @@ export const runId = (ticket, now = Date.now()) => `${ticket?.number ?? "draft"}
 export const ticketKey = (repo, ticket) => `${repo}#${ticket?.number ?? ticket?.key ?? slug(ticket?.title, 40)}`;
 export const ticketName = (ticket) => (ticket?.number ? `#${ticket.number} ${ticket.title}` : String(ticket?.title ?? "Ticket"));
 
-// Quoted for sh, whatever is in it.
 // What a command said: its error text, else its output, trimmed.
 export const out = (r) => (r.stderr || r.stdout || "").trim();
+
+// Quoted for sh, whatever is in it.
 export const shQuote = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
 
 // What each role may do without asking, in Claude's terms. Bare `hc run` is left out: it would run anything.

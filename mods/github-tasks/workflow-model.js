@@ -61,8 +61,8 @@ export const blank = () => ({
   orchestrator: blankOrchestrator(), worker: blankWorker(), reviewer: blankReviewer(),
 });
 
-// "Feature development!" -> "feature-development"; what a workflow's file is called.
-export const slug = (name) => text(name).toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60).replace(/-+$/, "");
+// "Feature development!" -> "feature-development"; what a workflow's file is called. Cut to max characters (60 for a file name).
+export const slug = (name, max = 60) => text(name).toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, max).replace(/-+$/, "");
 
 // Labels trimmed, empty ones dropped, and each kept once (GitHub's label names match without regard to case).
 export function uniqueLabels(list) {

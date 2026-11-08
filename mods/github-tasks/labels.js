@@ -3,14 +3,12 @@
 // node --test runs it. GitHub Projects have no labels of their own; a project's tickets use the repo's.
 // The repo itself is found by loader.js findRepo.
 
-import { GitHubError } from "./loader.js";
-
-const json = (text) => { try { return JSON.parse(text); } catch { return null; } };
+import { GitHubError, parseJson } from "./loader.js";
 
 // The repo's labels: [{ name, color }], by name.
 export async function loadLabels(gh, repo, where) {
   const r = await gh(["label", "list", "-R", repo, "--json", "name,color", "-L", "200"], where);
-  const labels = r.code === 0 ? json(r.stdout) : null;
+  const labels = r.code === 0 ? parseJson(r.stdout) : null;
   if (!Array.isArray(labels)) throw new GitHubError(r.stderr || r.stdout);
   return labels
     .filter((l) => l && typeof l.name === "string")
