@@ -13,7 +13,7 @@ orchestrator:
   effort: medium
   prompt: If the orchestrator thinks it needs any more that 2 workers decline to do the work and recomend using a non-kimi workflow.
   planning: "Read the repo's AGENTS.md / CLAUDE.md and explore the code the ticket touches. Grill the user with `mattpocock-skills:grilling` until nothing material is open, putting each round to them with the AskUserQuestion tool (up to 4 questions per call, recommended option first) rather than as plain text, then present the plan for acceptance. With a visual part, show the user a mock-up first."
-  retro: "Look back on the run: what slowed it, what to write down for next time. Then ask whether to finish (merge, push, close the ticket)."
+  retro: "Look back on the run: what slowed it, what to write down for next time. Then tell the person the run page's Merge button finishes the ticket (merge into the default branch, push, set Done, close the issue), and that Create PR is there if they want a pull request first; do not merge or push yourself."
 
 worker:
   agent: custom

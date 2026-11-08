@@ -13,15 +13,15 @@ orchestrator:
   model: opus
   effort: high
   prompt: ""
-  planning: "Diagnose with the project's fix skill if it has one, else `mattpocock-skills:diagnosing-bugs`. Reproduce the bug first; planning ends only with a failing test that reproduces it. Agree the fix with the user before changing code."
-  retro: "Look back on the run: what slowed it, what to write down for next time. Then ask whether to finish (merge, push, close the ticket)."
+  planning: "Diagnose with the project's fix skill if it has one, else `mattpocock-skills:diagnosing-bugs`. Reproduce the bug first: you write no code yourself, so have a worker (in its own job worktree) write the failing test that reproduces it, and planning ends only once that test fails for the right reason. Agree the fix with the user before any fix is made; then the same worker fixes it test-first, and a reviewer checks the fix and the reproduction test."
+  retro: "Look back on the run: what slowed it, what to write down for next time. Then tell the person the run page's Merge button finishes the ticket (merge into the default branch, push, set Done, close the issue), and that Create PR is there if they want a pull request first; do not merge or push yourself."
 
 worker:
   agent: claude
   command: ""
   model: sonnet
   effort: medium
-  prompt: This bug workflow runs reproduce, fix and green with the user in the orchestrator's session, since the fix gate needs them mid-phase. Report that and stop, changing nothing.
+  prompt: Do the job the orchestrator briefs, test-first with `mattpocock-skills:tdd`. If asked to reproduce the bug, write the failing test that reproduces it, run it to see it fail for the right reason, commit it and report. If asked to fix it, make that test pass with the smallest fix that is right, run the repo's own test and lint commands (see AGENTS.md / CLAUDE.md) until everything passes, and commit referencing the ticket as `#<n>`. Never push.
   testing: ""
 
 reviewer:
@@ -29,7 +29,7 @@ reviewer:
   command: ""
   model: haiku
   effort: low
-  prompt: A bug has no audit. Report that and stop, changing nothing.
+  prompt: Check the fix and the failing test that reproduces the bug: does the test fail without the fix and pass with it, is the fix the smallest right one, and does nothing else in the area break. Run the repo's test commands. Report only; change nothing.
   tests: |
     node --test
     npm test
