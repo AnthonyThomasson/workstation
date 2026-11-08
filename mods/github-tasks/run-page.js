@@ -11,9 +11,9 @@ import { branchArgs, canMerge, defaultBranch, finalSeen, mergeSteps, optionFor, 
 
 const out = (r) => (r.stderr || r.stdout || "").trim();
 const RUN = "herdr.workflow.run";
-const stageKey = (id) => `workflows.run.${id}.stage`;
-const prKey = (id) => `workflows.run.${id}.pr`;
-const finalKey = (id) => `workflows.run.${id}.final`; // the final reviewer has been seen: Merge waits for that
+const stageKey = (id) => `github-tasks.run.${id}.stage`;
+const prKey = (id) => `github-tasks.run.${id}.pr`;
+const finalKey = (id) => `github-tasks.run.${id}.final`; // the final reviewer has been seen: Merge waits for that
 const POLL_MS = 30000;
 
 export class RunPage {

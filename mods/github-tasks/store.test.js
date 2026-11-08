@@ -2,7 +2,7 @@ import test from "node:test";
 import { parse as parseYaml } from "./yaml.js";
 import assert from "node:assert/strict";
 import { makeStore, StoreError } from "./store.js";
-import { blank, ROLES } from "./model.js";
+import { blank, ROLES } from "./workflow-model.js";
 
 const GLOBAL = "/home/me/.config/herdr-app/workflows", REPO = "/proj/.herdr/workflows";
 const ALL = { global: GLOBAL, repo: REPO };
@@ -224,4 +224,25 @@ test("removing a workflow that is still JSON removes that file", async () => {
   const { d, store } = setup(ALL, { [`${GLOBAL}/old.json`]: JSON.stringify({ name: "Old" }) });
   await store.remove("global", "old");
   assert.equal(d.fs.size, 0);
+});
+
+test("loadAll reads every workflow whole, with its scope, by name, and reports the files it cannot read", async () => {
+  const { store } = setup(ALL, {
+    [`${GLOBAL}/b.yaml`]: "name: Bravo\ntrigger:\n  labels:\n    - bug\n  match: all\nworker:\n  permissions: ask\n",
+    [`${GLOBAL}/old.json`]: '{"name":"Alpha","trigger":{"label":"feature"}}',
+    [`${REPO}/c.yaml`]: "name: Charlie\n",
+    [`${REPO}/broken.yaml`]: "- a list\n",
+  });
+  const { items, errors } = await store.loadAll();
+  assert.deepEqual(items.map((i) => [i.id, i.name, i.scope]), [["old", "Alpha", "global"], ["b", "Bravo", "global"], ["c", "Charlie", "repo"]]);
+  assert.deepEqual(items[1].trigger, { labels: ["bug"], match: "all" });
+  assert.equal(items[1].worker.permissions, "ask");
+  assert.deepEqual(items[0].trigger.labels, ["feature"]);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /^broken: not a workflow object/);
+});
+
+test("loadAll without a repo reads only the global folder", async () => {
+  const { store } = setup({ global: GLOBAL }, { [`${GLOBAL}/g.yaml`]: "name: G\n", [`${REPO}/r.yaml`]: "name: R\n" });
+  assert.deepEqual((await store.loadAll()).items.map((i) => i.id), ["g"]);
 });

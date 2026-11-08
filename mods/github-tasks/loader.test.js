@@ -25,6 +25,12 @@ test("a folder that isn't a repo is named as such", async () => {
   });
 });
 
+test("findRepo names why gh failed, and refuses an answer it can't read", async () => {
+  await assert.rejects(findRepo(async () => ({ code: 1, stdout: "", stderr: "To get started with GitHub CLI, please run:  gh auth login" })), (e) => e.kind === "no-auth");
+  await assert.rejects(findRepo(async () => ({ code: 1, stdout: "", stderr: "boom\nmore" })), (e) => e.kind === "other" && e.message === "boom");
+  await assert.rejects(findRepo(async () => ({ code: 0, stdout: "not json", stderr: "" })), (e) => e instanceof GitHubError && e.kind === "other");
+});
+
 test("skips closed projects and asks about the right repo", async () => {
   let args;
   const projects = await findProjects(async (a) => {

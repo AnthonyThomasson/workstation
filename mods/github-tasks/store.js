@@ -1,13 +1,13 @@
 // Where workflows live and how they are read and written. Pure: the file operations come in as `io`
-// (env.js passes Herdr's), so node --test runs it against a Map.
+// (workflow-env.js passes Herdr's), so node --test runs it against a Map.
 //   io.read(path) -> text | null     io.write(path, text, expected) -> rejects if the file is not `expected`
 //   io.list(dir) -> file names       io.remove(path)    io.mkdir(dir)
 //
-// A workflow's scope is the folder it is in (see model.js SCOPES). dirs maps each scope to its folder:
+// A workflow's scope is the folder it is in (see workflow-model.js SCOPES). dirs maps each scope to its folder:
 //   { global?, repo? }
 // a scope without a folder is not available (global always has one; repo has none when the selected space
 // is not in a repo), and nothing is listed from it or written to it. Nothing here runs git.
-import { parse, serialize, slug, validate, SCOPES, SCOPE_LABELS } from "./model.js";
+import { parse, serialize, slug, validate, SCOPES, SCOPE_LABELS } from "./workflow-model.js";
 
 export class StoreError extends Error {
   constructor(kind, message) { super(message); this.kind = kind; } // "conflict" | "invalid" | "missing" | "unavailable" | "other"
@@ -25,25 +25,43 @@ export function makeStore({ io, dirs }) {
     return dirs[scope];
   }
 
-  // Every workflow in the available scopes, by name: [{ id, name, scope, error? }]. A file that cannot be
-  // read is listed with its error instead of failing the whole list.
-  async function list() {
-    const items = [];
+  // Every file in the available scopes, read: [{ id, scope, workflow }] or [{ id, scope, error }] for a file that cannot be
+  // read. The one place a workflow folder is listed.
+  async function readAll() {
+    const entries = [];
     for (const scope of available) {
       const dir = dirs[scope];
       const files = (await io.list(dir)).filter((f) => f.endsWith(".yaml") || f.endsWith(".json")).sort();
-      const ids = [...new Set(files.map((f) => f.slice(0, f.lastIndexOf("."))))];
+      const ids = [...new Set(files.map((f) => f.slice(0, f.lastIndexOf(".")))) ];
       for (const id of ids) {
         try {
           const text = (await io.read(fileOf(dir, id))) ?? (await io.read(legacyOf(dir, id)));
           if (text == null) continue;
-          items.push({ id, name: parse(text).name || id, scope });
+          entries.push({ id, scope, workflow: { ...parse(text), id, scope } });
         } catch (e) {
-          items.push({ id, name: id, scope, error: e.message });
+          entries.push({ id, scope, error: e.message });
         }
       }
     }
-    return items.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.scope.localeCompare(b.scope));
+    return entries;
+  }
+  const byName = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.scope.localeCompare(b.scope);
+
+  // Every workflow in the available scopes, by name: [{ id, name, scope, error? }]. A file that cannot be
+  // read is listed with its error instead of failing the whole list.
+  async function list() {
+    const items = (await readAll()).map((e) => (e.error ? { id: e.id, name: e.id, scope: e.scope, error: e.error } : { id: e.id, name: e.workflow.name || e.id, scope: e.scope }));
+    return items.sort(byName);
+  }
+
+  // Every workflow that can be read, whole, for Start to match a ticket's labels against: { items: [workflow with its
+  // scope], errors: ["id: what is wrong"] }, by name.
+  async function loadAll() {
+    const entries = await readAll();
+    return {
+      items: entries.filter((e) => e.workflow).map((e) => ({ ...e.workflow, name: e.workflow.name || e.id })).sort(byName),
+      errors: entries.filter((e) => e.error).map((e) => `${e.id}: ${e.error}`),
+    };
   }
 
   // One workflow and the text it was read as: { workflow, text, scope, legacy }, or null when there is none.
@@ -95,5 +113,5 @@ export function makeStore({ io, dirs }) {
     await io.remove((found.legacy ? legacyOf : fileOf)(folder(scope), id));
   }
 
-  return { list, load, save, remove, available };
+  return { list, loadAll, load, save, remove, available };
 }

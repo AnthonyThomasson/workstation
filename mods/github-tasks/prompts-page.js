@@ -1,12 +1,12 @@
 // The settings page: every instruction the orchestrator, worker and reviewer get in every run, whatever the
-// workflow. These are built into the app (github-tasks/run.js writes them into each run's folder); a workflow's
+// workflow. These are built into the app (run.js writes them into each run's folder); a workflow's
 // own prompts, edited in its tab, are added under them. Read-only. Shown in a tab (props.role "settings").
 // Not a View of its own: main.js builds one in init and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex } from "gpui-base";
 import { theme } from "herdr";
-import { orchestratorPrompt, workerPrompt, reviewerPrompt } from "./prompts.js";
-import { ROLE_LABELS } from "./model.js";
+import { orchestratorPrompt, workerPrompt, reviewerPrompt } from "./run.js";
+import { ROLE_LABELS } from "./workflow-model.js";
 const LABELS = ROLE_LABELS;
 import { S, note } from "./ui.js";
 

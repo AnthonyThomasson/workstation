@@ -5,9 +5,9 @@ import { parseCodexModels, parseKimiModels } from "./models.js";
 import { firstLine, workflowDirs, globalWorkflowsDir, tildePath } from "./places.js";
 
 // Set to the time of each save or delete, so the panel's list refreshes.
-export const CHANGED = "workflows.changed";
+export const WORKFLOWS_CHANGED = "github-tasks.workflows.changed";
 
-const sh = (script, ...args) => exec("sh", ["-c", script, "workflows", ...args]);
+const sh = (script, ...args) => exec("sh", ["-c", script, "github-tasks", ...args]);
 
 const io = {
   read: (path) => readTextFile(path),
@@ -24,10 +24,6 @@ export const codexModels = () => readTextFile(`${home()}/.codex/models_cache.jso
 // Kimi Code's models, from its config. Only its [models] sections are read out of that file.
 export const kimiModels = () => readTextFile(`${home()}/.kimi-code/config.toml`)
   .then((text) => parseKimiModels(text ?? ""), () => []);
-
-// gh, as labels.js wants it: a failure to start is an answer with a code, not a throw.
-export const gh = (args, where) => exec("gh", args, where)
-  .catch((e) => ({ code: 127, stdout: "", stderr: String(e?.message ?? e) }));
 
 // Where global workflows are kept: the workflows folder of the Herdr home. It is made when one is saved.
 export const globalDir = () => globalWorkflowsDir(appHome());
@@ -47,3 +43,7 @@ export const repoRootOf = (where) => (where?.cwd && !where.on ? repoOfFolder(whe
 export function store({ repo = null } = {}) {
   return makeStore({ io, dirs: workflowDirs(appHome(), repo) });
 }
+
+// Every workflow the place can see, whole, for Start and the ticket editor's Start dialog: { items, errors }.
+// A repo's own workflows are there only for a repo on this computer.
+export const loadWorkflows = async (where) => store({ repo: await repoRootOf(where) }).loadAll();

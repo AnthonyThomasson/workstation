@@ -409,3 +409,14 @@ test("a reopened run pane falls back to the partial props when nothing usable wa
   const fallback = { role: "run", id: "3-x", workflow: "" };
   for (const bad of [null, "", "not json", "[]", JSON.stringify({ role: "other" })]) assert.deepEqual(reopenProps(bad, fallback, "t"), fallback);
 });
+
+test("the orchestrator ends agents once they have nothing left to do", () => {
+  const text = orchestratorPrompt({
+    workflow: workflow(), ticket: { number: 1, title: "Fix the login" }, repo: "o/r", runDir: "/run",
+    workDir: "/src/app-1-fix-the-login", repoRoot: "/src/app", branch: "workflow/1-fix-the-login",
+  });
+  assert.match(text, /Keep the reviewer running after it reports/);
+  assert.match(text, /end the worker and its reviewer with `hc kill <name>`/);
+  assert.match(text, /Once its findings are addressed, end it with `hc kill <name>`/);
+  assert.match(text, /End every worker and reviewer of this run with `hc kill <name>` first/);
+});

@@ -9,7 +9,7 @@ import { GitHubError, loadTask, loadStatusField, loadRepoLabels, saveTask } from
 import { S, icon, stop, note, iconButton, action, gh } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { matchWorkflows } from "./match.js";
-import { loadWorkflows } from "./workflows.js";
+import { loadWorkflows } from "./workflow-env.js";
 import { startRun } from "./start.js";
 
 // Set to the time of each save, so the panel's list refreshes.

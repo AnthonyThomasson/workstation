@@ -1,16 +1,17 @@
-// One workflow, in the center: a tab the Workflows panel opens (props.role "editor", props.id the
+// One workflow, in the center: a tab the Task settings page opens (props.role "editor", props.id the
 // workflow's id, or null for a new one). The trigger labels, where it is kept (global, or the repo), and for the orchestrator,
 // the worker and the reviewer their agent, model, effort and prompt. Save writes the YAML file.
 // Not a View of its own: main.js builds one in init and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { run, setShared, theme } from "herdr";
-import { ROLES, ROLE_PROMPTS, ROLE_LABELS, AGENTS, AGENT_LABELS, CUSTOM, EFFORTS, PERMISSIONS, PERMISSION_LABELS, PERMISSION_HINTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, SCOPES, SCOPE_LABELS, SCOPE_HINTS, blank, normalize, isDirty, uniqueLabels } from "./model.js";
+import { ROLES, ROLE_PROMPTS, ROLE_LABELS, AGENTS, AGENT_LABELS, CUSTOM, EFFORTS, PERMISSIONS, PERMISSION_LABELS, PERMISSION_HINTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, SCOPES, SCOPE_LABELS, SCOPE_HINTS, blank, normalize, isDirty, uniqueLabels } from "./workflow-model.js";
 import { StoreError } from "./store.js";
-import { S, icon, stop, iconButton, action } from "./ui.js";
-import { CHANGED, store, gh, codexModels, kimiModels, globalDirText } from "./env.js";
+import { S, icon, stop, iconButton, action, gh } from "./ui.js";
+import { WORKFLOWS_CHANGED, store, codexModels, kimiModels, globalDirText } from "./workflow-env.js";
 import { modelsFor, matchModels, hasModel } from "./models.js";
-import { findRepo, loadLabels, matchLabels, hasLabel } from "./labels.js";
+import { findRepo } from "./loader.js";
+import { loadLabels, matchLabels, hasLabel } from "./labels.js";
 
 // The dim layer behind the picker: the theme's background, half see-through where it is a hex color.
 const scrim = (t) => (/^#[0-9a-f]{6}$/i.test(t.background ?? "") ? `${t.background}b3` : t.background);
@@ -261,7 +262,7 @@ export class WorkflowEditor {
         const extra = ` ${where}.`;
         this.notice = { kind: "saved", text: `Saved${extra}` };
         if (named) run("tab.rename", { name: saved.workflow.name });
-        setShared(CHANGED, Date.now());
+        setShared(WORKFLOWS_CHANGED, Date.now());
       } catch (e) {
         this.notice = e instanceof StoreError && e.kind === "conflict"
           ? { kind: "conflict", text: e.message }

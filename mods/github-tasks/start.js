@@ -1,5 +1,5 @@
 // Starts a workflow on a ticket: gets the ticket's worktree ready, writes what the agents read, and opens a tab with the
-// orchestrator's terminal on the left and the Workflows mod's list of its agents on the right. From there the
+// orchestrator's terminal on the left and the run page (run-page.js), the list of its agents, on the right. From there the
 // orchestrator runs the ticket itself (run.js says how).
 import { exec, hc, home, knownAgents, notify, panes, readTextFile, run, spaces, terminals, writeTextFile } from "herdr";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
@@ -16,14 +16,14 @@ export const liveRunFor = (repo, ticket) => {
   return terminals().find((k) => k.state === "live" && k.labels?.[ROLE_LABEL] === "orchestrator" && k.labels?.[TICKET_LABEL] === key) ?? null;
 };
 
-// Brings a run's tab to the front with the run's own pane (the Workflows mod's list of its agents) beside the
+// Brings a run's tab to the front with the run's own pane (the list of its agents) beside the
 // orchestrator. The pane is opened again when it's gone: closed, or never made because that part of Start failed.
 // ticket and repo: what the run is for, to name the pane. Doesn't throw; a pane that can't open leaves the tab as it is.
 export async function viewRun(running, cx, { ticket, repo, project } = {}) {
   const { "herdr.space": space, "herdr.tab": tab, [RUN_LABEL]: id, [FOLDER_LABEL]: folder } = running.labels;
   if (space) run("space.select", { id: space });
   if (tab) run("tab.select", { id: tab });
-  if (!tab || !id || panes().some((p) => p.tab === tab && p.mod === "workflows")) return;
+  if (!tab || !id || panes().some((p) => p.tab === tab && p.mod === "github-tasks")) return;
   try {
     const pane = panes().find((p) => p.terminal === running.address)?.pane;
     if (!pane) return;
@@ -33,7 +33,7 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
     };
     // Start saved the full props (repoRoot, statusField, workflow name) beside the run's other files.
     const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
-    await app("pane.split", { pane, direction: "right", mod: "workflows", props: reopenProps(saved, partial, running.address) });
+    await app("pane.split", { pane, direction: "right", mod: "github-tasks", props: reopenProps(saved, partial, running.address) });
     run("pane.focus", { pane });
   } catch { /* the tab is showing; only the list of agents is missing */ }
 }
@@ -133,7 +133,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
       projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
     };
     await writeTextFile(`${runDir}/pane.json`, JSON.stringify(props), null).catch(() => {}); // View reopens the pane from this
-    await app("pane.split", { pane, direction: "right", mod: "workflows", props });
+    await app("pane.split", { pane, direction: "right", mod: "github-tasks", props });
     run("pane.focus", { pane }); // the person answers the orchestrator there
   } catch (e) {
     problems.push(`The list of its agents didn't open (${e?.message ?? e}).`);

@@ -1,25 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findRepo, loadLabels, matchLabels, hasLabel, LabelError } from "./labels.js";
+import { loadLabels, matchLabels, hasLabel } from "./labels.js";
+import { GitHubError } from "./loader.js";
 
 const ok = (data) => ({ code: 0, stdout: JSON.stringify(data), stderr: "" });
 const fail = (stderr) => ({ code: 1, stdout: "", stderr });
 const L = (...names) => names.map((name) => ({ name, color: "ededed" }));
-
-test("findRepo asks gh for the repo of the folder and passes where along", async () => {
-  let seen;
-  const gh = async (args, where) => { seen = { args, where }; return ok({ nameWithOwner: "acme/app" }); };
-  assert.equal(await findRepo(gh, { cwd: "/src/app", on: "box" }), "acme/app");
-  assert.deepEqual(seen.args, ["repo", "view", "--json", "nameWithOwner"]);
-  assert.deepEqual(seen.where, { cwd: "/src/app", on: "box" });
-});
-
-test("findRepo names why it failed", async () => {
-  await assert.rejects(findRepo(async () => fail("fatal: not a git repository (or any of the parent directories)"), {}), (e) => e instanceof LabelError && e.kind === "not-a-repo");
-  await assert.rejects(findRepo(async () => fail("To get started with GitHub CLI, please run:  gh auth login"), {}), (e) => e.kind === "no-auth");
-  await assert.rejects(findRepo(async () => fail("boom\nmore"), {}), (e) => e.kind === "other" && e.message === "boom");
-  await assert.rejects(findRepo(async () => ({ code: 0, stdout: "not json", stderr: "" }), {}), (e) => e.kind === "other");
-});
 
 test("loadLabels asks for the repo's labels and returns them by name", async () => {
   let args;
@@ -32,7 +18,7 @@ test("loadLabels asks for the repo's labels and returns them by name", async () 
 
 test("loadLabels drops junk entries and fails on what is not a list", async () => {
   assert.deepEqual((await loadLabels(async () => ok([null, { color: "x" }, { name: "ok" }]), "a/b", {})).map((l) => l.name), ["ok"]);
-  await assert.rejects(loadLabels(async () => ok({ message: "nope" }), "a/b", {}), LabelError);
+  await assert.rejects(loadLabels(async () => ok({ message: "nope" }), "a/b", {}), GitHubError);
   await assert.rejects(loadLabels(async () => fail("HTTP 401: Bad credentials"), "a/b", {}), (e) => e.kind === "no-auth");
 });
 

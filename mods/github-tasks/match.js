@@ -1,44 +1,7 @@
-// Which workflows a ticket starts, with no Herdr in it. A workflow is a YAML file kept by the Workflows
-// mod (see mods/workflows/model.js): the labels that trigger it, and how its roles run. What is needed to
-// match is read here, along with the roles, which start.js runs it with.
+// Which workflows a ticket starts, with no Herdr in it. A workflow is a YAML file (see workflow-model.js, store.js):
+// the labels that trigger it, and how its roles run. Only the trigger is read here.
 
-import { parse as parseYaml } from "./yaml.js";
-
-const text = (v) => (typeof v === "string" ? v : "");
-const key = (label) => text(label).trim().toLowerCase(); // GitHub's label names match without regard to case
-
-function labelsOf(list) {
-  const seen = new Set(), out = [];
-  for (const v of Array.isArray(list) ? list : []) {
-    const label = text(v).trim();
-    if (label && !seen.has(key(label))) { seen.add(key(label)); out.push(label); }
-  }
-  return out;
-}
-
-// A role as it is run. Only workers and reviewers carry a permission choice.
-function roleOf(raw, withPermissions = false) {
-  const r = raw && typeof raw === "object" ? raw : {};
-  return { prompt: text(r.prompt), agent: text(r.agent) || "claude", command: text(r.command).trim(), model: text(r.model).trim(), effort: text(r.effort) || "medium", planning: text(r.planning), retro: text(r.retro), ...(withPermissions ? { permissions: r.permissions === "ask" ? "ask" : "auto" } : {}) };
-}
-
-// A workflow file's text as { id, name, scope, trigger: { labels, match }, orchestrator, worker, reviewer }.
-// Throws a plain Error on text that is not a map (YAML, or the JSON older files hold). A file from before triggers had several labels holds
-// one, as `label`.
-export function parseWorkflow(source, { id, scope }) {
-  let data;
-  const asJson = /^\s*\{/.test(source); // workflows used to be saved as JSON
-  try { data = asJson ? JSON.parse(source) : parseYaml(source); } catch (e) { throw new Error(`not valid ${asJson ? "JSON" : "YAML"} (${e.message})`); }
-  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("not a workflow object");
-  const trigger = data.trigger && typeof data.trigger === "object" ? data.trigger : {};
-  const labels = labelsOf(trigger.labels);
-  return {
-    id, scope,
-    name: text(data.name).trim() || id,
-    trigger: { labels: labels.length || typeof trigger.label !== "string" ? labels : labelsOf([trigger.label]), match: trigger.match === "all" ? "all" : "any" },
-    orchestrator: roleOf(data.orchestrator), worker: roleOf(data.worker, true), reviewer: roleOf(data.reviewer, true),
-  };
-}
+const key = (label) => String(label ?? "").trim().toLowerCase(); // GitHub's label names match without regard to case
 
 const triggers = (workflow, have) => {
   const { labels, match } = workflow.trigger;
@@ -54,10 +17,3 @@ export function matchWorkflows(workflows, labels) {
   const hits = workflows.filter((w) => triggers(w, have));
   return hits.length ? hits : workflows.filter((w) => !w.trigger.labels.length);
 }
-
-// ---- Where workflows are kept (the same places the Workflows mod uses) -------------------------------
-
-export const firstLine = (s) => String(s ?? "").split("\n").map((l) => l.trim()).find(Boolean) ?? null;
-export const repoWorkflowsDir = (repoRoot) => `${repoRoot}/.herdr/workflows`;
-// Global ones: the workflows folder of the Herdr home (~/.config/herdr-app, or $HERDR_APP_HOME).
-export const globalWorkflowsDir = (appHome) => `${String(appHome).replace(/\/+$/, "")}/workflows`;

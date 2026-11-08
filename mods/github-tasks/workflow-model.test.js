@@ -1,7 +1,7 @@
 import test from "node:test";
 import { parse as parseYaml } from "./yaml.js";
 import assert from "node:assert/strict";
-import { blank, normalize, validate, slug, snapshot, isDirty, serialize, parse, uniqueLabels, ROLES, EFFORTS, PERMISSIONS, PERMISSION_LABELS, PERMISSION_HINTS, AGENTS, CUSTOM, AGENT_LABELS, MATCHES, SCOPES, SCOPE_LABELS, SCOPE_HINTS, isFallback } from "./model.js";
+import { blank, normalize, validate, slug, snapshot, isDirty, serialize, parse, uniqueLabels, ROLES, EFFORTS, PERMISSIONS, PERMISSION_LABELS, PERMISSION_HINTS, AGENTS, CUSTOM, AGENT_LABELS, MATCHES, SCOPES, SCOPE_LABELS, SCOPE_HINTS, isFallback } from "./workflow-model.js";
 
 const valid = (over = {}) => {
   const w = blank();

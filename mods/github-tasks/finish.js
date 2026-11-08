@@ -1,11 +1,9 @@
 // What the run page does when the person is done: move the ticket along, merge the ticket branch, open a pull request.
-// Pure: no Herdr imports, so node --test runs it. run.js does the exec calls and the drawing.
+// Pure: no Herdr imports, so node --test runs it. run-page.js does the exec calls and the drawing.
 
-// Status names match ignoring case, spaces and punctuation ("In Progress", "in-progress", "InProgress").
-// A copy of github-tasks/model.js's statusKey (a mod cannot import another mod).
-export const statusKey = (name) => String(name ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+import { sameStatus, STATUSES } from "./model.js";
 
-export const STAGES = ["In Progress", "In Review", "Done"]; // what a ticket becomes as the run goes on, in order (Done is set by Merge)
+export const STAGES = [STATUSES.inProgress, STATUSES.inReview, STATUSES.done]; // what a ticket becomes as the run goes on, in order (Done is set by Merge)
 
 // The stage the run has reached: 0 nothing yet, 1 a worker started, 2 a reviewer started.
 // agents: { workers, reviewers }, with every agent seen (the ones that ended too).
@@ -23,7 +21,7 @@ export const canMerge = ({ finalSeen: seen, workers = [], reviewers = [] }) =>
 // stage 3 is Done.
 export function optionFor(options, stage) {
   const name = STAGES[stage - 1];
-  return (options ?? []).find((o) => statusKey(o.name) === statusKey(name)) ?? null;
+  return (options ?? []).find((o) => sameStatus(o.name, name)) ?? null;
 }
 
 export const STATUS_MUTATION = `mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) {
