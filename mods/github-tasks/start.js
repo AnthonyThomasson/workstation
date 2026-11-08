@@ -2,6 +2,7 @@
 // orchestrator's terminal on the left and the Workflows mod's list of its agents on the right. From there the
 // orchestrator runs the ticket itself (run.js says how).
 import { exec, hc, home, knownAgents, notify, panes, readTextFile, run, shared, spaces, terminals, writeTextFile } from "herdr";
+import { mainCheckout, prepareWorktree } from "./worktree.js";
 import { runStatuses, statusesKey } from "./model.js";
 import { agentArgv, branchName, FOLDER_LABEL, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
 
@@ -65,28 +66,8 @@ async function resolveAgents(workflow, runDir) {
   return argv;
 }
 
-const branchExists = async (dir, branch) => (await git(dir, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`)).code === 0;
-
-// The ticket's own git worktree, beside the repo. The repo's folder is never switched. One that already has the branch
-// is used again.
-async function prepareWorktree(repoRoot, branch) {
-  const list = await git(repoRoot, "worktree", "list", "--porcelain");
-  if (list.code !== 0) throw new Error(`git couldn't list worktrees: ${out(list)}`);
-  let path = null;
-  for (const line of list.stdout.split("\n")) {
-    if (line.startsWith("worktree ")) path = line.slice(9);
-    else if (line === `branch refs/heads/${branch}` && path) return path;
-  }
-  const target = worktreePath(repoRoot, branch);
-  const r = (await branchExists(repoRoot, branch))
-    ? await git(repoRoot, "worktree", "add", target, branch)
-    : await git(repoRoot, "worktree", "add", "-b", branch, target);
-  if (r.code !== 0) throw new Error(`Couldn't make a worktree at ${target}: ${out(r)}`);
-  return target;
-}
-
 async function writeRunFolder(id, parts, argv) {
-  const { runDir, workDir, repoRoot, branch } = parts;
+  const { runDir, workDir, branch } = parts;
   const made = await exec("mkdir", ["-p", runDir]);
   if (made.code !== 0) throw new Error(`Couldn't make ${runDir}: ${out(made)}`);
   await Promise.all([
@@ -94,7 +75,7 @@ async function writeRunFolder(id, parts, argv) {
     writeTextFile(`${runDir}/worker.md`, workerPrompt(parts), null),
     writeTextFile(`${runDir}/reviewer.md`, reviewerPrompt(parts), null),
     writeTextFile(`${runDir}/ticket.md`, ticketFile(parts.ticket, parts.repo), null),
-    writeTextFile(`${runDir}/spawn`, spawnScript({ id, runDir, workDir, repoRoot, branch, argv }), null),
+    writeTextFile(`${runDir}/spawn`, spawnScript({ id, runDir, workDir, branch, argv }), null),
   ]);
   const chmod = await exec("chmod", ["+x", `${runDir}/spawn`]);
   if (chmod.code !== 0) throw new Error(`Couldn't make the spawn script runnable: ${out(chmod)}`);
@@ -124,15 +105,13 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
     return { resumed: true };
   }
 
-  const top = await git(where.cwd, "rev-parse", "--show-toplevel");
-  if (top.code !== 0) throw new Error(`${where.cwd} isn't in a git repo: ${out(top)}`);
-  const repoRoot = top.stdout.trim();
+  const repoRoot = await mainCheckout(git, where.cwd); // the main checkout, even when Start is used from one of its worktrees
 
   const id = runId(ticket);
   const runDir = `${home()}/.herdr/workflow-runs/${id}`;
   const argv = await resolveAgents(workflow, runDir); // before the worktree: this fails without changing anything
   const branch = branchName(ticket);
-  const workDir = await prepareWorktree(repoRoot, branch);
+  const workDir = await prepareWorktree(git, repoRoot, branch, worktreePath(repoRoot, branch));
   await writeRunFolder(id, { workflow, ticket, repo, runDir, workDir, repoRoot, branch }, argv);
 
   const space = spaces().find((s) => s.active)?.id;

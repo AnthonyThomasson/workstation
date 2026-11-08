@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentArgv, branchName, jobName, jobWorktree, orchestratorPrompt, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt, worktreePath } from "./run.js";
+import { agentArgv, branchName, orchestratorPrompt, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt, worktreePath } from "./run.js";
 
 const ticket = { number: 12, title: "Fix the login!", body: "It breaks.", labels: ["bug"], status: "Todo", url: "https://github.test/12" };
 const role = (extra = {}) => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium", ...extra });
@@ -21,18 +21,19 @@ test("a worktree sits beside the repo", () => {
   assert.equal(worktreePath("/src/app", "workflow/12-fix"), "/src/app-12-fix");
 });
 
-test("a job worktree sits beside the ticket worktree, on a branch off the ticket's", () => {
-  assert.deepEqual(jobWorktree("/src/app", "workflow/12-fix", "Auth Fix!"), { path: "/src/app-12-fix--auth-fix", branch: "workflow/12-fix--auth-fix", job: "auth-fix" });
-  assert.equal(jobName("  --Build_1--  "), "build_1");
-  assert.equal(jobName("!!!"), "");
-});
-
 test("run ids and ticket keys", () => {
   assert.equal(runId(ticket, 36), "12-10");
   assert.equal(runId({ title: "x" }, 36), "draft-10");
   assert.equal(ticketKey("o/r", ticket), "o/r#12");
   assert.equal(ticketKey("o/r", { key: "abc", title: "x" }), "o/r#abc");
 });
+
+// The values of a flag that takes any number of them, up to the next flag.
+const values = (argv, flag) => {
+  const from = argv.indexOf(flag) + 1;
+  const to = argv.findIndex((a, i) => i >= from && a.startsWith("--"));
+  return argv.slice(from, to === -1 ? undefined : to);
+};
 
 test("claude: a worker accepts edits and may reach the orchestrator", () => {
   const argv = agentArgv("worker", role({ model: "opus", effort: "high" }), ["claude"], "/runs/1");
@@ -43,15 +44,29 @@ test("claude: a reviewer can't ask, can't edit, and may only run read-only git a
   const argv = agentArgv("reviewer", role({ tests: "node --test\n  npm test \n\nherdr-app check" }), ["claude"], "/runs/1");
   assert.equal(argv[argv.indexOf("--permission-mode") + 1], "dontAsk");
   assert.equal(argv[argv.indexOf("--disallowedTools") + 1], "Edit,Write,NotebookEdit,MultiEdit");
-  assert.equal(argv[argv.indexOf("--allowedTools") + 1],
-    "Bash(hc send:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(node --test:*),Bash(npm test:*),Bash(herdr-app check:*)");
+  assert.deepEqual(values(argv, "--allowedTools"), [
+    "Bash(hc send:*)",
+    "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)", "Bash(git show:*)",
+    "Bash(git symbolic-ref:*)", "Bash(git rev-parse:*)", "Bash(git merge-base:*)", "Bash(git ls-files:*)", "Bash(git grep:*)",
+    "Bash(node --test:*)", "Bash(npm test:*)", "Bash(herdr-app check:*)",
+  ]);
+  assert.ok(!argv.includes("Bash(git branch:*)")); // `git branch` can create and delete
   assert.ok(!argv.includes("--model"));
   assert.deepEqual(argv.slice(-2), ["--effort", "medium"]);
 });
 
+test("claude: a test command with a comma in it stays one allowed rule", () => {
+  const argv = agentArgv("reviewer", role({ tests: "node --test --test-name-pattern=a,b\nnpm test" }), ["claude"], "/runs/1");
+  const rules = values(argv, "--allowedTools");
+  assert.ok(rules.includes("Bash(node --test --test-name-pattern=a,b:*)"));
+  assert.ok(rules.includes("Bash(npm test:*)"));
+  assert.ok(!rules.some((r) => r === "Bash(node --test --test-name-pattern=a"), "not split at the comma");
+  assert.equal(argv[argv.indexOf("--disallowedTools") - 1], "Bash(npm test:*)"); // the flag after the list ends it
+});
+
 test("claude: a reviewer with no test commands (an older workflow file) gets only the read-only ones", () => {
-  const argv = agentArgv("reviewer", role(), ["claude"], "/runs/1");
-  assert.equal(argv[argv.indexOf("--allowedTools") + 1], "Bash(hc send:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)");
+  const rules = values(agentArgv("reviewer", role(), ["claude"], "/runs/1"), "--allowedTools");
+  assert.ok(rules.includes("Bash(git show:*)") && rules.every((r) => r.startsWith("Bash(git ") || r === "Bash(hc send:*)"));
 });
 
 test("claude: workers don't get the reviewer's restrictions", () => {
@@ -61,11 +76,9 @@ test("claude: workers don't get the reviewer's restrictions", () => {
 test("claude: the orchestrator keeps the person's permission mode and can't run hc run", () => {
   const argv = agentArgv("orchestrator", role(), ["claude"], "/runs/1");
   assert.ok(!argv.includes("--permission-mode"));
-  const tools = argv[argv.indexOf("--allowedTools") + 1];
-  assert.ok(tools.includes("Bash(/runs/1/spawn:*)"));
-  assert.ok(tools.includes("Bash(hc wait:*)"));
-  assert.ok(tools.includes("Bash(hc kill:*)"));
-  assert.ok(!tools.includes("hc run"));
+  const tools = values(argv, "--allowedTools");
+  for (const rule of ["Bash(/runs/1/spawn:*)", "Bash(hc wait:*)", "Bash(hc kill:*)"]) assert.ok(tools.includes(rule), rule);
+  assert.ok(!tools.some((t) => t.includes("hc run")));
   assert.ok(!tools.includes("Bash(hc:*)"));
 });
 
@@ -197,26 +210,28 @@ function scratch() {
   return { dir, repo, branch, ticketDir, bin, log };
 }
 
-function runSpawn(args, { failSend = false, setup = () => {} } = {}) {
+// Where a job's worktree and branch are: beside the ticket's worktree, on a branch off the ticket's own.
+const jobAt = (ticketDir, ticketBranch, name) => ({ path: `${ticketDir}--${name}`, branch: `${ticketBranch}--${name}` });
+
+function runSpawn(args, { failSend = false, setup = () => {}, workDir } = {}) {
   const w = scratch();
   writeFileSync(join(w.bin, "hc"), `#!/bin/sh\nfor a in "$@"; do printf '[%s]' "$a" >> ${shQuote(w.log)}; done; echo >> ${shQuote(w.log)}\n${failSend ? 'case "$1" in send) exit 1 ;; esac\n' : ""}exit 0\n`);
   chmodSync(join(w.bin, "hc"), 0o755);
   setup(w);
   const script = join(w.dir, "spawn");
-  writeFileSync(script, spawnScript({ id: "12-abc", runDir: "/runs/it's", workDir: w.ticketDir, repoRoot: w.repo, branch: w.branch, argv: { worker: ["claude", "--model", "a b"], reviewer: ["codex"] } }));
+  writeFileSync(script, spawnScript({ id: "12-abc", runDir: "/runs/it's", workDir: workDir?.(w) ?? w.ticketDir, branch: w.branch, argv: { worker: ["claude", "--model", "a b"], reviewer: ["codex"] } }));
   chmodSync(script, 0o755);
   const r = spawnSync(script, args, { env: { PATH: `${w.bin}:${process.env.PATH}`, HC_TERMINAL_ID: "t7" }, encoding: "utf8" });
   let calls = [];
   try { calls = readFileSync(w.log, "utf8").trim().split("\n"); } catch { /* it never called hc */ }
-  return { ...r, calls, ...w, jobDir: jobWorktree(w.repo, w.branch, "auth").path };
+  return { ...r, calls, ...w, jobDir: jobAt(w.ticketDir, w.branch, "auth").path };
 }
 
 test("spawn worker makes the job's worktree and branch off the ticket's, and works there", () => {
   const r = runSpawn(["worker", "Auth!", "do 'this' $now"]);
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), "12-abc-auth");
-  const job = jobWorktree(r.repo, r.branch, "Auth!");
-  assert.equal(job.path, `${r.ticketDir}--auth`);
+  const job = jobAt(r.ticketDir, r.branch, "auth");
   assert.equal(git(job.path, "branch", "--show-current"), "workflow/12-fix--auth");
   assert.equal(git(job.path, "rev-parse", "HEAD"), git(r.ticketDir, "rev-parse", "HEAD")); // made off the ticket branch
   const [start, wait, send] = r.calls;
@@ -236,7 +251,7 @@ test("spawn worker makes the job's worktree and branch off the ticket's, and wor
 test("spawn worker uses the job's worktree again, with what was committed in it", () => {
   const r = runSpawn(["worker", "auth", "again"], {
     setup: (w) => {
-      const job = jobWorktree(w.repo, w.branch, "auth");
+      const job = jobAt(w.ticketDir, w.branch, "auth");
       git(w.ticketDir, "worktree", "add", "-q", "-b", job.branch, job.path);
       git(job.path, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "earlier work");
     },
@@ -254,7 +269,7 @@ test("spawn worker picks a job's branch back up when only its folder is gone", (
 
 test("spawn reviewer <name> <job> works in the job's worktree, which must already exist", () => {
   const r = runSpawn(["reviewer", "Checker", "auth", "look"], {
-    setup: (w) => { const job = jobWorktree(w.repo, w.branch, "auth"); git(w.ticketDir, "worktree", "add", "-q", "-b", job.branch, job.path); },
+    setup: (w) => { const job = jobAt(w.ticketDir, w.branch, "auth"); git(w.ticketDir, "worktree", "add", "-q", "-b", job.branch, job.path); },
   });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), "12-abc-checker");
@@ -308,8 +323,37 @@ test("spawn says so when the brief didn't go in", () => {
 test("a name can't overflow a terminal's 32 characters", () => {
   const r = runSpawn(["worker", "a".repeat(60), "y"]);
   assert.equal(r.stdout.trim().length, 32);
-  assert.equal(git(jobWorktree(r.repo, r.branch, "a".repeat(60)).path, "branch", "--show-current"), `workflow/12-fix--${"a".repeat(40)}`);
+  assert.equal(git(jobAt(r.ticketDir, r.branch, "a".repeat(40)).path, "branch", "--show-current"), `workflow/12-fix--${"a".repeat(40)}`);
   assert.equal(runSpawn(["reviewer", "b".repeat(60), "final", "y"]).stdout.trim().length, 32);
+});
+
+test("spawn cleans a job's name into the folder and branch: runs collapse, ends are trimmed, long names are cut", () => {
+  const cases = [
+    ["Fix  Auth!!", "fix-auth"],
+    ["  --Build_1--  ", "build_1"],
+    ["a/b\\c d", "a-b-c-d"],
+    ["Ünï cøde", "n-c-de"],
+    [`${"x".repeat(39)}!yyy`, "x".repeat(39)], // cut at 40 leaves a trailing '-', which goes
+    ["z".repeat(60), "z".repeat(40)],
+  ];
+  for (const [given, job] of cases) {
+    const r = runSpawn(["worker", given, "y"]);
+    assert.equal(r.status, 0, `${given}: ${r.stderr}`);
+    const at = jobAt(r.ticketDir, r.branch, job);
+    assert.ok(r.calls[0].includes(`[--cwd][${at.path}]`), `${given}: ${r.calls[0]}`);
+    assert.equal(git(at.path, "branch", "--show-current"), at.branch, given);
+  }
+});
+
+test("spawn builds a job's folder from the ticket worktree it was given, even when that isn't the usual place", () => {
+  const r = runSpawn(["worker", "auth", "y"], {
+    workDir: (w) => join(w.dir, "somewhere else"),
+    setup: (w) => { git(w.ticketDir, "worktree", "move", w.ticketDir, join(w.dir, "somewhere else")); },
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const at = jobAt(join(r.dir, "somewhere else"), r.branch, "auth");
+  assert.ok(r.calls[0].includes(`[--cwd][${at.path}]`), r.calls[0]);
+  assert.equal(git(at.path, "branch", "--show-current"), at.branch);
 });
 
 test("a reopened run pane gets the full props saved when the run started", () => {

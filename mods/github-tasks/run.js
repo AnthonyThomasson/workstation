@@ -24,16 +24,6 @@ export function branchName(ticket) {
 // Beside the repo, named for the branch: ~/src/app -> ~/src/app-12-fix-login.
 export const worktreePath = (repoRoot, branch) => `${repoRoot}-${branch.replace(/^workflow\//, "").replace(/\//g, "-")}`;
 
-// A job's name as it goes in a branch and a folder: lower-case letters, digits, _ and -. "final" is the ticket's own review.
-export const jobName = (job) => String(job ?? "").toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
-
-// Where a job's worktree and branch are: beside the ticket's worktree, on a branch made off the ticket's own.
-// ~/src/app-12-fix--auth on workflow/12-fix--auth. The spawn script makes the same names.
-export function jobWorktree(repoRoot, ticketBranch, job) {
-  const name = jobName(job);
-  return { job: name, path: `${worktreePath(repoRoot, ticketBranch)}--${name}`, branch: `${ticketBranch}--${name}` };
-}
-
 // Short, because it starts every terminal's name, which may only be 32 long.
 export const runId = (ticket, now = Date.now()) => `${ticket?.number ?? "draft"}-${now.toString(36)}`;
 export const ticketKey = (repo, ticket) => `${repo}#${ticket?.number ?? ticket?.key ?? slug(ticket?.title, 40)}`;
@@ -49,7 +39,8 @@ const PLUMBING = {
   // Read-only git, and the workflow's test commands: one command prefix per line of its `tests`.
   reviewer: (_runDir, tests) => ["Bash(hc send:*)", ...READ_ONLY_GIT.map((c) => `Bash(${c}:*)`), ...testLines(tests).map((c) => `Bash(${c}:*)`)],
 };
-const READ_ONLY_GIT = ["git status", "git diff", "git log", "git show"];
+// Not `git branch`, which can create and delete.
+const READ_ONLY_GIT = ["git status", "git diff", "git log", "git show", "git symbolic-ref", "git rev-parse", "git merge-base", "git ls-files", "git grep"];
 const testLines = (text) => String(text ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
 // A reviewer never asks: what isn't allowed is refused (dontAsk), and it can't edit at all.
 const CLAUDE_MODE = { worker: "acceptEdits", reviewer: "dontAsk" }; // the orchestrator keeps the person's own
@@ -62,8 +53,9 @@ export function agentArgv(role, settings, base, runDir) {
   if (agent === "custom") return ["sh", "-c", command];
   const argv = [...(base?.length ? base : [agent])];
   if (agent === "claude") {
-    // --add-dir and --allowedTools take any number of values, so a single-value flag has to end them.
-    argv.push("--add-dir", runDir, "--allowedTools", PLUMBING[role](runDir, settings.tests).join(","));
+    // --add-dir and --allowedTools take any number of values, so a single-value flag has to end them. One value per
+    // rule, not a comma-joined list: a test command may have a comma in it.
+    argv.push("--add-dir", runDir, "--allowedTools", ...PLUMBING[role](runDir, settings.tests));
     if (role === "reviewer") argv.push("--disallowedTools", REVIEWER_DENIED);
     if (CLAUDE_MODE[role]) argv.push("--permission-mode", CLAUDE_MODE[role]);
     if (model) argv.push("--model", model);
@@ -206,8 +198,8 @@ export function reviewerPrompt({ workflow, ticket, repo, runDir, workDir, repoRo
 
 // The only way a run's agents start, so each gets its role's agent, model, permissions and labels whatever the
 // orchestrator types. It waits for the agent to be ready before giving it its brief: a send to one still booting can be lost.
-// workDir: the ticket's worktree, on `branch`. repoRoot and branch also say where the jobs' worktrees go (jobWorktree).
-export function spawnScript({ id, runDir, workDir, repoRoot, branch, argv }) {
+// workDir: the ticket's worktree, on `branch`; the jobs' worktrees go beside it, as the role prompts say.
+export function spawnScript({ id, runDir, workDir, branch, argv }) {
   const roleArgs = (role) => `  ${role}) set -- ${argv[role].map(shQuote).join(" ")} ;;`;
   const room = Math.max(1, 32 - id.length - 1); // a terminal's name is at most 32 long
   return `#!/bin/sh
@@ -220,14 +212,14 @@ run_id=${shQuote(id)}
 run_dir=${shQuote(runDir)}
 ticket_dir=${shQuote(workDir)}
 ticket_branch=${shQuote(branch)}
-job_base=${shQuote(worktreePath(repoRoot, branch))}
+job_base=${shQuote(workDir)}
 usage() {
   echo "usage: spawn worker <job> <brief>" >&2
   echo "       spawn reviewer <name> <job|final> <brief>" >&2
   exit 2
 }
-# lower-case letters, digits, _ and -, as jobName() in run.js makes them
-clean() { printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -c 'a-z0-9_-' '-' | sed 's/^-*//; s/-*$//'; }
+# a name as it goes in a branch and a folder: lower-case letters, digits, _ and -, runs of anything else becoming one -
+clean() { printf '%s' "$1" | tr 'A-Z' 'a-z' | tr -cs 'a-z0-9_-' '-' | sed 's/^-*//; s/-*$//'; }
 [ $# -ge 1 ] || usage
 argc=$# role=$1 a2=\${2-} a3=\${3-} a4=\${4-} # the agent's command below takes the place of the arguments
 case "$role" in
