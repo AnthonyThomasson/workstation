@@ -10,14 +10,15 @@ import { CLAUDE_MODELS } from "./models.js";
 import { installedAgents } from "./groom.js";
 import { loadStatusField } from "./loader.js";
 import { normalizeSettingsSections } from "./settings-model.js";
+import { PROMPT_HINTS } from "./prompts-page.js";
 import { S, stop, note, icon, iconButton, action, gh } from "./ui.js";
 
 const SECTIONS_KEY = "github-tasks.settingsSections";
 const SECTIONS = [
   { role: "grooming", label: "Grooming agent" },
-  { role: "orchestrator", label: "Orchestrator", hint: "Directs the work: plans it, starts workers and reviewers, and decides what to fix." },
-  { role: "worker", label: "Worker", hint: "Does one job the orchestrator gives it." },
-  { role: "reviewer", label: "Reviewer", hint: "Reads the finished work and reports findings. Read-only." },
+  { role: "orchestrator", label: "Orchestrator", hint: PROMPT_HINTS.orchestrator },
+  { role: "worker", label: "Worker", hint: PROMPT_HINTS.worker },
+  { role: "reviewer", label: "Reviewer", hint: PROMPT_HINTS.reviewer },
 ];
 
 export class TaskSettings {

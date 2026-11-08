@@ -13,7 +13,7 @@ const PAGES = [
   ["worker", "Does one job the orchestrator gives it."],
   ["reviewer", "Reads the finished work and reports findings. Read-only."],
 ];
-const HINTS = Object.fromEntries(PAGES);
+export const PROMPT_HINTS = Object.fromEntries(PAGES);
 
 export class PromptPage {
   constructor(props = {}) {
@@ -26,7 +26,7 @@ export class PromptPage {
     const label = this.role === "grooming" ? "Grooming agent" : ROLE_LABELS[this.role];
     const hint = this.role === "grooming"
       ? "What Start Grooming tells the agent when it opens, with this repo and project filled in (<repo> and <project> until they are known)."
-      : HINTS[this.role];
+      : PROMPT_HINTS[this.role];
     return v_flex().id("prompt-page").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
       .child(v_flex().flex_none().px(20).py(14).gap(4).border_b(1).border_color(t.border)
         .child(div().text_size(S().title).font_semibold().child(label ? `${label} prompt` : "Prompt"))
