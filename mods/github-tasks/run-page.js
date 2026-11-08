@@ -8,7 +8,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, notify, run, setShared, shared, terminals, theme } from "herdr";
 import { S, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
-import { agentsFor, lsQueries, orchestratorOf, parseLs, statusColor, statusLabel } from "./runview.js";
+import { agentsFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
 import { branchArgs, canMerge, finalSeen, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
 
 const stageKey = (id) => `github-tasks.run.${id}.stage`;
@@ -63,7 +63,7 @@ export class RunPage {
   // The agents now: the live terminals, the core's list and what was saved. What there is to keep is saved when it changed.
   agents(all) {
     const found = agentsFor({ id: this.id, terminals: all, listed: this.listed, saved: this.saved });
-    if (JSON.stringify(found.kept) !== JSON.stringify(this.saved)) { this.saved = found.kept; setShared(agentsKey(this.id), found.kept); }
+    if (!sameKept(found.kept, this.saved)) { this.saved = found.kept; setShared(agentsKey(this.id), found.kept); }
     return found;
   }
 

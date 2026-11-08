@@ -6,12 +6,18 @@ import { RUN_LABEL as RUN, ROLE_LABEL as ROLE, NAME_LABEL as NAME, FINAL_LABEL a
 const statusWord = (k) => (typeof k.status === "string" ? k.status : k.status?.state) ?? null;
 const reportOf = (k) => (k.report && typeof k.report === "object" ? k.report : typeof k.status === "object" ? k.status : null);
 
+// A run's terminals are named "<run id>-<name>": the name without the run id.
+const unprefixed = (k) => {
+  const prefix = k.labels?.[RUN] ? `${k.labels[RUN]}-` : null;
+  return prefix && k.name?.startsWith(prefix) && k.name.length > prefix.length ? k.name.slice(prefix.length) : k.name;
+};
+
 export function row(k) {
   const live = k.state === "live";
   const status = live ? statusWord(k) ?? "unknown" : "finished";
   return {
     address: k.address,
-    name: k.labels?.[NAME] || k.name || k.address,
+    name: k.labels?.[NAME] || unprefixed(k) || k.address,
     status,
     live,
     needsYou: live && status === "blocked",
@@ -23,9 +29,9 @@ export function row(k) {
   };
 }
 
-// Those still running come first, so a long run's finished ones sink; then the order they started (an agent with no
-// start time keeps the place it was first seen, as the sort is stable).
-const inOrder = (rows) => [...rows].sort((a, b) => Number(b.live) - Number(a.live) || a.started - b.started);
+// Those still running come first, so a long run's finished ones sink; then the order they started. An agent with no start
+// time (known only from `hc ls`) comes after those with one, in the order it was first seen, as the sort is stable.
+const inOrder = (rows) => [...rows].sort((a, b) => Number(b.live) - Number(a.live) || Number(Boolean(b.started)) - Number(Boolean(a.started)) || a.started - b.started);
 
 // The answer of `hc ls --json`: its terminals, or null when it isn't that.
 export function parseLs(stdout) {
@@ -50,7 +56,14 @@ export const lsQueries = (id) => {
 };
 
 // What a row keeps between visits, and so across a reload of the page.
-export const keep = (r) => ({ address: r.address, name: r.name, role: r.role, final: r.final, detail: r.detail, started: r.started });
+// Not the detail: it changes with every report, and the saved rows are only written when they really change.
+export const keep = (r) => ({ address: r.address, name: r.name, role: r.role, final: r.final, started: r.started });
+
+// Whether two lists of kept rows say the same, whatever their order.
+export function sameKept(a, b) {
+  const key = (list) => JSON.stringify([...(list ?? [])].sort((x, y) => (x.address < y.address ? -1 : x.address > y.address ? 1 : 0)));
+  return key(a) === key(b);
+}
 
 // This run's workers and reviewers: every one the core lists (running or finished), the live ones from terminals() with
 // their current status and report, and those saved on an earlier visit that the core has forgotten, as finished.

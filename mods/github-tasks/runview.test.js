@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agentsFor, keep, lsQueries, orchestratorOf, parseLs, row, statusColor, statusLabel } from "./runview.js";
+import { agentsFor, keep, lsQueries, orchestratorOf, parseLs, row, sameKept, statusColor, statusLabel } from "./runview.js";
 
 // What `hc ls --all --json` gives for a terminal: no labels, the query was the filter.
 const ls = (address, extra = {}) => ({ address, name: `n-${address}`, state: "live", status: "working", ...extra });
@@ -148,7 +148,7 @@ test("a reload lists the saved agents as finished, until the core or a terminal 
   assert.deepEqual(first.workers.map((r) => r.status), ["blocked", "working"]);
   const saved = JSON.parse(JSON.stringify(first.kept)); // through shared state
   const reloaded = agentsFor({ id: "r1", listed: null, terminals: [term("t2", "worker", { created_ms: 2 })], saved });
-  assert.deepEqual(reloaded.workers.map((r) => [r.address, r.status, r.live, r.needsYou, r.detail]), [["t2", "working", true, false, ""], ["t1", "finished", false, false, "Asking"]]);
+  assert.deepEqual(reloaded.workers.map((r) => [r.address, r.status, r.live, r.needsYou]), [["t2", "working", true, false], ["t1", "finished", false, false]]);
   assert.equal(reloaded.needsYou, 0);
   const listedAgain = agentsFor({ id: "r1", terminals: [], saved, listed: { worker: [ls("t1")] } });
   assert.equal(listedAgain.workers.find((r) => r.address === "t1").status, "working");
@@ -156,7 +156,7 @@ test("a reload lists the saved agents as finished, until the core or a terminal 
 
 test("what is kept is what a reload needs", () => {
   const { kept } = agentsOf([term("t1", "reviewer", { labels: { "herdr.workflow.final": "1", "herdr.workflow.name": "last" }, report: { msg: "Reading" }, created_ms: 7 })]);
-  assert.deepEqual(kept, [{ address: "t1", name: "last", role: "reviewer", final: true, detail: "Reading", started: 7 }]);
+  assert.deepEqual(kept, [{ address: "t1", name: "last", role: "reviewer", final: true, started: 7 }]);
   assert.deepEqual(keep(kept[0]), kept[0]);
 });
 
@@ -181,4 +181,30 @@ test("other runs' and other roles' terminals are left out of the list too", () =
   const found = agentsFor({ id: "r1", saved: [], listed: null, terminals: [term("t1", "orchestrator"), term("t2", "worker", { labels: { "herdr.workflow.run": "r2" } }), term("t3", "worker")] });
   assert.deepEqual(found.workers.map((r) => r.address), ["t3"]);
   assert.deepEqual(found.reviewers, []);
+});
+
+test("a changed report on a live row does not change what is saved", () => {
+  const at = (msg, title) => agentsFor({ id: "r1", listed: null, saved: [], terminals: [term("t1", "worker", { report: { msg }, title, created_ms: 4 })] }).kept;
+  assert.deepEqual(at("Reading", "a"), at("Writing", "b"));
+  assert.ok(sameKept(at("Reading", "a"), at("Writing", "b")));
+});
+
+test("saved rows are the same whatever their order, and differ when a row does", () => {
+  const a = { address: "t1", name: "x", role: "worker", final: false, started: 1 }, b = { address: "t2", name: "y", role: "reviewer", final: true, started: 2 };
+  assert.ok(sameKept([a, b], [b, a]));
+  assert.ok(sameKept([], undefined));
+  assert.ok(!sameKept([a, b], [a]));
+  assert.ok(!sameKept([a, b], [a, { ...b, final: false }]));
+  assert.ok(!sameKept([a, b], [a, { ...b, name: "z" }]));
+});
+
+test("a row known only from hc ls is named without the run id prefix", () => {
+  const found = agentsFor({ id: "r1", saved: [], terminals: [], listed: { worker: [ls("t1", { name: "r1-run-page-agents" }), ls("t2", { name: "other-name" }), ls("t3", { name: "r1-" })], reviewer: [], final: [] } });
+  assert.deepEqual(found.workers.map((r) => r.name), ["run-page-agents", "other-name", "r1-"]);
+  assert.equal(row(term("t1", "worker", { name: "r1-job", labels: { "herdr.workflow.name": undefined } })).name, "job");
+});
+
+test("agents with no start time come after those with one", () => {
+  const found = agentsFor({ id: "r1", saved: [], terminals: [term("t2", "worker", { created_ms: 9 })], listed: { worker: [ls("t1"), ls("t3", { state: "finished" })], reviewer: [], final: [] } });
+  assert.deepEqual(found.workers.map((r) => r.address), ["t2", "t1", "t3"]);
 });
