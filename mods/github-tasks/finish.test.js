@@ -136,12 +136,20 @@ test("mergeSteps skips the PR merge, fetch and ahead check when the PR is alread
 
 test("mergeSteps checks a merged PR's head commit against the local branch, before any cleanup", () => {
   const steps = mergeSteps({ ...ctx, prMerged: true, headOid: "0123456789abcdef" });
-  assert.deepEqual(names(steps), ["tree-status", "not-in-pr", "status", "remove-worktree", "delete-branch", "remove-run-files"]);
+  assert.deepEqual(names(steps), ["tree-status", "fetch-pr-head", "not-in-pr", "status", "remove-worktree", "delete-branch", "remove-run-files"]);
+  assert.deepEqual(steps.find((x) => x.name === "fetch-pr-head").args, ["-C", "/r-9-x", "fetch", "origin", "+refs/pull/12/head"]);
   const s = steps.find((x) => x.name === "not-in-pr");
   assert.deepEqual(s.args, ["-C", "/r-9-x", "rev-list", "0123456789abcdef..workflow/9-x"]);
   assert.ok(s.dirty.includes("git -C /r-9-x reset --hard 01234567"));
   assert.ok(!names(mergeSteps({ ...ctx, headOid: "0123456789abcdef" })).includes("not-in-pr"), "only for a PR that is already merged");
   assert.ok(!names(mergeSteps({ ...ctx, prMerged: true, headOid: "0123456789abcdef", branchExists: false })).includes("not-in-pr"));
+});
+
+test("mergeSteps fetches the merged PR's head from the repo folder when the worktree is gone, and only for a merged PR", () => {
+  const f = mergeSteps({ ...ctx, prMerged: true, headOid: "0123456789abcdef", workDirExists: false }).find((x) => x.name === "fetch-pr-head");
+  assert.deepEqual(f.args, ["-C", "/r", "fetch", "origin", "+refs/pull/12/head"]);
+  assert.ok(!names(mergeSteps({ ...ctx, headOid: "0123456789abcdef" })).includes("fetch-pr-head"));
+  assert.ok(!names(mergeSteps({ ...ctx, prMerged: true })).includes("fetch-pr-head"), "no head commit to compare, nothing to fetch");
 });
 
 test("mergeSteps skips the worktree steps when the folder is already gone, and asks origin from the repo folder", () => {
@@ -222,6 +230,12 @@ test("a merged PR with local commits it never took in stops before any cleanup",
   const f = fake({ "rev-list 0123456789abcdef..": { stdout: "abc\n" } });
   await assert.rejects(runSteps(mergeSteps({ ...ctx, prMerged: true, headOid: "0123456789abcdef" }), f.exec), /commits that the merged pull request doesn't/);
   assert.ok(!f.ran.some((l) => l.includes("graphql") || l.includes("worktree remove") || l.includes("branch -D") || l.startsWith("rm ")));
+});
+
+test("a merged PR whose head can't be fetched stops with a clear message before comparing or cleaning up", async () => {
+  const f = fake({ "refs/pull/12/head": { code: 128, stderr: "Could not resolve host" } });
+  await assert.rejects(runSteps(mergeSteps({ ...ctx, prMerged: true, headOid: "0123456789abcdef" }), f.exec), /Couldn't fetch the merged pull request #12 from origin.*Could not resolve host/);
+  assert.ok(!f.ran.some((l) => l.includes("rev-list") || l.includes("graphql") || l.includes("worktree remove") || l.includes("branch -D") || l.startsWith("rm ")));
 });
 
 test("a failed status step says the PR is already merged", async () => {
@@ -353,12 +367,38 @@ test("merge steps, run for real: a single-branch clone still gets origin/<branch
 test("merge steps, run for real: a merged PR with a local commit beyond its head stops, and a clean one cleans up", async () => {
   const w = repoWithTicket();
   const oid = w.git(w.workDir, "rev-parse", "HEAD").trim();
+  w.git(w.origin, "update-ref", "refs/pull/12/head", oid); // GitHub keeps the PR's head here
   writeFileSync(join(w.workDir, "late.txt"), "late\n"); w.git(w.workDir, "add", "."); w.git(w.workDir, "commit", "-qm", "late");
   await assert.rejects(runSteps(mergeSteps({ ...w.ctx, prMerged: true, headOid: oid }), realWith([])), /commits that the merged pull request doesn't/);
   assert.ok(existsSync(w.workDir) && existsSync(w.runDir));
   w.git(w.workDir, "reset", "-q", "--hard", oid);
   await runSteps(mergeSteps({ ...w.ctx, prMerged: true, headOid: oid }), realWith([]));
   assert.ok(!existsSync(w.workDir) && !existsSync(w.runDir));
+});
+
+test("merge steps, run for real: the PR head exists only on the remote (pushed on GitHub, branch deleted) and cleanup still succeeds", async () => {
+  const w = repoWithTicket();
+  // Someone pushed to the PR branch on GitHub: a commit this clone never fetched, then the PR merged and the branch was deleted.
+  const other = join(w.repoRoot, "..", "other");
+  execFileSync("git", ["clone", "-q", "-b", "workflow/9-x", w.origin, other]);
+  writeFileSync(join(other, "gh.txt"), "edited on GitHub\n"); w.git(other, "add", "."); w.git(other, "commit", "-qm", "edit on github");
+  const oid = w.git(other, "rev-parse", "HEAD").trim();
+  w.git(other, "push", "-q", "origin", `HEAD:refs/pull/12/head`);
+  w.git(w.origin, "branch", "-D", "workflow/9-x");
+  assert.notEqual(spawnSync("git", ["-C", w.workDir, "cat-file", "-e", `${oid}^{commit}`]).status, 0, "the head commit is not a local object");
+  // Without the fetch, rev-list exits 128 on the unknown commit:
+  assert.equal(spawnSync("git", ["-C", w.workDir, "rev-list", `${oid}..workflow/9-x`]).status, 128);
+  const r = await runSteps(mergeSteps({ ...w.ctx, prMerged: true, headOid: oid }), realWith([]));
+  assert.ok(r.done.some((d) => /deleted/.test(d)));
+  assert.ok(!existsSync(w.workDir) && !existsSync(w.runDir));
+  assert.equal(w.git(w.repoRoot, "branch", "--list", "workflow/9-x").trim(), "");
+});
+
+test("merge steps, run for real: a merged PR whose head can't be fetched stops and cleans nothing up", async () => {
+  const w = repoWithTicket();
+  const oid = w.git(w.workDir, "rev-parse", "HEAD").trim(); // origin has no refs/pull/12/head
+  await assert.rejects(runSteps(mergeSteps({ ...w.ctx, prMerged: true, headOid: oid }), realWith([])), /Couldn't fetch the merged pull request #12/);
+  assert.ok(existsSync(w.workDir) && existsSync(w.runDir));
 });
 
 test("merge steps, run for real: a second Merge after everything is done is harmless", async () => {

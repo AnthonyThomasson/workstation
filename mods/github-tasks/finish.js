@@ -45,7 +45,7 @@ export const branchArgs = (repoRoot, branch) => ["-C", repoRoot, "rev-parse", "-
 //   status        the ticket Done    remove-worktree / prune-worktrees    delete-branch (-D: a squash leaves the branch looking unmerged)    remove-run-files
 // number: the pull request's number. prMerged: the caller has just asked gh and the pull request is already MERGED, so the
 // merge step is skipped, and so are fetch and ahead (GitHub may have deleted the remote branch). headOid: the commit the PR was
-// merged from (headRefOid); then not-in-pr stops if the local branch has commits beyond it, which the PR never took in.
+// merged from (headRefOid); then fetch-pr-head gets that commit from GitHub (refs/pull/<number>/head), and not-in-pr stops if the local branch has commits beyond it, which the PR never took in.
 // status: { args } to set the ticket Done, { warn } when the project has no such option, or nothing when there is no project.
 // workDirExists / branchExists: false when an earlier Merge already removed the folder / deleted the branch; the steps for
 // them are left out, so pressing Merge again finishes what was left.
@@ -72,7 +72,10 @@ export function mergeSteps({ repoRoot, workDir, branch, number, prMerged = false
         dirty: `${branch} has commits that ${remote} doesn't. Run \`${push}\` so the pull request has them, then press Merge again.` },
     ] : []),
     // A pull request merged already: whatever the local branch has beyond the commit the PR was merged from never made it in.
+    // headOid may be a commit someone pushed to the PR branch on GitHub that was never fetched here; GitHub keeps it under
+    // refs/pull/<n>/head even after the branch is deleted. Fetch it (into FETCH_HEAD) so the comparison can't fail on a missing object.
     ...(branchExists && prMerged && headOid ? [
+      ...(number ? [{ name: "fetch-pr-head", ...git(["-C", inTree, "fetch", "origin", `+refs/pull/${number}/head`]), fail: `Couldn't fetch the merged pull request #${number} from origin, so can't tell whether ${branch} has commits it doesn't. Nothing was cleaned up; press Merge again once origin can be reached.` }] : []),
       { name: "not-in-pr", ...git(["-C", inTree, "rev-list", `${headOid}..${branch}`]), fail: `Couldn't compare ${branch} with the merged pull request (${headOid.slice(0, 8)}).`,
         dirty: `${branch} has commits that the merged pull request doesn't. Don't clean up yet: open a new pull request for them, or drop them with \`git -C ${inTree} reset --hard ${headOid.slice(0, 8)}\`, then press Merge again.` },
     ] : []),
