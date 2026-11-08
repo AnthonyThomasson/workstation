@@ -4,7 +4,7 @@
 import { div } from "gpui-kit";
 import { v_flex, TextView } from "gpui-base";
 import { theme } from "herdr";
-import { promptForRole } from "./settings-model.js";
+import { markdownLiteral, promptForRole } from "./settings-model.js";
 import { ROLE_LABELS } from "./workflow-model.js";
 import { S, note } from "./ui.js";
 
@@ -34,6 +34,6 @@ export class PromptPage {
       .child(div().id("prompt-body").flex_1().min_h(0).overflow_y_scrollbar().px(20).py(16)
         .child(this.text == null
           ? note(t, "This prompt isn't available.")
-          : TextView.markdown(`prompt-${this.role}`, this.text).selectable(true)));
+          : TextView.markdown(`prompt-${this.role}`, markdownLiteral(this.text)).selectable(true)));
   }
 }

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeSettingsSections, promptForRole } from "./settings-model.js";
+import { markdownLiteral, normalizeSettingsSections, promptForRole } from "./settings-model.js";
 
 test("settings sections start collapsed and only saved booleans reopen them", () => {
   const closed = { grooming: false, orchestrator: false, worker: false, reviewer: false };
@@ -38,4 +38,21 @@ test("built-in role prompts use the sample run placeholders", () => {
   assert.match(promptForRole("orchestrator"), /<the workflow's planning prompt goes here>/);
   assert.match(promptForRole("worker"), /<the workflow's worker prompt goes here>/);
   assert.match(promptForRole("reviewer"), /<the workflow's reviewer prompt goes here>/);
+});
+
+test("Markdown-ready prompts keep placeholders visible and leave code untouched", () => {
+  const source = [
+    "Ticket <ticket title>: <workflow name>, <repo>, <project>.",
+    "Inline `<branch>` stays unchanged.",
+    "```sh",
+    "printf '%s\\n' '<run folder>'",
+    "```",
+  ].join("\n");
+  assert.equal(markdownLiteral(source), [
+    "Ticket \\<ticket title>: \\<workflow name>, \\<repo>, \\<project>.",
+    "Inline `<branch>` stays unchanged.",
+    "```sh",
+    "printf '%s\\n' '<run folder>'",
+    "```",
+  ].join("\n"));
 });
