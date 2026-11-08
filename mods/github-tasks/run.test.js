@@ -146,7 +146,7 @@ test("each role is told the ticket is data, and the three folders: main checkout
 
 test("the orchestrator is told the manual, the spawn and merge scripts, the rebase onto origin and the final report", () => {
   const text = prompt("orchestrator");
-  for (const expected of ["`hc --skill`", "120k", "`hc send", "`hc wait --children any`", "`/runs/1/spawn worker <job> '<brief>'`", "`/runs/1/spawn reviewer <job>-review <job> '<brief>'`", "`/runs/1/spawn reviewer final-review final '<brief>'`", "`/runs/1/merge <job>`", "`git -C /src/app-12-fix-the-login fetch origin`", "`git -C /src/app-12-fix-the-login rebase origin/<main-branch>`", "rebase onto workflow/12-fix-the-login", "Ask the person", "without merging, pushing or opening a pull request yourself", "Start now"]) {
+  for (const expected of ["`hc --skill`", "120k", "`hc send", "`hc wait --children any`", "`/runs/1/spawn worker <job> '<brief>'`", "`/runs/1/spawn reviewer <job>-review <job> '<brief>'`", "`/runs/1/spawn reviewer final-review final '<brief>'`", "`/runs/1/merge <job>`", "`git -C /src/app-12-fix-the-login fetch origin`", "`git -C /src/app-12-fix-the-login rebase origin/<main-branch>`", "rebase onto workflow/12-fix-the-login", "Ask the person", "without merging into the default branch, pushing or opening a pull request yourself", "keep job names under 10 characters", "Start now"]) {
     assert.ok(text.includes(expected), expected);
   }
   assert.match(text, /^Without ever writing code yourself/m);
@@ -170,6 +170,7 @@ test("the worker tests, reports with hc send, never merges, and rebases only whe
   assert.ok(text.includes("`git rebase workflow/12-fix-the-login`"));
   assert.ok(text.includes("`git rebase --abort`"));
   assert.match(text, /Only when the orchestrator sends you conflicting files/);
+  assert.match(text, /Don't start other agents/);
 });
 
 test("the reviewer is read-only and sends its findings with hc send and as its last message", () => {
@@ -177,6 +178,7 @@ test("the reviewer is read-only and sends its findings with hc send and as its l
   assert.match(text, /^Review read-only: edit nothing, commit nothing and check out no other commit/m);
   assert.match(text, /with `hc send` and as your last message/);
   assert.match(text, /the repo's tests/);
+  assert.match(text, /don't start other agents/);
   assert.ok(!text.includes("ExitPlanMode"));
 });
 
