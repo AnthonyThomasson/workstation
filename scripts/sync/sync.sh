@@ -2,33 +2,25 @@
 # Keep this repo's Herdr setup (mods, the Tony layout, themes, workflows) and Skillshare config in
 # step with the installed folders.
 #
-#   ./sync.sh             two-way: the newer copy of each file wins, in either direction
-#   ./sync.sh --push      repo -> Herdr only (the repo wins)
-#   ./sync.sh --pull      Herdr -> repo only (Herdr wins)
-#   ./sync.sh --push --prune  repo -> Herdr, and files in a repo-owned mod folder in Herdr that the repo does
-#                          not have are moved to the backup folder (only with --push)
-#   ./sync.sh --dry-run   show what would change, write nothing (combine with --push or --pull)
-#   ./sync.sh --check     write nothing; exit 1 and name each file when a Tony copy differs from
-#                          its entry folder (or no entry owns it), or skillshare/config.yaml has an
-#                          absolute home path
+#   ./scripts/sync/sync.sh             two-way: the newer copy of each file wins, in either direction
+#   ./scripts/sync/sync.sh --push      repo -> Herdr only (the repo wins)
+#   ./scripts/sync/sync.sh --pull      Herdr -> repo only (Herdr wins)
+#   ./scripts/sync/sync.sh --push --prune
+#                                     repo -> Herdr, and files in a repo-owned mod folder in Herdr that the repo does
+#                                     not have are moved to the backup folder (only with --push)
+#   ./scripts/sync/sync.sh --dry-run   show what would change, write nothing (combine with --push or --pull)
+#   ./scripts/sync/sync.sh --check     write nothing; fail if skillshare/config.yaml has an absolute home path
 #
 # What goes where (repo -> the Herdr config folder, ~/.config/herdr-app):
-#   herdr/<entry>/mods/<mod>/              -> mods/<mod>/      every entry folder except tony
-#   herdr/tony/mods/tabs-icons/            -> mods/tabs-icons/ the one mod that lives only in tony
-#   herdr/tony/layouts/Tony.json           -> layouts/Tony.json
-#   personal/herdr-app/themes/<file>       -> themes/<file>    only the theme files the repo has
-#   personal/herdr-app/workflows/          -> workflows/       new files on either side are carried over
+#   mods/<mod>/                        -> mods/<mod>/       every mod
+#   layouts/Tony.json                  -> layouts/Tony.json
+#   personal/herdr-app/themes/<file>   -> themes/<file>     only the theme files the repo has
+#   personal/herdr-app/workflows/      -> workflows/        new files on either side are carried over
 # Herdr does not load a mod's icons and other assets through a symlink, so both sides hold real
-# copies. A new file inside a mod folder, on either side, is carried over to the other. A pull goes
-# back to the entry folder that owns the mod, never into the copies in herdr/tony/mods/ (except
-# tabs-icons). Mods that ship with Herdr are never pulled into the repo. keys.json and settings.json
-# are not synced, because Herdr writes to them itself. Generated files (gpui-kit.d.ts, jsconfig.json,
-# .DS_Store) are skipped.
-#
-# Tony's copies: herdr/tony/mods/<mod>/ is an exact copy of each entry folder's mod. After the sync,
-# every run (not --dry-run) makes it so: files are added, overwritten and removed to match the entry,
-# and a mod folder no entry owns (other than tabs-icons) is removed. --check names those too.
-# Never edit those copies by hand; edit the entry folder. --dry-run lists what the refresh would do.
+# copies. A new file inside a mod folder, on either side, is carried over to the other. Each mod's
+# RECIPE.md and preview.png, and mods/workflows/starters/, belong only to the repo: they are never
+# copied to Herdr, pulled, or pruned. keys.json and settings.json are not synced, because Herdr
+# writes to them itself. Generated files (gpui-kit.d.ts, jsconfig.json, .DS_Store) are skipped.
 #
 # Skillshare: ~/.config/skillshare/{config.yaml,agents,skills} become symlinks to skillshare/ in
 # this repo. A real file or folder in the way is moved to <name>.backup-<timestamp> first; a link
@@ -37,17 +29,17 @@
 # keeps whatever it already had, so each real run also rewrites "$HOME/" to "~/" in
 # skillshare/config.yaml. Set SKILLSHARE_HOME to use a folder other than ~/.config/skillshare.
 #
-# Nothing is deleted from the repo's entry folders, and Herdr loses files only with --push --prune (see above). A file you remove on one side comes back
+# Nothing is deleted from the repo, and Herdr loses files only with --push --prune (see above). A file you remove on one side comes back
 # from the other on the next run, so delete it on both. A file this run overwrites is first saved at
 # the same relative path in <config>/.workstation-backup/<timestamp>/ (Herdr's copy) or
 # <repo>/.sync-backup/<timestamp>/ (the repo's). A symlink left in the config folder by an older
-# version of this script is replaced with a real copy. Tony's copies are not backed up: git has them.
+# version of this script is replaced with a real copy.
 #
 # Output: one line per file change, "<what>: <path>", then summary lines ("copied: ...",
-# "refreshed Tony's copies: ...", "skillshare: ..."). A sync mod can read these.
+# "skillshare: ..."). A sync mod can read these.
 # Set HERDR_APP_HOME to use a config folder other than ~/.config/herdr-app.
 # Herdr picks up changed layouts and mods without a restart; restart it if something looks stale.
-# Commit after a --pull or a two-way run: pulled and refreshed files are edits to the repo.
+# Commit after a --pull or a two-way run: pulled files are edits to the repo.
 
 set -eu
 
@@ -75,17 +67,18 @@ if [ "$check" -eq 1 ] && { [ "$dry_run" -eq 1 ] || [ "$push" -eq 0 ] || [ "$pull
   exit 2
 fi
 
-here=$(cd "$(dirname "$0")" && pwd)
-[ -d "$here/herdr" ] || { echo "no herdr folder next to this script: $here/herdr" >&2; exit 1; }
+script_dir=$(cd "$(dirname "$0")" && pwd)
+here=$(cd "$script_dir/../.." && pwd)
+[ -d "$here/mods" ] && [ -d "$here/layouts" ] || { echo "no mods/ or layouts/ folder at the repo root: $here" >&2; exit 1; }
 
-tab=$(printf '\t')
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/sync.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 
-# skip REL: generated files, which are never synced or compared.
+# skip REL: generated files and repository-only mod documentation/artwork, which are never synced.
 skip() {
   case "$1" in
     .DS_Store|*/.DS_Store|gpui-kit.d.ts|*/gpui-kit.d.ts|jsconfig.json|*/jsconfig.json|layouts/.state/*) return 0 ;;
+    mods/*/RECIPE.md|mods/*/preview.png|mods/workflows/starters/*) return 0 ;;
   esac
   return 1
 }
@@ -95,62 +88,14 @@ files() {
   if [ -d "$1" ]; then (cd "$1" && find . -type f | sed 's|^\./||'); fi
 }
 
-# entry_mods: each mod folder an entry owns, relative to the repo (herdr/<entry>/mods/<mod>).
-entry_mods() {
-  (cd "$here" && find herdr -mindepth 3 -maxdepth 3 -type d -path 'herdr/*/mods/*' ! -path 'herdr/tony/*' | sort)
-}
-
-dupes=$(entry_mods | sed 's|.*/||' | sort | uniq -d)
-[ -z "$dupes" ] || { echo "two entry folders hold a mod with the same name: $dupes" >&2; exit 1; }
-
-# tony_changes: how herdr/tony/mods/<mod>/ differs from each entry's mod, as
-# "<new|changed|removed>\t<entry file>\t<tony file>" (new: Tony lacks it; removed: only Tony has it).
-# A --dry-run keeps the files it would pull from Herdr in $tmp/overlay; they stand in for the entry's
-# files here, so the dry run reports what a real run would do to Tony after the pull.
-tony_changes() {
-  entry_mods | while IFS= read -r e; do
-    t="herdr/tony/mods/${e##*/}"
-    { files "$here/$e"; files "$here/$t"; files "$tmp/overlay/$e"; } | sort -u | while IFS= read -r f; do
-      skip "$f" && continue
-      src="$here/$e/$f"
-      [ ! -e "$tmp/overlay/$e/$f" ] || src="$tmp/overlay/$e/$f"
-      if [ ! -e "$here/$t/$f" ]; then printf 'new\t%s\t%s\n' "$e/$f" "$t/$f"
-      elif [ ! -e "$src" ]; then printf 'removed\t%s\t%s\n' "$e/$f" "$t/$f"
-      elif ! cmp -s "$src" "$here/$t/$f"; then printf 'changed\t%s\t%s\n' "$e/$f" "$t/$f"
-      fi
-    done
-  done
-}
-
-# tony_extras: mod folders in herdr/tony/mods/ that no entry folder owns (tabs-icons lives only in
-# Tony and is the one exception), as herdr/tony/mods/<mod>.
-tony_extras() {
-  [ -d "$here/herdr/tony/mods" ] || return 0
-  owned=$(entry_mods | sed 's|.*/||')
-  for d in "$here"/herdr/tony/mods/*/; do
-    [ -d "$d" ] || continue
-    n=$(basename "$d")
-    [ "$n" != tabs-icons ] || continue
-    printf '%s\n' "$owned" | grep -qxF "$n" || echo "herdr/tony/mods/$n"
-  done
+# repo_mods: each mod folder, relative to the repo (mods/<mod>).
+repo_mods() {
+  (cd "$here" && find mods -mindepth 1 -maxdepth 1 -type d | sort)
 }
 
 # ---------------------------------------------------------------------------------------------
 if [ "$check" -eq 1 ]; then
   bad=0
-  tony_changes > "$tmp/changes"
-  while IFS="$tab" read -r kind ef tf; do
-    case "$kind" in
-      new) echo "Tony copy missing: $tf (entry: $ef)" ;;
-      removed) echo "Tony copy extra: $tf (not in the entry folder)" ;;
-      changed) echo "Tony copy differs: $tf (entry: $ef)" ;;
-    esac
-    bad=1
-  done < "$tmp/changes"
-  tony_extras | while IFS= read -r x; do
-    echo "Tony copy extra: $x (no entry folder owns it)"
-  done > "$tmp/extras"
-  if [ -s "$tmp/extras" ]; then cat "$tmp/extras"; bad=1; fi
   cfg="$here/skillshare/config.yaml"
   if [ -f "$cfg" ]; then
     grep -nE '(/Use[r]s/|/home/)' "$cfg" > "$tmp/abs" || true
@@ -160,10 +105,10 @@ if [ "$check" -eq 1 ]; then
     done < "$tmp/abs"
   fi
   if [ "$bad" -eq 1 ]; then
-    echo "check failed: edit the entry folders under herdr/ and run ./sync.sh to refresh herdr/tony/mods; keep skillshare/config.yaml paths in ~/ form" >&2
+    echo "check failed: keep skillshare/config.yaml paths in ~/ form" >&2
     exit 1
   fi
-  echo "ok: herdr/tony/mods matches the entry folders and skillshare/config.yaml has no absolute home paths"
+  echo "ok: skillshare/config.yaml has no absolute home paths"
   exit 0
 fi
 
@@ -197,12 +142,11 @@ map_tracked() {
   done >> "$pairs"
 }
 
-entry_mods | while IFS= read -r e; do
-  map_dir "$e" "mods/${e##*/}"
+repo_mods | while IFS= read -r m; do
+  map_dir "$m" "$m"
 done
-map_dir herdr/tony/mods/tabs-icons mods/tabs-icons
 echo layouts/Tony.json >> "$roots"
-printf 'herdr/tony/layouts/Tony.json\tlayouts/Tony.json\n' >> "$pairs"
+printf 'layouts/Tony.json\tlayouts/Tony.json\n' >> "$pairs"
 map_tracked personal/herdr-app/themes themes
 map_dir personal/herdr-app/workflows workflows
 sort -u "$pairs" -o "$pairs"
@@ -228,12 +172,7 @@ same=0
 # copy LABEL FROM TO BACKUP HERDRREL: copy one file, saving what it replaces at BACKUP.
 copy() {
   echo "$1: $5"
-  if [ "$dry_run" -eq 1 ]; then
-    case "$3" in   # a file pulled into the repo: keep it where tony_changes can see it
-      "$here"/*) mkdir -p "$(dirname "$tmp/overlay/${3#"$here"/}")"; cp -p "$2" "$tmp/overlay/${3#"$here"/}" ;;
-    esac
-    return 0
-  fi
+  [ "$dry_run" -eq 0 ] || return 0
   mkdir -p "$(dirname "$3")"
   if [ -e "$3" ]; then
     mkdir -p "$(dirname "$4")"
@@ -245,6 +184,7 @@ copy() {
 herdr_backup="$dst/.workstation-backup/$stamp"
 repo_backup="$here/.sync-backup/$stamp"
 
+tab=$(printf '\t')
 while IFS="$tab" read -r rrel hrel; do
   skip "$hrel" && continue
   a="$here/$rrel"   # the repo's copy
@@ -279,40 +219,6 @@ if [ "$dry_run" -eq 0 ]; then
   [ ! -d "$herdr_backup" ] || echo "replaced Herdr files were saved to $herdr_backup"
   [ ! -d "$repo_backup" ] || echo "replaced repo files were saved to $repo_backup"
 fi
-
-# ---------------------------------------------------------------------------------------------
-# Make herdr/tony/mods/<mod>/ an exact copy of each entry's mod.
-added=0
-changed=0
-removed=0
-extra=0
-tony_changes > "$tmp/changes"
-while IFS="$tab" read -r kind ef tf; do
-  case "$kind" in
-    new) echo "Tony copy (new): $tf"; added=$((added + 1)) ;;
-    changed) echo "Tony copy (changed): $tf"; changed=$((changed + 1)) ;;
-    removed) echo "Tony copy (removed): $tf"; removed=$((removed + 1)) ;;
-  esac
-  [ "$dry_run" -eq 0 ] || continue
-  case "$kind" in
-    removed) rm -f "$here/$tf" ;;
-    *) mkdir -p "$(dirname "$here/$tf")"; cp -p "$here/$ef" "$here/$tf" ;;
-  esac
-done < "$tmp/changes"
-if [ "$dry_run" -eq 0 ] && [ "$removed" -gt 0 ] && [ -d "$here/herdr/tony/mods" ]; then
-  find "$here/herdr/tony/mods" -depth -mindepth 1 -type d -empty -exec rmdir {} + 2>/dev/null || true
-fi
-tony_extras > "$tmp/extras"
-while IFS= read -r x; do
-  echo "Tony copy (extra): $x"
-  extra=$((extra + 1))
-  [ "$dry_run" -eq 1 ] || rm -rf "$here/$x"
-done < "$tmp/extras"
-verb="refreshed"
-[ "$dry_run" -eq 0 ] || verb="would refresh"
-summary="$verb Tony's copies: $added added, $changed changed, $removed removed"
-[ "$extra" -eq 0 ] || summary="$summary, $extra extra mod folders removed"
-echo "$summary"
 
 # ---------------------------------------------------------------------------------------------
 # Skillshare: link its config, agents and skills into the repo.
