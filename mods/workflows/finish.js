@@ -11,6 +11,11 @@ export const STAGES = ["in progress", "in review"]; // what a ticket becomes as 
 // agents: { workers, reviewers }, with every agent seen (the ones that ended too).
 export const stageOf = (agents) => (agents.reviewers?.length ? 2 : agents.workers?.length ? 1 : 0);
 
+// Finish needs review to have started, every reviewer ended, and no worker still working.
+// Idle or done workers may stay live without holding up the run.
+export const canFinish = ({ stage, workers = [], reviewers = [] }) =>
+  stage >= 2 && !reviewers.some((r) => r.live) && !workers.some((w) => w.status === "working");
+
 // The project's Status option for a stage, or null when the project has none by that name.
 // statuses: { inProgress, inReview } as configured in Tasks; absent (old runs) means the defaults in STAGES.
 export function optionFor(options, stage, statuses) {

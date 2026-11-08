@@ -1,6 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { stageOf, optionFor, statusArgs, defaultBranch, mergeSteps, prArgs, parsePrUrl, prNumber } from "./finish.js";
+import { canFinish, stageOf, optionFor, statusArgs, defaultBranch, mergeSteps, prArgs, parsePrUrl, prNumber } from "./finish.js";
+
+test("canFinish waits for review, ended reviewers, and workers to stop working", () => {
+  const ended = { live: false };
+  const idleWorker = { live: true, status: "idle" };
+  const doneWorker = { live: true, status: "done" };
+  const workingWorker = { live: true, status: "working" };
+  assert.equal(canFinish({ stage: 1, workers: [], reviewers: [] }), false);
+  assert.equal(canFinish({ stage: 2, workers: [idleWorker], reviewers: [{ live: true }] }), false);
+  assert.equal(canFinish({ stage: 2, workers: [workingWorker], reviewers: [ended] }), false);
+  assert.equal(canFinish({ stage: 2, workers: [idleWorker, doneWorker], reviewers: [ended] }), true);
+  assert.equal(canFinish({ stage: 2, workers: [ended], reviewers: [ended] }), true);
+});
 
 test("stageOf follows the agents started", () => {
   assert.equal(stageOf({ workers: [], reviewers: [] }), 0);
