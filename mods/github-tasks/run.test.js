@@ -703,6 +703,11 @@ test("merge: terminals listed but no address readable is a failure, and the job 
   assert.ok(exists(r.ticketDir, "show-ref", "--verify", "--quiet", `refs/heads/${r.job.branch}`));
 });
 
+test("the orchestrator is told to ask its questions with the built-in question tool", () => {
+  const text = prompt("orchestrator");
+  assert.ok(text.includes("Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text."));
+});
+
 test("the orchestrator may commit the leftovers and plain-push the ticket branch only when the run page reports a stopped Merge", () => {
   const text = prompt("orchestrator");
   assert.match(text, /run page reports a stopped Merge/);

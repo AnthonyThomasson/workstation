@@ -5,9 +5,11 @@
 
 import { GitHubError, parseJson } from "./loader.js";
 
+export const LABEL_LIMIT = 200; // how many labels loadLabels asks for; an answer this long may be cut short
+
 // The repo's labels: [{ name, color }], by name.
 export async function loadLabels(gh, repo, where) {
-  const r = await gh(["label", "list", "-R", repo, "--json", "name,color", "-L", "200"], where);
+  const r = await gh(["label", "list", "-R", repo, "--json", "name,color", "-L", String(LABEL_LIMIT)], where);
   const labels = r.code === 0 ? parseJson(r.stdout) : null;
   if (!Array.isArray(labels)) throw new GitHubError(r.stderr || r.stdout);
   return labels

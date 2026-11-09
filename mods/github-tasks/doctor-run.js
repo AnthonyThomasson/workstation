@@ -6,6 +6,7 @@
 //   deps.repoRootOf(where)  deps.groomerAgent()  deps.chosenProject(repo)
 import { chooseProject, WORKFLOWS_CHANGED, PLACE } from "./model.js";
 import { findRepo, findProjects, loadStatusField } from "./loader.js";
+import { loadLabels, LABEL_LIMIT } from "./labels.js";
 import { diagnose, parseAuthStatus, doctorSignature, doctorFor, DOCTOR_KEY } from "./doctor.js";
 
 const WATCH = 2000; // how often the shared state is looked at; a check runs only when it changed
@@ -28,7 +29,7 @@ export async function gather(place, deps) {
     agents: agents.value ? agents.value.map((a) => ({ key: a.key, installed: Boolean(a.installed) })) : null,
     groomerAgent: deps.groomerAgent(),
     workflows: loaded.value,
-    repo: place?.cwd ? undefined : null, project: undefined, statuses: undefined,
+    repo: place?.cwd ? undefined : null, project: undefined, statuses: undefined, labels: undefined,
   };
   // The project checks need a repo, and a gh that is there and not known to be signed out to ask about it.
   if (!place?.cwd || inputs.auth?.installed === false || inputs.auth?.signedIn === false) return inputs;
@@ -38,7 +39,14 @@ export async function gather(place, deps) {
     return inputs; // any other failure leaves the repo unknown
   }
   inputs.repo = found.value;
-  const projects = await attempt(findProjects(deps.gh, inputs.repo, where));
+  // The trigger labels are asked about only when a workflow has some; a failed read leaves the labels unknown.
+  const triggers = (inputs.workflows?.items ?? []).some((w) => w?.trigger?.labels?.length);
+  const [projects, labels] = await Promise.all([
+    attempt(findProjects(deps.gh, inputs.repo, where)),
+    triggers ? attempt(loadLabels(deps.gh, inputs.repo, where)) : { error: null },
+  ]);
+  // loadLabels reads the first LABEL_LIMIT labels: a full page may be cut short, so a label not in it is not known to be missing.
+  if (!labels.error && triggers && labels.value.length < LABEL_LIMIT) inputs.labels = labels.value;
   if (projects.error) return inputs;
   const project = chooseProject(projects.value, deps.chosenProject(inputs.repo));
   inputs.project = project ? { id: project.id, title: project.title, url: project.url } : null;
@@ -57,7 +65,10 @@ export async function check(place, deps, previous = null) {
   const sameRepo = inputs.repo === undefined || previous?.repo === inputs.repo;
   const sameProject = !inputs.project || previous?.project?.id === inputs.project.id;
   const prior = previous && doctorFor(previous, place) && sameRepo && sameProject ? previous : null;
-  const issues = diagnose({ ...inputs, carried: prior?.issues });
+  // Label issues belong to the repo, not to a project, so they are kept for the same repo whichever project is found.
+  const sameRepoOnly = previous && doctorFor(previous, place) && sameRepo ? previous : null;
+  const carried = prior ? prior.issues : sameRepoOnly?.issues.filter((i) => i.kind === "label-missing");
+  const issues = diagnose({ ...inputs, carried });
   return {
     issues,
     repo: inputs.repo ?? prior?.repo ?? null,

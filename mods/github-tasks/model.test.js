@@ -152,7 +152,7 @@ test("a save needs a title and a status the project has", () => {
   assert.equal(checkTask({ title: "T", status: null }, options), null);
 });
 
-import { groupByStage, setupPrompt, groomArgv, normalizeGroomer, STATUSES, spelled, sameStatus, recentlyDone, middleEllipsis } from "./model.js";
+import { groupByStage, newTaskPrompt, groomArgv, normalizeGroomer, STATUSES, spelled, sameStatus, recentlyDone, middleEllipsis } from "./model.js";
 
 test("the statuses are fixed", () => {
   assert.deepEqual(STATUSES, { backlog: "To Do", groomed: "Up Next", inProgress: "In Progress", inReview: "In Review", done: "Done" });
@@ -197,19 +197,6 @@ test("the grooming agent's command carries the chosen model and effort", () => {
   assert.deepEqual(normalizeGroomer({ agent: " codex ", effort: "bogus" }), { agent: "codex", model: "", effort: "medium" });
 });
 
-test("the setup prompt names the repo and the new project, and points at the installed Herdr modules", () => {
-  const p = setupPrompt({ repo: "me/app", project: { title: "app", url: "https://x/p" } });
-  for (const s of ["me/app", '"app"', "https://x/p", "~/.config/herdr-app/mods", "$HERDR_APP_HOME/mods"]) assert.ok(p.includes(s), s);
-});
-
-test("the setup prompt has the agent search the modules and ask the person questions before changing anything", () => {
-  const p = setupPrompt({ repo: "me/app", project: { title: "app", url: "https://x/p" } });
-  assert.match(p, /Search through the installed modules/);
-  assert.match(p, /Ask one question at a time/);
-  assert.match(p, /Don't change anything yet/);
-  assert.match(p, /wait for the person to agree before you change anything/);
-});
-
 test("recentlyDone: only what was closed as done in the last day, newest first", () => {
   const now = Date.parse("2026-11-07T12:00:00Z");
   const done = (key, closedAt) => ticket(key, "2026-01-01T00:00:00Z", { state: "CLOSED", reason: "COMPLETED", closedAt });
@@ -233,4 +220,10 @@ test("groupByStage finds In review whatever its spelling", () => {
   const g = groupByStage(open);
   assert.deepEqual(g.inReview.map((t) => t.key), ["r"]);
   assert.deepEqual(g.inProgress.map((t) => t.key), ["p"]);
+});
+
+test("the New Task prompt asks questions with the built-in question tool, one at a time", () => {
+  const text = newTaskPrompt({ repo: "o/r" });
+  assert.ok(text.includes("Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text."));
+  assert.ok(text.includes("Ask one question at a time, say what you would pick and why"));
 });
