@@ -5,7 +5,8 @@
 // main.js builds one in init, calls refresh on a timer and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, hc, home, notify, run, setShared, shared, terminals, theme } from "herdr";
+import { exec, hc, home, notify, panes, run, setShared, shared, spaces, terminals, theme } from "herdr";
+import { endRun, slotKey } from "./bgrun.js";
 import { S, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
 import { agentsFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
@@ -239,10 +240,7 @@ export class RunPage {
           status: await this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
         }), exec);
         for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
-        if (!(await this.closeSession())) {
-          this.error = "Merged. This tab couldn't be closed for you: close it yourself.";
-          this.busy = null; cx.notify();
-        }
+        await this.closeSession();
       } catch (e) {
         if (!(await this.handOff(e))) this.error = String(e?.message ?? e);
         this.busy = null; cx.notify();
@@ -302,17 +300,13 @@ export class RunPage {
     return { args: statusArgs({ projectId: this.projectId, itemId: this.ticket.key, fieldId: this.statusField.id, optionId: option.id }) };
   }
 
-  // Ends the run's workers and reviewers, then its tab, which ends the orchestrator and this page with it.
-  // Resolves false when the tab couldn't be found, so the page can say so instead of staying on "Merging…".
+  // Ends the run: its workers and reviewers and then its orchestrator are killed on purpose (a background run ends no
+  // other way), then its tab is closed if it is open. A tab already closed is fine. Resolves true once they are ended.
   async closeSession() {
-    const all = terminals();
-    for (const k of all.filter((x) => x.labels?.[RUN] === this.id && x.address !== this.orchestrator)) {
-      await hc(["kill", k.address]).catch(() => {});
-      await hc(["rm", k.address]).catch(() => {});
-    }
-    const tab = all.find((x) => x.address === this.orchestrator)?.labels?.["herdr.tab"];
-    if (!tab) return false;
-    run("tab.close", { id: tab });
+    await endRun({
+      id: this.id, orchestrator: this.orchestrator, terminals: terminals(), hc, run, slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes(),
+      clearSlot: () => setShared(slotKey(this.id), null),
+    });
     return true;
   }
 

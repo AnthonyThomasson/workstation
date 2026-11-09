@@ -29,7 +29,7 @@ import { RunPage } from "./run-page.js";
 import { PromptPage } from "./prompts-page.js";
 import { WorkflowList } from "./workflow-list.js";
 import { loadWorkflows } from "./workflow-env.js";
-import { startRun, liveRunFor, viewRun } from "./start.js";
+import { startRun, liveRunFor, viewRun, reconnectRuns } from "./start.js";
 import { startDoctor } from "./doctor-env.js";
 import { DOCTOR_KEY, doctorFor } from "./doctor.js";
 
@@ -102,6 +102,8 @@ export default class GitHubTasks extends View {
     this.doctor = startDoctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
     cx.timer.every(POLL, (cx) => this.refresh(cx));
     cx.timer.every(LOCAL_POLL, (cx) => { cx.notify(); this.tick(cx); }); // a run starting or ending turns a row's Start into View and back; local tasks and tasks.json are looked at again
+    // A restart drops what terminal.show showed: show each live run's orchestrator again in its tab (twice, in case the app was still loading).
+    cx.spawn(async (cx) => { await reconnectRuns(cx); await cx.sleep(5000); await reconnectRuns(cx); });
     cx.spawn(async (cx) => {
       for (;;) {
         const command = await nextCommand();
