@@ -60,7 +60,7 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
     const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
     const props = reopenProps(saved, partial, running.address);
     const workDir = folder ?? props.folder;
-    const view = () => ({ slot: shared(slotKey(id)), spaces: spaces(), panes: panes(), name, folder: workDir, repoRoot: props.repoRoot ?? ticket?.mainRoot });
+    const view = () => ({ slot: shared(slotKey(id)), spaces: spaces(), panes: panes(), name, folder: workDir, repoRoot: props.repoRoot ?? ticket?.mainRoot, orchestrators: [running.address, props.orchestrator], terminals: terminals() });
     if (viewQuick({
       ...view(), setSlot: (slot) => setShared(slotKey(id), slot), run,
       show: (left) => { app("terminal.show", { terminal: running.address, pane: left }).catch(() => {}); }, // if it had slipped off, put it back

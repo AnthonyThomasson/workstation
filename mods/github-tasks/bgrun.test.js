@@ -681,23 +681,25 @@ test("restart: a task that can't be sent kills and removes the new orchestrator 
 // #35: the saved slot can go stale (Herdr gives the tab and its panes new ids after a restart) while the run's tab is open
 // and whole. panes() carries only pane, terminal (null for a mod pane), mod, tab, title, cwd... (no props), so the run page
 // is told apart by being the tab's github-tasks pane, and the tab by its name (spaces()[].tabs[].name, the ticket's name).
+// The run's identity as start.js passes it: its orchestrator and the live terminals (every terminal here is its placeholder).
+const ID = { orchestrators: ["o1"], terminals: ["t1", "t2", "t5", "t8", "t9"].map((address) => ({ address, argv: placeholderArgv("o1") })) };
 const NAMED = [{ id: "s1", tabs: [{ id: "tA", name: "1" }, { id: "tX", name: "#22 x" }] }];
 const NPANES = [{ pane: "pA", tab: "tA", terminal: "t9" }, { pane: "pX", tab: "tX", terminal: "t8" }, { pane: "pP", tab: "tX", mod: "github-tasks", terminal: null }];
 
 test("#35 a stale left pane id: the tab's terminal pane is its left pane", () => {
-  const got = runTabParts({ slot: { tab: "tX", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x", ticketSpace: "s1" });
+  const got = runTabParts({ slot: { tab: "tX", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x", ...ID, ticketSpace: "s1" });
   assert.deepEqual(got, { tab: "tX", space: "s1", left: "pX", page: "pP" });
   assert.equal(runTabParts({ slot: { tab: "tX", left: "pOld" }, spaces: NAMED, panes: NPANES }).left, null, "without the name the slot is all there is");
 });
 
 test("#35 a stale tab id too: the complete tab is found again by the run's name", () => {
-  const got = runTabParts({ slot: { tab: "tOld", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x", ticketSpace: "s1" });
+  const got = runTabParts({ slot: { tab: "tOld", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x", ...ID, ticketSpace: "s1" });
   assert.deepEqual(got, { tab: "tX", space: "s1", left: "pX", page: "pP" });
-  assert.deepEqual(findRunTab({ slot: { tab: "tOld", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x", ticketSpace: "s1" }), { tab: "tX", left: "pX", space: "s1" });
+  assert.deepEqual(findRunTab({ slot: { tab: "tOld", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x", ...ID, ticketSpace: "s1" }), { tab: "tX", left: "pX", space: "s1" });
 });
 
 test("#35 a complete tab behind a stale slot is not given a second placeholder", async () => {
-  const existing = runTabParts({ slot: { tab: "tX", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x", ticketSpace: "s1" });
+  const existing = runTabParts({ slot: { tab: "tX", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x", ...ID, ticketSpace: "s1" });
   const f = fakeApp();
   f.deps.app = ((app) => async (name, args) => { const r = await app(name, args); return name === "pane.split" && args.argv ? { pane: "pLeft", terminal: "tp2" } : r; })(f.deps.app);
   await connectRun(f.deps, { ...base, existing });
@@ -708,8 +710,8 @@ test("#35 a complete tab behind a stale slot is not given a second placeholder",
 test("#35 a ticket editor tab of the same name (a mod pane, no terminal) is never taken for the run's tab", () => {
   const spaces = [{ id: "s1", tabs: [{ id: "tE", name: "#22 x" }] }];
   const panes = [{ pane: "pE", tab: "tE", mod: "github-tasks", terminal: null }];
-  assert.equal(runTabParts({ slot: { tab: "tOld", left: "pOld" }, spaces, panes, name: "#22 x" }), null);
-  assert.equal(findRunTab({ slot: null, spaces, panes, name: "#22 x" }), null);
+  assert.equal(runTabParts({ slot: { tab: "tOld", left: "pOld" }, spaces, panes, name: "#22 x", ...ID }), null);
+  assert.equal(findRunTab({ slot: null, spaces, panes, name: "#22 x", ...ID }), null);
 });
 
 test("#35 of two same-named tabs the whole one is taken, and the slot's space first", () => {
@@ -719,25 +721,25 @@ test("#35 of two same-named tabs the whole one is taken, and the slot's space fi
     { pane: "pR", tab: "tR", terminal: "t1" }, { pane: "pRp", tab: "tR", mod: "github-tasks", terminal: null },
     { pane: "pQ", tab: "tQ", terminal: "t2" }, { pane: "pQp", tab: "tQ", mod: "github-tasks", terminal: null },
   ];
-  assert.equal(runTabParts({ slot: { tab: "gone", space: "s3" }, spaces, panes, name: "#22 x" }).tab, "tQ");
-  assert.equal(runTabParts({ slot: { tab: "gone" }, spaces, panes, name: "#22 x", ticketSpace: "s2" }).tab, "tR");
+  assert.equal(runTabParts({ slot: { tab: "gone", space: "s3" }, spaces, panes, name: "#22 x", ...ID }).tab, "tQ");
+  assert.equal(runTabParts({ slot: { tab: "gone" }, spaces, panes, name: "#22 x", ...ID, ticketSpace: "s2" }).tab, "tR");
 });
 
 // #35 review: the name match stays inside the slot's space and the ticket's own space.
 test("#35 a same-named whole tab of another run in another space is not taken", () => {
   const spaces = [{ id: "s1", tabs: [{ id: "tY", name: "#22 x" }] }, { id: "sT", tabs: [{ id: "tZ", name: "1" }] }];
   const panes = [{ pane: "pY", tab: "tY", terminal: "t1" }, { pane: "pYp", tab: "tY", mod: "github-tasks", terminal: null }];
-  assert.equal(runTabParts({ slot: { tab: "gone", space: "sGone" }, spaces, panes, name: "#22 x", ticketSpace: "sT" }), null);
-  assert.equal(runTabParts({ slot: { tab: "gone", space: "s1" }, spaces, panes, name: "#22 x", ticketSpace: "sT" }).tab, "tY", "the slot's own space is searched");
+  assert.equal(runTabParts({ slot: { tab: "gone", space: "sGone" }, spaces, panes, name: "#22 x", ...ID, ticketSpace: "sT" }), null);
+  assert.equal(runTabParts({ slot: { tab: "gone", space: "s1" }, spaces, panes, name: "#22 x", ...ID, ticketSpace: "sT" }).tab, "tY", "the slot's own space is searched");
   const inTicket = [{ id: "sT", tabs: [{ id: "tT", name: "#22 x" }] }];
   const tp = [{ pane: "pT", tab: "tT", terminal: "t1" }, { pane: "pTp", tab: "tT", mod: "github-tasks", terminal: null }];
-  assert.equal(runTabParts({ slot: null, spaces: inTicket, panes: tp, name: "#22 x", ticketSpace: "sT" }).tab, "tT", "so is the ticket's");
-  assert.equal(runTabParts({ slot: null, spaces: inTicket, panes: tp, name: "#22 x" }), null, "no ticket space given, none searched");
+  assert.equal(runTabParts({ slot: null, spaces: inTicket, panes: tp, name: "#22 x", ...ID, ticketSpace: "sT" }).tab, "tT", "so is the ticket's");
+  assert.equal(runTabParts({ slot: null, spaces: inTicket, panes: tp, name: "#22 x", ...ID }), null, "no ticket space given, none searched");
 });
 
 test("#35 a named tab with more than one terminal pane is not adopted", () => {
   const panes = [...NPANES, { pane: "pSh", tab: "tX", terminal: "t5" }];
-  assert.equal(runTabParts({ slot: { tab: "tOld" }, spaces: NAMED, panes, name: "#22 x", ticketSpace: "s1" }), null);
+  assert.equal(runTabParts({ slot: { tab: "tOld" }, spaces: NAMED, panes, name: "#22 x", ...ID, ticketSpace: "s1" }), null);
 });
 
 // spaces for viewQuick/viewConnect: s1 holds the run's tab tX; its first terminal (pA) is in the worktree (the ticket's space) or
@@ -746,7 +748,7 @@ const viewFixture = ({ inTicket = true, ...over } = {}) => {
   const log = [], slots = [];
   const panes = NPANES.map((p) => (p.pane === "pA" ? { ...p, cwd: inTicket ? "/wt" : "/r" } : p));
   return { log, slots, args: {
-    slot: { tab: "tX", left: "pX", space: "s1" }, spaces: NAMED, panes, name: "#22 x", folder: "/wt", repoRoot: "/r",
+    slot: { tab: "tX", left: "pX", space: "s1" }, spaces: NAMED, panes, name: "#22 x", folder: "/wt", repoRoot: "/r", ...ID,
     setSlot: (s) => slots.push(s), run: (n, a) => log.push([n, a]), show: (left) => log.push(["show", left]),
     connect: async (existing) => { log.push(["connect", existing]); }, closeTab: (tab) => log.push(["close", tab]), ...over,
   } };
@@ -847,4 +849,29 @@ test("slotFromPage: after a restart the placeholder names the old orchestrator; 
   const terminals = [{ address: "t8", argv: placeholderArgv("old") }];
   assert.deepEqual(heal({ terminals, orchestrators: ["new", "old"] }), { tab: "tB", left: "pB", space: "s1" });
   assert.equal(heal({ terminals, orchestrators: ["new"] }), null);
+});
+
+// #35 final review: a same-named tab is the run's only when its terminal is the run's own placeholder.
+const OLD = { orchestrators: ["t13q"], terminals: [{ address: "t8", argv: placeholderArgv("told") }] };
+const WRAP = (o) => ["/bin/zsh", "-lic", '"$@"; exec "$0" -li', "/bin/zsh", ...placeholderArgv(o)];
+
+test("#35 an older leftover tab of the same name, whose placeholder names another orchestrator, is not taken", () => {
+  assert.equal(runTabParts({ slot: { tab: "tOld", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x", ticketSpace: "s1", ...OLD }), null);
+  assert.equal(findRunTab({ slot: null, spaces: NAMED, panes: NPANES, name: "#22 x", ticketSpace: "s1", ...OLD }), null);
+  assert.equal(runTabParts({ slot: null, spaces: NAMED, panes: NPANES, name: "#22 x", ticketSpace: "s1" }), null, "no identity given, nothing is taken");
+});
+
+test("#35 this run's placeholder, wrapped by a login shell, is taken", () => {
+  const terminals = [{ address: "t8", argv: WRAP("t13q") }];
+  const got = runTabParts({ slot: { tab: "tOld", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x", ticketSpace: "s1", orchestrators: ["told", "t13q"], terminals });
+  assert.deepEqual(got, { tab: "tX", space: "s1", left: "pX", page: "pP" });
+});
+
+// viewQuick also takes a whole tab in another space while the ticket's own space exists: the person may have put it there.
+test("#35 viewQuick keeps a whole tab the person moved to another space while the ticket's space exists", () => {
+  const spaces = [{ id: "sT", tabs: [{ id: "tA", name: "1" }] }, { id: "s2", tabs: [{ id: "tX", name: "#22 x" }] }];
+  const panes = [{ pane: "pA", tab: "tA", terminal: "t9", cwd: "/wt" }, ...NPANES.filter((p) => p.tab === "tX")];
+  const f = viewFixture({ spaces, panes, slot: { tab: "tX", left: "pX", space: "s2" } });
+  assert.equal(viewQuick(f.args), true);
+  assert.deepEqual(f.log, [["space.select", { id: "s2" }], ["tab.select", { id: "tX" }], ["show", "pX"]]);
 });
