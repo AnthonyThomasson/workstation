@@ -4,6 +4,7 @@
 import { exec, hc, home, knownAgents, notify, panes, readTextFile, run, spaces, terminals, writeTextFile } from "herdr";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
 import { app } from "./ui.js";
+import { localTasks, repoHasGithubRemote, tasksConfig } from "./local-tasks-env.js";
 import { ROLES } from "./workflow-model.js";
 import { out, agentArgv, branchName, FOLDER_LABEL, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
 
@@ -56,6 +57,19 @@ async function resolveAgents(workflow, runDir) {
   return argv;
 }
 
+// With a local task source, the task as its file holds it: { ticket, local: { task, githubRemote } }; the ticket is the one Start was
+// given with the file's title, text, labels and status (the file is the truth, the sidebar's copy may be a few seconds old).
+// Nothing for a repo on GitHub tasks, so GitHub mode goes through unchanged. Throws with a message when the task's file is gone.
+async function localTaskFor(repoRoot, ticket) {
+  if ((await tasksConfig.read(repoRoot)) !== "local") return null;
+  const task = ticket?.number ? await localTasks(repoRoot).get(ticket.number) : null;
+  if (!task) throw new Error(`There is no local task #${ticket?.number ?? "?"} in ${repoRoot}'s tasks. Refresh the list and try again.`);
+  return {
+    task, githubRemote: await repoHasGithubRemote(repoRoot),
+    ticket: { ...ticket, number: task.id, title: task.title, body: task.description, labels: task.labels, status: task.status, url: undefined },
+  };
+}
+
 async function writeRunFolder(id, parts, argv) {
   const { runDir, workDir, branch } = parts;
   const made = await exec("mkdir", ["-p", runDir]);
@@ -64,7 +78,7 @@ async function writeRunFolder(id, parts, argv) {
     writeTextFile(`${runDir}/orchestrator.md`, orchestratorPrompt({ ...parts, id }), null),
     writeTextFile(`${runDir}/worker.md`, workerPrompt(parts), null),
     writeTextFile(`${runDir}/reviewer.md`, reviewerPrompt(parts), null),
-    writeTextFile(`${runDir}/ticket.md`, ticketFile(parts.ticket, parts.repo), null),
+    writeTextFile(`${runDir}/ticket.md`, ticketFile(parts.ticket, parts.repo, parts.local), null),
     writeTextFile(`${runDir}/spawn`, spawnScript({ id, runDir, workDir, branch, argv }), null),
     writeTextFile(`${runDir}/merge`, mergeScript({ id, workDir, branch, number: parts.ticket?.number }), null),
   ]);
@@ -97,13 +111,15 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   }
 
   const repoRoot = await mainCheckout(git, where.cwd); // the main checkout, even when Start is used from one of its worktrees
+  const found = await localTaskFor(repoRoot, ticket); // a local task: its file describes the run; the project and its status field are not used
+  if (found) { ticket = found.ticket; board = {}; repo = repo || repoRoot.split("/").filter(Boolean).pop(); }
 
   const id = runId(ticket);
   const runDir = `${home()}/.herdr/workflow-runs/${id}`;
   const argv = await resolveAgents(workflow, runDir); // before the worktree: this fails without changing anything
   const branch = branchName(ticket);
   const workDir = await prepareWorktree(git, repoRoot, branch, worktreePath(repoRoot, branch));
-  await writeRunFolder(id, { workflow, ticket, repo, runDir, workDir, repoRoot, branch }, argv);
+  await writeRunFolder(id, { workflow, ticket, repo, runDir, workDir, repoRoot, branch, local: Boolean(found), noRemote: Boolean(found) && !found.githubRemote }, argv);
 
   const space = spaces().find((s) => s.active)?.id;
   const made = await app("tab.new", {
@@ -123,6 +139,8 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
       role: "run", id, orchestrator: made.terminal, title: ticketName(ticket), workflow: workflow.name, branch, folder: workDir,
       repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null },
       projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
+      // A local task: the page moves the task's file, and Create PR and Merge depend on whether origin is on GitHub.
+      ...(found ? { taskSource: "local", mainRoot: repoRoot, githubRemote: found.githubRemote } : {}),
     };
     await writeTextFile(`${runDir}/pane.json`, JSON.stringify(props), null).catch(() => {}); // View reopens the pane from this
     await app("pane.split", { pane, direction: "right", mod: "github-tasks", props });

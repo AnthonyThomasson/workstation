@@ -42,7 +42,7 @@ export const branchArgs = (repoRoot, branch) => ["-C", repoRoot, "rev-parse", "-
 //   tree-status   the ticket worktree has no uncommitted changes (nothing is committed for the person any more)
 //   fetch, ahead  the local ticket branch has no commits origin's copy lacks, so the squash can't leave work behind
 //   pr-merge      gh pr merge <n> --squash (no --admin, no --auto). If GitHub refuses, its message is shown and nothing after it runs
-//   status        the ticket Done    remove-worktree / prune-worktrees    delete-branch (-D: a squash leaves the branch looking unmerged)    remove-run-files
+//   status        the ticket Done (a local task: its file moves to done/)    remove-worktree / prune-worktrees    delete-branch (-D: a squash leaves the branch looking unmerged)    remove-run-files
 // number: the pull request's number. prMerged: the caller has just asked gh and the pull request is already MERGED, so the
 // merge step is skipped, and so are fetch and ahead (GitHub may have deleted the remote branch). headOid: the commit the PR was
 // merged from (headRefOid); then fetch-pr-head gets that commit from GitHub (refs/pull/<number>/head), and not-in-pr stops if the local branch has commits beyond it, which the PR never took in.
@@ -55,6 +55,23 @@ const safeRunDir = (runDir) => {
   const id = typeof runDir === "string" ? runDir.match(/^\/(?:.*\/)?\.herdr\/workflow-runs\/([^/]+)$/)?.[1] : null;
   return Boolean(id && id !== "." && !id.includes(".."));
 };
+
+// The step that sets the ticket Done. status: { args } (a gh call), { move } (local tasks: an async function that moves the task's file), or { warn }.
+export const statusStep = (status) => status.warn ? { name: "status", warn: status.warn }
+  : status.move ? { name: "status", run: status.move, fail: "Couldn't move the task to done/.", done: "moved the task to done/" }
+  : { name: "status", cmd: "gh", args: status.args, fail: "Couldn't set the ticket's status.", done: "set the ticket's status" };
+
+// What Merge ends with whichever way the work got in: remove the worktree (or forget a folder already gone), delete the
+// branch (-D: a squash leaves it looking unmerged) and the run folder. workDirExists / branchExists: see mergeSteps.
+export function cleanupSteps({ repoRoot, workDir, branch, runDir, workDirExists = true, branchExists = true }) {
+  const git = (args) => ({ cmd: "git", args });
+  return [
+    ...(workDirExists ? [{ name: "remove-worktree", ...git(["-C", repoRoot, "worktree", "remove", workDir]), fail: `Couldn't remove the worktree ${workDir}.`, done: `removed the worktree ${workDir}` }]
+      : [{ name: "prune-worktrees", ...git(["-C", repoRoot, "worktree", "prune"]), fail: `Couldn't clear the removed worktree ${workDir} from git's list.` }]),
+    ...(branchExists ? [{ name: "delete-branch", ...git(["-C", repoRoot, "branch", "-D", branch]), fail: `Couldn't delete the branch ${branch}.`, done: `deleted ${branch}` }] : []),
+    ...(safeRunDir(runDir) ? [{ name: "remove-run-files", cmd: "rm", args: ["-rf", runDir], fail: `Couldn't remove the run files ${runDir}.`, done: `removed the run files ${runDir}` }] : []),
+  ];
+}
 
 export function mergeSteps({ repoRoot, workDir, branch, number, prMerged = false, headOid, status, runDir, workDirExists = true, branchExists = true }) {
   if (!prMerged && !number) throw new Error("Merge needs the pull request, and this run has none.");
@@ -80,11 +97,8 @@ export function mergeSteps({ repoRoot, workDir, branch, number, prMerged = false
         dirty: `${branch} has commits that the merged pull request doesn't. Don't clean up yet: open a new pull request for them, or drop them with \`git -C ${inTree} reset --hard ${headOid.slice(0, 8)}\`, then press Merge again.` },
     ] : []),
     ...(prMerged ? [] : [{ name: "pr-merge", cmd: "gh", args: ["pr", "merge", String(number), "--squash"], cwd: inTree, fail: `GitHub didn't merge pull request #${number}.`, done: `merged pull request #${number}` }]),
-    ...(status ? [status.warn ? { name: "status", warn: status.warn } : { name: "status", cmd: "gh", args: status.args, fail: "Couldn't set the ticket's status.", done: "set the ticket's status" }] : []),
-    ...(workDirExists ? [{ name: "remove-worktree", ...git(["-C", repoRoot, "worktree", "remove", workDir]), fail: `Couldn't remove the worktree ${workDir}.`, done: `removed the worktree ${workDir}` }]
-      : [{ name: "prune-worktrees", ...git(["-C", repoRoot, "worktree", "prune"]), fail: `Couldn't clear the removed worktree ${workDir} from git's list.` }]),
-    ...(branchExists ? [{ name: "delete-branch", ...git(["-C", repoRoot, "branch", "-D", branch]), fail: `Couldn't delete the branch ${branch}.`, done: `deleted ${branch}` }] : []),
-    ...(safeRunDir(runDir) ? [{ name: "remove-run-files", cmd: "rm", args: ["-rf", runDir], fail: `Couldn't remove the run files ${runDir}.`, done: `removed the run files ${runDir}` }] : []),
+    ...(status ? [statusStep(status)] : []),
+    ...cleanupSteps({ repoRoot, workDir, branch, runDir, workDirExists, branchExists }),
   ];
 }
 
@@ -92,7 +106,7 @@ export function mergeSteps({ repoRoot, workDir, branch, number, prMerged = false
 // attempt, so a reload or a failure doesn't try again), when Merge would be allowed and the run has no pull request yet.
 export const shouldAutoPr = ({ ready, pr, tried, busy }) => Boolean(ready) && !pr && !tried && !busy;
 
-// Runs steps with exec(cmd, args, opts) -> { code, stdout, stderr }. Resolves { done, warnings } with what happened and
+// Runs steps with exec(cmd, args, opts) -> { code, stdout, stderr }. Besides commands, a step may be { run(exec) } or { check(stdout) }. Resolves { done, warnings } with what happened and
 // what was said on the way; throws an Error at the first step that fails, saying which earlier steps already happened.
 export async function runSteps(steps, exec) {
   const done = [], warnings = [];
@@ -101,7 +115,10 @@ export async function runSteps(steps, exec) {
   const go = async (list) => {
     for (const st of list) {
       if (st.warn) { warnings.push(st.warn); continue; }
+      // run: a step that is code, not a command (it gets exec, and throws a message the person can read). Local Merge uses these.
+      if (st.run) { try { await st.run(exec); } catch (e) { stop(String(e?.message ?? e)); } if (st.done) done.push(st.done); continue; }
       const r = await exec(st.cmd, st.args, st.cwd ? { cwd: st.cwd } : undefined);
+      if (st.check) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim()); const bad = st.check(String(r.stdout ?? "")); if (bad) stop(bad); continue; } // check: stdout -> what to stop with, or null
       if (st.dirty) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim()); if (String(r.stdout ?? "").trim()) stop(st.dirty); continue; }
       if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim());
       if (st.done) done.push(st.done);
@@ -111,9 +128,9 @@ export async function runSteps(steps, exec) {
   return { done, warnings };
 }
 
-// gh args for the pull request; the body links the ticket when it has a number.
-export function prArgs({ branch, title, number }) {
-  return ["pr", "create", "--head", branch, "--title", number ? `#${number} ${title}` : title, "--body", number ? `Closes #${number}` : ""];
+// gh args for the pull request; the body links the ticket when it has a number. body: replaces that (a local task has no GitHub issue to close).
+export function prArgs({ branch, title, number, body }) {
+  return ["pr", "create", "--head", branch, "--title", number ? `#${number} ${title}` : title, "--body", body ?? (number ? `Closes #${number}` : "")];
 }
 
 // The pull request's URL from what gh printed, or null.

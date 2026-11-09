@@ -702,3 +702,32 @@ test("merge: terminals listed but no address readable is a failure, and the job 
   assert.ok(git(r.ticketDir, "worktree", "list").includes("--auth"));
   assert.ok(exists(r.ticketDir, "show-ref", "--verify", "--quiet", `refs/heads/${r.job.branch}`));
 });
+
+test("a local task's ticket file says its text comes from a local task file, not GitHub", () => {
+  const text = ticketFile({ number: 7, title: "Fix login", body: "It breaks.", labels: ["bug"], status: "In Progress" }, "app", true);
+  assert.match(text, /# #7 Fix login/);
+  assert.match(text, /text from a local task file/);
+  assert.doesNotMatch(text, /GitHub|URL:/);
+  assert.match(text, /Status: In Progress/);
+  assert.match(text, /Labels: bug/);
+  assert.match(text, /It breaks\./);
+  assert.match(ticketFile(ticket, "o/r"), /text from GitHub/, "GitHub mode is as before");
+});
+
+test("with no pull request, every role is told the run page merges, and the prompts keep their three-sentence bodies", () => {
+  for (const name of Object.keys(builders)) {
+    const text = builders[name]({ workflow: workflow(), id: "12-abc", ...place, noRemote: true });
+    assert.ok(text.includes("The run page merges the ticket branch into the default branch, and there is no pull request"), name);
+    assert.ok(!text.includes("opens the pull request and merges it"), name);
+    assert.equal(bodyOf(text).match(/[.!?](\s|$)/g).length, 3, name);
+  }
+});
+
+test("with no GitHub remote the orchestrator isn't told to fetch or rebase onto origin", () => {
+  const withRemote = prompt("orchestrator");
+  assert.match(withRemote, /fetch origin/);
+  const text = orchestratorPrompt({ workflow: workflow(), id: "12-abc", ...place, noRemote: true });
+  assert.doesNotMatch(text, /origin/);
+  assert.match(text, /no GitHub remote/);
+  assert.doesNotMatch(reviewerPrompt({ workflow: workflow(), id: "12-abc", ...place, noRemote: true }), /origin\/HEAD/);
+});
