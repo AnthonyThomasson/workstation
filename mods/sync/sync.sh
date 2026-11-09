@@ -16,8 +16,8 @@
 # Herdr does not load a mod's icons and other assets through a symlink, so Herdr holds real copies.
 # The repo always wins: a differing file in Herdr is overwritten, with no backup. Each mod's
 # RECIPE.md and preview.png (but not the root preview.png, which is Tony's) belong only to the repo
-# and are never copied. keys.json and settings.json are not synced, because Herdr writes to them
-# itself. Generated files (gpui-kit.d.ts, jsconfig.json, .DS_Store) are skipped.
+# and are never copied. Herdr's top-level keys.json and settings.json are not synced, because Herdr
+# writes to them itself (a mod's own keys.json is an ordinary mod file and is copied). Generated files (gpui-kit.d.ts, jsconfig.json, .DS_Store) are skipped.
 #
 # Prune: a file inside a repo-owned mod folder in Herdr (mods/<mod>/ for a mod the repo has) that the
 # repo no longer has is deleted, and so is a folder that leaves empty. Nothing else in Herdr is

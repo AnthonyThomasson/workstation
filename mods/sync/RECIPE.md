@@ -57,7 +57,7 @@ Then summary lines: `copied: <n> to Herdr, <m> removed from Herdr; <k> already t
 - `layouts/Tony.json` to `layouts/Tony.json`.
 - The root `preview.png` to `layouts/Tony.png`: Tony's preview, which Herdr's layout picker shows.
 - `personal/herdr-app/themes/<file>` to `themes/<file>`, and `personal/herdr-app/workflows/<file>` to `workflows/<file>`: only files the repo has.
-- Never copied: each mod's `RECIPE.md` and `preview.png`, `keys.json` and `settings.json` (Herdr writes them), `.DS_Store`, `gpui-kit.d.ts`, `jsconfig.json`, `layouts/.state/*`.
+- Never copied: each mod's `RECIPE.md` and `preview.png`, Herdr's top-level `keys.json` and `settings.json` (Herdr writes them; a mod's own `keys.json` is copied), `.DS_Store`, `gpui-kit.d.ts`, `jsconfig.json`, `layouts/.state/*`.
 - The repo always wins: a differing file in Herdr is overwritten, whichever is newer. Nothing is copied from Herdr to the repo (the one write into the repo is the `~/` normalising of `skillshare/config.yaml`, below), and nothing is backed up (no `.workstation-backup/`, no `.sync-backup/`).
 - Prune: a file inside a repo-owned mod folder in Herdr (`mods/<mod>/` for a mod the repo has) that the repo does not have is deleted, and a folder that leaves empty goes with it. Other Herdr files, themes, workflows and mods the repo does not own are never removed.
 
