@@ -341,13 +341,13 @@ export function mergeOutcome(ended) {
   return { done: false, error: null, note: { text: "Merged. This run's space couldn't be found to close: close it yourself.", detail: "The run has ended; only its space is left." } };
 }
 
-// The run tab's slot found from the run's own placeholder terminal (placeholderArgv names the orchestrator it was made for), so it
+// The run tab's slot found from the run's own placeholder terminal (placeholderArgv's script names the orchestrator it was made for; a login-shell wrapper around the argv is fine), so it
 // holds after ids changed (e.g. a Herdr restart). The tab is the one holding that terminal's pane, and only when it is the only such
 // tab and holds exactly one github-tasks pane (the run page); otherwise null, never a guess. left = the saved left while it is a pane
 // of that tab, else the placeholder's pane. The same slot object when nothing differs, so the caller can skip the write.
 export function slotFromPage({ orchestrators, terminals, spaces, panes, slot }) {
   const texts = (orchestrators ?? []).filter(Boolean).map((o) => placeholderArgv(o)[2]);
-  const mine = (terminals ?? []).filter((t) => Array.isArray(t.argv) && texts.includes(t.argv[2]));
+  const mine = (terminals ?? []).filter((t) => Array.isArray(t.argv) && t.argv.some((a) => texts.includes(a)));
   const found = (panes ?? []).filter((p) => p.terminal && mine.some((t) => t.address === p.terminal));
   const tabs = [...new Set(found.map((p) => p.tab))];
   if (tabs.length !== 1) return null;
