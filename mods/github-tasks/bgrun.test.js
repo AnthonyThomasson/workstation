@@ -836,3 +836,15 @@ test("slotFromPage: a tab without exactly one run page gives null", () => {
   assert.equal(heal({ panes: HEAL_PANES.filter((p) => p.mod !== "github-tasks") }), null);
   assert.equal(heal({ panes: [...HEAL_PANES, { pane: "pN", tab: "tB", mod: "github-tasks", terminal: null }] }), null);
 });
+
+test("slotFromPage: the live argv, wrapped by a login shell, still names the orchestrator", () => {
+  const wrapped = ["/bin/zsh", "-lic", '"$@"; exec "$0" -li', "/bin/zsh", ...placeholderArgv("o1")];
+  assert.deepEqual(heal({ terminals: [{ address: "t8", argv: wrapped }] }), { tab: "tB", left: "pB", space: "s1" });
+  assert.deepEqual(heal({ terminals: [{ address: "t8", argv: placeholderArgv("o1") }] }), { tab: "tB", left: "pB", space: "s1" });
+});
+
+test("slotFromPage: after a restart the placeholder names the old orchestrator; the new one and the opened-with one are both offered", () => {
+  const terminals = [{ address: "t8", argv: placeholderArgv("old") }];
+  assert.deepEqual(heal({ terminals, orchestrators: ["new", "old"] }), { tab: "tB", left: "pB", space: "s1" });
+  assert.equal(heal({ terminals, orchestrators: ["new"] }), null);
+});
