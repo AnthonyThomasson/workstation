@@ -42,7 +42,7 @@ export function sourceToggle(info) {
   };
 }
 
-// The editor's Status picker in local mode: the five a person picks, Done too. Won't Do is left out: its button is the only way.
+// The editor's Status picker in local mode: every status except Won't Do, whose button is the only way to set it.
 export const LOCAL_STATUS_OPTIONS = pickableStatuses(FOLDERS.map((f) => ({ name: f.status })));
 
 // Labels typed into the editor: "a, b" or one name. Empty pieces go; the rest is kept as typed.
