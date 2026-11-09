@@ -185,3 +185,9 @@ test("a config that can't be read counts as github", async () => {
   const info = await placeInfo({ folder: "/r" }, null, { git, config: () => ({ read: async () => { throw new Error("boom"); } }) });
   assert.equal(info.source, "github");
 });
+
+test("the local New Task prompt says to re-check the highest id before writing, and what a title with no letters gets", () => {
+  const prompt = localNewTaskPrompt({ mainRoot: "/r/app", todoDir: "/t/to-do", upNextDir: "/t/up-next", nextId: 5 });
+  assert.match(prompt, /right before writing the file, look at the highest id across all the status folders again/);
+  assert.match(prompt, /no letters or digits gets `5-task\.yml`/);
+});

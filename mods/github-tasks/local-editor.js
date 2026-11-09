@@ -21,6 +21,11 @@ export class LocalTaskEditor extends TaskEditor {
     this.labelInput.on("submit", (_e, cx) => this.addLabels(cx));
   }
 
+  // A label typed but not yet confirmed with Enter counts as a change, so Save is there for it.
+  dirty() {
+    return super.dirty() || typedLabels(this.labelInput?.value()).some((l) => !this.labels.has(l));
+  }
+
   tasks() { return localTasks(this.props.local?.mainRoot ?? ""); }
 
   // Reads the task's file and puts it on screen.
@@ -52,7 +57,9 @@ export class LocalTaskEditor extends TaskEditor {
 
   // Writes the changes to the file, and moves it when the status changed. Nobody is asked first.
   save(cx) {
-    if (this.saving || !this.dirty()) return;
+    if (this.saving) return;
+    this.addLabels(cx, false); // text typed in the label field but not confirmed with Enter still counts
+    if (!this.dirty()) return;
     const typed = this.current(), after = snapshot({ ...typed, title: typed.title.trim() });
     this.saving = true;
     this.notice = null;
@@ -64,8 +71,8 @@ export class LocalTaskEditor extends TaskEditor {
         if (fields) {
           await tasks.save(id, { title: after.title, description: after.body, labels: after.labels });
           this.base = { ...after, status: base.status }; // the fields are in the file even if the move below fails
-          if (after.title !== typed.title) this.titleInput.set_value(after.title);
         }
+        if (after.title !== typed.title) this.titleInput.set_value(after.title); // "Fix " is saved as "Fix": the field shows it
         if (after.status && after.status !== base.status) await tasks.move(id, after.status);
         const renamed = after.title !== base.title;
         this.base = after;
@@ -84,13 +91,13 @@ export class LocalTaskEditor extends TaskEditor {
   }
 
   // The label field's text, added to the labels.
-  addLabels(cx) {
+  addLabels(cx, notify = true) {
     const names = typedLabels(this.labelInput.value());
     if (!names.length) return;
     if (this.notice?.kind === "saved") this.notice = null;
     for (const name of names) this.labels.add(name);
     this.labelInput.set_value("");
-    cx.notify();
+    if (notify) cx.notify();
   }
 
   removeLabel(name, cx) {

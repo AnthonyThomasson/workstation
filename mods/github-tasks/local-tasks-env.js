@@ -10,7 +10,7 @@ const must = async (r, what) => { if (r.code !== 0) throw new Error(r.stderr || 
 
 export const io = {
   list: async (dir) => (await sh('ls -1 "$1" 2>/dev/null', dir)).stdout.split("\n").filter(Boolean), // a missing folder lists nothing
-  read: (path) => readTextFile(path),
+  read: (path) => readTextFile(path).catch(() => null), // a missing file is null, never a rejection
   // Last write wins: the file is read first only because writeTextFile wants what it replaces.
   write: async (path, text) => writeTextFile(path, text, (await readTextFile(path).catch(() => null)) ?? null),
   remove: async (path) => must(await sh('rm -f "$1"', path), "rm"),
