@@ -1,0 +1,12 @@
+import { shared } from "herdr";
+import { x } from "../beta/x.js";
+import { sample, real } from "./helper.js";
+import { own } from "./own.js";
+const fake = "mods/demo/main.js";
+const realPath = "mods/beta/main.js";
+const mine = "mods/alpha/main.js";
+openOverlay({ mod: "demo" });
+openOverlay({ mod: "beta" });
+shared("skillshare.x");
+shared("beta.x");
+export const all = [x, sample, real, own, fake, realPath, mine];

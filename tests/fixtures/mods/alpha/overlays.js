@@ -1,0 +1,10 @@
+import { openOverlay } from "herdr";
+import { popup } from "./popup.js";
+openOverlay({ mod: "alpha", kind: "dialog" });
+openOverlay({ mod: "menu" });
+openOverlay({ mod: "beta" });
+openOverlay({ mod: "ghost" });
+openOverlay(popup({ id: 1 }));
+const spec = { kind: "x", ...props };
+openOverlay(spec);
+openOverlay(unknownThing);
