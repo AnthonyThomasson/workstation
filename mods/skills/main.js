@@ -166,7 +166,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const warnBox = (t, text) => div().flex_none().px(12).py(10).rounded(6).bg(t.selected).text_size(S().secondary).text_color(t.blocked).child(text);
 const sectionLabel = (t, text) => div().flex_none().text_size(S().label).font_semibold().text_color(t.muted).child(text);
 
-const channel = createChannel({ get: shared, set: setShared });
+const channel = createChannel({ get: (k) => shared(k), set: (k, v) => setShared(k, v) });
 const request = (op) => channel.request(op);
 
 export default class Skillshare extends View {
