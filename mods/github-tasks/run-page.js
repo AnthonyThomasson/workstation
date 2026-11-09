@@ -85,11 +85,11 @@ export class RunPage {
     return found;
   }
 
-  // The run tab's saved slot follows this page's own pane, so ids that changed (a Herdr restart) heal as the page renders. Written only when it differs.
+  // The run tab's saved slot follows the run's placeholder terminal (bgrun.js slotFromPage), so ids that changed (a Herdr restart) heal as the page renders. Written only when it differs.
   healSlot() {
     try {
       const saved = shared(slotKey(this.id));
-      const next = slotFromPage({ page: this.props.pane, spaces: spaces(), panes: panes(), slot: saved ?? null });
+      const next = slotFromPage({ orchestrators: [this.orchestrator, this.props.orchestrator], terminals: terminals(), spaces: spaces(), panes: panes(), slot: saved ?? null });
       if (next && next !== saved) setShared(slotKey(this.id), next);
     } catch { /* healing is best effort */ }
   }

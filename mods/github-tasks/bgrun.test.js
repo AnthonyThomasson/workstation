@@ -792,37 +792,47 @@ test("#35 a tab found only by name is never closed by a rebuild, and a partial t
   await viewConnect(partial.args);
   assert.deepEqual(partial.log, [["connect", { tab: "tX", space: "s1", left: "pX", page: null }]]);
 
-// slotFromPage: the run tab's slot, healed from the pane the run page itself is in.
+});
+
+// slotFromPage: the run tab's slot, healed from the run's placeholder terminal (exact), never guessed.
 const HEAL_SPACES = [{ id: "s1", tabs: [{ id: "tA" }, { id: "tB" }] }, { id: "s2", tabs: [{ id: "tC" }] }];
 const HEAL_PANES = [{ pane: "pA", tab: "tA", terminal: "t9" }, { pane: "pB", tab: "tB", terminal: "t8" }, { pane: "pM", tab: "tB", mod: "github-tasks", terminal: null }];
+const HEAL_TERMS = [{ address: "t8", argv: placeholderArgv("o1") }, { address: "t9", argv: ["claude"] }];
+const heal = (over = {}) => slotFromPage({ orchestrators: ["o1"], terminals: HEAL_TERMS, spaces: HEAL_SPACES, panes: HEAL_PANES, slot: null, ...over });
 
-test("slotFromPage: a stale tab id is replaced by the tab holding the page, with its space", () => {
-  const slot = { tab: "gone", left: "pB", space: "s9" };
-  assert.deepEqual(slotFromPage({ page: "pM", spaces: HEAL_SPACES, panes: HEAL_PANES, slot }), { tab: "tB", left: "pB", space: "s1" });
+test("slotFromPage: a stale tab id is replaced by the tab of the run's placeholder, with its space", () => {
+  assert.deepEqual(heal({ slot: { tab: "gone", left: "pB", space: "s9" } }), { tab: "tB", left: "pB", space: "s1" });
 });
 
-test("slotFromPage: a stale left id becomes the tab's one terminal pane", () => {
-  const slot = { tab: "tB", left: "gone", space: "s1" };
-  assert.deepEqual(slotFromPage({ page: "pM", spaces: HEAL_SPACES, panes: HEAL_PANES, slot }), { tab: "tB", left: "pB", space: "s1" });
-  assert.deepEqual(slotFromPage({ page: "pM", spaces: HEAL_SPACES, panes: HEAL_PANES, slot: null }), { tab: "tB", left: "pB", space: "s1" });
+test("slotFromPage: a stale left id becomes the placeholder's pane", () => {
+  assert.deepEqual(heal({ slot: { tab: "tB", left: "gone", space: "s1" } }), { tab: "tB", left: "pB", space: "s1" });
 });
 
-test("slotFromPage: no terminal pane in the tab leaves left null rather than inventing one", () => {
-  const panes = [{ pane: "pM", tab: "tC", mod: "github-tasks", terminal: null }];
-  assert.deepEqual(slotFromPage({ page: "pM", spaces: HEAL_SPACES, panes, slot: { tab: "gone", left: "pB", space: "s1" } }), { tab: "tC", left: null, space: "s2" });
+test("slotFromPage: with no saved slot one is made, as the tab is unambiguous", () => {
+  assert.deepEqual(heal(), { tab: "tB", left: "pB", space: "s1" });
 });
 
-test("slotFromPage: two terminal panes are ambiguous, so left stays null", () => {
-  const panes = [...HEAL_PANES, { pane: "pX", tab: "tB", terminal: "t7" }];
-  assert.equal(slotFromPage({ page: "pM", spaces: HEAL_SPACES, panes, slot: { tab: "tB", left: "gone", space: "s1" } }).left, null);
+test("slotFromPage: any of the run's orchestrators names the placeholder", () => {
+  assert.deepEqual(heal({ orchestrators: ["o2", "o1"] }), { tab: "tB", left: "pB", space: "s1" });
 });
 
 test("slotFromPage: an already-correct slot comes back as the same object", () => {
   const slot = { tab: "tB", left: "pB", space: "s1" };
-  assert.equal(slotFromPage({ page: "pM", spaces: HEAL_SPACES, panes: HEAL_PANES, slot }), slot);
+  assert.equal(heal({ slot }), slot);
 });
 
-test("slotFromPage: an unknown page pane gives null", () => {
-  assert.equal(slotFromPage({ page: "nope", spaces: HEAL_SPACES, panes: HEAL_PANES, slot: { tab: "tB", left: "pB", space: "s1" } }), null);
-  assert.equal(slotFromPage({ page: undefined, spaces: HEAL_SPACES, panes: HEAL_PANES, slot: null }), null);
+test("slotFromPage: no placeholder terminal for the run gives null", () => {
+  assert.equal(heal({ orchestrators: ["other"] }), null);
+  assert.equal(heal({ orchestrators: [] }), null);
+});
+
+test("slotFromPage: placeholders in two tabs are ambiguous, so null", () => {
+  const terminals = [...HEAL_TERMS, { address: "t7", argv: placeholderArgv("o1") }];
+  const panes = [...HEAL_PANES, { pane: "pC", tab: "tC", terminal: "t7" }];
+  assert.equal(heal({ terminals, panes }), null);
+});
+
+test("slotFromPage: a tab without exactly one run page gives null", () => {
+  assert.equal(heal({ panes: HEAL_PANES.filter((p) => p.mod !== "github-tasks") }), null);
+  assert.equal(heal({ panes: [...HEAL_PANES, { pane: "pN", tab: "tB", mod: "github-tasks", terminal: null }] }), null);
 });
