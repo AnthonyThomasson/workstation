@@ -677,3 +677,29 @@ test("restart: a task that can't be sent kills and removes the new orchestrator 
   await assert.rejects(restartOrchestrator(f.deps, restart), /terminal is busy/);
   assert.deepEqual(f.log.slice(-2), ["hc kill t9", "hc rm t9"]);
 });
+
+// #35: the saved slot can go stale (Herdr gives the tab and its panes new ids after a restart) while the run's tab is open
+// and whole. panes() carries only pane, terminal (null for a mod pane), mod, tab, title, cwd... (no props), so the run page
+// is told apart by being the tab's github-tasks pane, and the tab by its name (spaces()[].tabs[].name, the ticket's name).
+const NAMED = [{ id: "s1", tabs: [{ id: "tA", name: "1" }, { id: "tX", name: "#22 x" }] }];
+const NPANES = [{ pane: "pA", tab: "tA", terminal: "t9" }, { pane: "pX", tab: "tX", terminal: "t8" }, { pane: "pP", tab: "tX", mod: "github-tasks", terminal: null }];
+
+test("#35 a stale left pane id: the tab's terminal pane is its left pane", () => {
+  const got = runTabParts({ slot: { tab: "tX", left: "pOld" }, spaces: NAMED, panes: NPANES });
+  assert.deepEqual(got, { tab: "tX", space: "s1", left: "pX", page: "pP" });
+});
+
+test("#35 a stale tab id too: the complete tab is found again by the run's name", () => {
+  const got = runTabParts({ slot: { tab: "tOld", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x" });
+  assert.deepEqual(got, { tab: "tX", space: "s1", left: "pX", page: "pP" });
+  assert.deepEqual(findRunTab({ slot: { tab: "tOld", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x" }), { tab: "tX", left: "pX", space: "s1" });
+});
+
+test("#35 a complete tab behind a stale slot is not given a second placeholder", async () => {
+  const existing = runTabParts({ slot: { tab: "tX", left: "pOld" }, spaces: NAMED, panes: NPANES });
+  const f = fakeApp();
+  f.deps.app = ((app) => async (name, args) => { const r = await app(name, args); return name === "pane.split" && args.argv ? { pane: "pLeft", terminal: "tp2" } : r; })(f.deps.app);
+  await connectRun(f.deps, { ...base, existing });
+  assert.deepEqual(f.calls.filter((c) => c[0] === "pane.split"), [], "neither a left placeholder nor the run page is split in");
+  assert.deepEqual(f.slots.r1, { tab: "tX", left: "pX", space: "s1" }, "the slot is made good");
+});
