@@ -111,6 +111,7 @@ export function orchestratorPrompt({ id, workflow, ticket, repo, runDir, workDir
     `- About hourly, run \`git -C ${workDir} fetch origin\` and, between merges, rebase the ticket branch (in ${workDir}) onto \`origin/<main-branch>\` with \`git -C ${workDir} rebase origin/<main-branch>\`.`,
     `- The main checkout ${repoRoot} is never touched; live-environment steps (${LIVE_ENV}) never run from a worktree and go in your final report for the person to approve.`,
     `- ${RUN_PAGE}`,
+    "- Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text.",
     "- Start now: run the manual, read the ticket, and plan.", "",
     ...section("How this workflow plans", own.planning),
     ...section("How this workflow looks back on the run, once it is done", own.retro),

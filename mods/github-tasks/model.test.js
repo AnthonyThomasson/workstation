@@ -152,7 +152,7 @@ test("a save needs a title and a status the project has", () => {
   assert.equal(checkTask({ title: "T", status: null }, options), null);
 });
 
-import { groupByStage, setupPrompt, groomArgv, normalizeGroomer, STATUSES, spelled, sameStatus, recentlyDone, middleEllipsis } from "./model.js";
+import { groupByStage, newTaskPrompt, setupPrompt, groomArgv, normalizeGroomer, STATUSES, spelled, sameStatus, recentlyDone, middleEllipsis } from "./model.js";
 
 test("the statuses are fixed", () => {
   assert.deepEqual(STATUSES, { backlog: "To Do", groomed: "Up Next", inProgress: "In Progress", inReview: "In Review", done: "Done" });
@@ -233,4 +233,10 @@ test("groupByStage finds In review whatever its spelling", () => {
   const g = groupByStage(open);
   assert.deepEqual(g.inReview.map((t) => t.key), ["r"]);
   assert.deepEqual(g.inProgress.map((t) => t.key), ["p"]);
+});
+
+test("the New Task prompt asks questions with the built-in question tool, one at a time", () => {
+  const text = newTaskPrompt({ repo: "o/r" });
+  assert.ok(text.includes("Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text."));
+  assert.ok(text.includes("Ask one question at a time, say what you would pick and why"));
 });

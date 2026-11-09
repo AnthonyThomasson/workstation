@@ -702,3 +702,8 @@ test("merge: terminals listed but no address readable is a failure, and the job 
   assert.ok(git(r.ticketDir, "worktree", "list").includes("--auth"));
   assert.ok(exists(r.ticketDir, "show-ref", "--verify", "--quiet", `refs/heads/${r.job.branch}`));
 });
+
+test("the orchestrator is told to ask its questions with the built-in question tool", () => {
+  const text = prompt("orchestrator");
+  assert.ok(text.includes("Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text."));
+});
