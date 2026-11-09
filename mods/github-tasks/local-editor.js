@@ -51,6 +51,7 @@ export class LocalTaskEditor extends TaskEditor {
         this.titleInput.set_value(task.title);
         this.bodyInput.set_value(task.description);
         this.base = snapshot({ title: task.title, body: task.description, labels: task.labels, status: task.status });
+        this.leaveBody(); // the Description shows as rendered markdown (editor.js)
         this.loaded = true;
         this.checkStartable(cx);
         if (this.autoStart) { this.autoStart = false; this.openStart(cx); }
@@ -83,6 +84,7 @@ export class LocalTaskEditor extends TaskEditor {
         const renamed = after.title !== base.title;
         this.base = after;
         this.notice = { kind: "saved", text: "Saved." };
+        this.leaveBody();
         this.checkStartable(cx);
         if (renamed) run("tab.rename", { name: tabName(ticket, after.title) });
         setShared(CHANGED, Date.now());
