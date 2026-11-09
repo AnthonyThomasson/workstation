@@ -6,7 +6,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, notify, panes, run, setShared, shared, spaces, terminals, readTextFile, theme, writeTextFile } from "herdr";
-import { endRun, findTicketSpace, mergeOutcome, peekSpace, restartOrchestrator, runTabParts, slotFromPage, slotKey } from "./bgrun.js";
+import { endRun, findHost, findTicketSpace, hostKey, mergeOutcome, peekSpace, restartOrchestrator, runTabParts, slotFromPage, slotKey } from "./bgrun.js";
 import { S, app, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
 import { agentsFor, liveOrchestratorFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
@@ -318,6 +318,7 @@ export class RunPage {
       hc,
       writePaneJson: (p) => this.writePaneJson(p),
       saveOrchestrator: (address) => { this.orchestrator = address; setShared(leadKey(this.id), address); },
+      findHost: () => findHost(terminals(), this.id), // the new orchestrator goes under the run's host, if it is still there
       show: async (address) => {
         const parts = runTabParts({ slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes() });
         if (parts?.left) await app("terminal.show", { terminal: address, pane: parts.left }); // no tab left: View connects it
@@ -438,6 +439,7 @@ export class RunPage {
     const ended = await endRun({
       id: this.id, orchestrator: this.orchestrator, hc, terminals, run, slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes(),
       ticketSpace, clearSlot: () => setShared(slotKey(this.id), null),
+      host: shared(hostKey(this.id)), clearHost: () => setShared(hostKey(this.id), null),
     });
     const outcome = mergeOutcome(ended);
     if (outcome.error) this.error = outcome.error;

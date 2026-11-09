@@ -4,16 +4,43 @@
 // the run. The tab is the first tab of the ticket's own space, rooted at the ticket's worktree and named for the ticket,
 // which the Spaces sidebar nests under the repo's space; Merge closes that space. Pure apart from the deps it is handed,
 // so node --test runs it.
-import { FOLDER_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL, shQuote } from "./run.js";
+//
+// The Agents panel (Herdr's `agents` mod, read-only) lists two things: the terminals in a tab's pane that report a status
+// (OSC 7501), and, under each of those, their live sub-agents, the terminals whose hc `parent` chain leads to it (clicking a
+// paneless one runs terminal.peek; a blocked or erroring one reads "Needs you"). An orchestrator started `--no-parent` with no
+// pane is neither, so neither it nor its workers and reviewers (whose parent is the orchestrator, by `spawn`) were ever listed,
+// and a parent cannot be changed after a terminal is born.
+// So each run gets a **host**: a tiny terminal in a tab of the repo's space (named `#<n> agents`) that reports `idle` by OSC
+// 7501 (`ESC ] 7501 ; state=idle BEL`, found out live: `status=idle` and a bare `idle` are not read), prints one line and
+// waits for ever. It is not an agent of the run (no run label; labelled herdr.workflow.host=<run id> and herdr.role=host so it
+// is found again by label, never by saved ids) but the orchestrator's parent: `--parent <host> --outlive-parent --no-notify`,
+// so the panel shows host > orchestrator > workers and reviewers, and closing a tab or the space never ends any of them (no
+// agent is owned by a tab or pane). The host ends with the run: Merge, and the clean-up when Start fails, kill it and close its
+// tab. If it can't be opened the run starts as before (no parent) and Start says why the panel won't list the run.
+import { FOLDER_LABEL, HOST_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL, shQuote } from "./run.js";
 
 // Where the run's tab is saved (shared state, as herdr.tab labels are gone): { tab, left, space }.
 export const slotKey = (id) => `github-tasks.runtab.${id}`;
 
-// `hc run` for the orchestrator: no parent, so nothing but a kill or Merge ends it; its labels are set at birth.
-export function orchestratorRunArgs({ id, key, workDir, argv }) {
+// Where the run's host is saved (shared state): { tab, space, created } (created: Start made the space for it).
+export const hostKey = (id) => `github-tasks.host.${id}`;
+
+// The orchestrator's hc name: the run id and `-orch`, cut and cleaned to hc's rule (1-32 of a-z 0-9 - _), unique per run.
+const orchestratorName = (id) => `${String(id).toLowerCase().replace(/[^a-z0-9_-]/g, "-").slice(0, 27)}-orch`;
+
+// `hc run` for the orchestrator; its labels are set at birth. Under a `parent` (the run's host) it outlives it, types no notes
+// into it and is named; without one (no host could be opened) it has no parent, so nothing but a kill or Merge ends it.
+export function orchestratorRunArgs({ id, key, workDir, argv, parent = null }) {
   const labels = [`${RUN_LABEL}=${id}`, `${ROLE_LABEL}=orchestrator`, `${TICKET_LABEL}=${key}`, `${FOLDER_LABEL}=${workDir}`];
-  return ["run", "--bg", "--json", "--no-parent", "--cwd", workDir, ...labels.flatMap((l) => ["--label", l]), "--", ...argv];
+  const family = parent ? ["--parent", parent, "--outlive-parent", "--no-notify"] : ["--no-parent"];
+  return ["run", "--bg", "--json", ...family, "--cwd", workDir, "--name", orchestratorName(id), ...labels.flatMap((l) => ["--label", l]), "--", ...argv];
 }
+
+// The host's program: it reports a status (so the Agents panel lists it), says what it is, and waits for ever (a program that
+// exits closes its pane). tail reads nothing from the terminal, so it never takes hc notes as input.
+export const hostArgv = () => ["sh", "-c", `printf '\\033]7501;state=idle\\007'; printf '%s\\n' ${shQuote("Host of this ticket's agents in the Agents panel. Ends when the ticket is merged.")}; exec tail -f /dev/null`];
+
+export const hostTabName = (ticket) => `${ticket?.number ? `#${ticket.number}` : String(ticket?.title ?? "Ticket")} agents`;
 
 // The address in the answer of `hc run --json`, or null.
 export function parseStarted(stdout) {
@@ -136,6 +163,72 @@ export function findTicketSpace({ spaces, panes, folder, repoRoot = "" }) {
 // The space View connects the run's tab in: the ticket's, or null when it was closed (then View makes a new one at the
 // worktree). Never the space the person happens to be in, which may be the repo's.
 export const viewTarget = findTicketSpace;
+
+// The repo's own space, if it is open: on this computer, its first terminal (else its own folder) inside the main checkout
+// (repoRoot). A ticket's space is rooted at its worktree, outside the checkout, so it never matches. Its id, or null.
+export function findRepoSpace({ spaces, panes, repoRoot }) {
+  if (!repoRoot) return null;
+  const first = (s) => { const tab = s.tabs?.[0]?.id; return (panes ?? []).find((p) => p.tab === tab && p.cwd); };
+  const found = (spaces ?? []).find((s) => {
+    if (s.machine) return false;
+    const terminal = first(s);
+    return terminal ? inside(terminal.cwd, repoRoot) : Boolean(s.folder && inside(s.folder, repoRoot));
+  });
+  return found?.id ?? null;
+}
+
+// The run's live host terminal among `terminals` (found by its label, not by saved ids), or null.
+export const findHost = (terminals, id) => (terminals ?? []).find((k) => k.state === "live" && k.labels?.[HOST_LABEL] === id) ?? null;
+
+// Opens the run's host: a tab in the repo's space (rooted at the main checkout, so the sidebar keeps it with the repo), or, when
+// the repo's space isn't open, a space of its own named for the repo with the tab as its first (created: true), so the host
+// is never put in the ticket's space (that is closed by Merge with the person's own tabs) nor in whichever space the person
+// is in. Its terminal gets its labels afterwards (a tab made with an argv takes none). Throws with the reason; what was made is
+// ended again then.
+//   deps: { app(name, args) -> made, hc(args), run(name, args) }; args: { id, name, repoRoot, spaces, panes }
+//   Resolves with { address, tab, space, created }.
+export async function openHost(deps, { id, name, repoRoot, spaces, panes }) {
+  const space = findRepoSpace({ spaces, panes, repoRoot });
+  const created = !space;
+  let made;
+  try {
+    made = created
+      ? await deps.app("space.new", { name: String(repoRoot).split("/").filter(Boolean).pop() || "repo", tab: name, folder: repoRoot, argv: hostArgv() })
+      : await deps.app("tab.new", { name, folder: repoRoot, argv: hostArgv(), space });
+  } catch (e) { throw new Error(`the host tab couldn't be made (${why(e)})`); }
+  const undo = async () => {
+    if (made?.terminal) { await deps.hc(["kill", made.terminal]).catch(() => {}); await deps.hc(["rm", made.terminal]).catch(() => {}); }
+    try { if (created && made?.space) deps.run("space.close", { id: made.space, confirmed: true }); else if (made?.tab) deps.run("tab.close", { id: made.tab, confirmed: true }); } catch { /* it stays */ }
+  };
+  if (!made?.terminal) { await undo(); throw new Error("the host tab has no terminal address"); }
+  const labelled = await deps.hc(["label", made.terminal, `${HOST_LABEL}=${id}`, `${ROLE_LABEL}=host`]).catch((e) => ({ code: 1, stdout: "", stderr: why(e) }));
+  if (labelled.code !== 0) { await undo(); throw new Error(`the host couldn't be labelled (${String(labelled.stderr || labelled.stdout || "hc label failed").trim()})`); }
+  return { address: made.terminal, tab: made.tab, space: made.space ?? space, created };
+}
+
+// Ends the run's host: every live terminal labelled as its host is killed and removed, then its tab closed (found from the host's
+// own pane, else the saved record), and the space too when Start made it for the host and it holds nothing else. A host that
+// is gone already is nothing to do; a tab already closed is no failure. A host that is still live after its kill is an error
+// naming it, and its tab is kept.
+//   deps: { id, hc, terminals() , run, spaces, panes, record? ({ tab, space, created }), also? (addresses to end even if their label
+//   isn't listed yet: a host just made) }. Resolves with { error }.
+export async function endHost({ id, hc, terminals, run, spaces, panes, record = null, also = [] }) {
+  const hosts = (terminals() ?? []).filter((k) => k.state === "live" && k.labels?.[HOST_LABEL] === id);
+  for (const address of also) if (address && !hosts.some((h) => h.address === address)) hosts.push({ address });
+  const stuck = [], tabs = new Set();
+  for (const h of hosts) {
+    const tab = (panes ?? []).find((p) => p.terminal === h.address)?.tab ?? record?.tab;
+    const r = await hc(["kill", h.address]).catch((e) => ({ code: 1, stderr: why(e), stdout: "" }));
+    if (r.code !== 0 && (terminals() ?? []).some((k) => k.address === h.address && k.state === "live")) { stuck.push(`${h.address}: ${String(r.stderr || r.stdout || "kill failed").trim()}`); continue; }
+    await hc(["rm", h.address]).catch(() => {});
+    if (tab) tabs.add(tab);
+  }
+  if (stuck.length) return { error: `couldn't end the run's host ${stuck.join("; ")}` };
+  for (const tab of tabs) { try { run("tab.close", { id: tab, confirmed: true }); } catch { /* it closed with its terminal */ } }
+  const space = record?.created && record.space ? (spaces ?? []).find((s) => s.id === record.space) : null;
+  if (space && tabs.size && (space.tabs ?? []).every((t) => tabs.has(t.id))) { try { run("space.close", { id: space.id, confirmed: true }); } catch { /* it closed with its tab */ } }
+  return { error: null };
+}
 
 // The space a worker's or reviewer's terminal is peeked from, so that keeping it as a tab lands in the ticket's space: the
 // space of the run's open tab, else the ticket's space found by its worktree, else null.
@@ -263,9 +356,10 @@ export async function reapplyRuns({ terminals, slot, spaces, panes, show }) {
 // tab in the repo's space, and then only that tab is closed. With no tab left, ticketSpace is closed. A terminal that is still live after its kill is an
 // error: the space and slot are kept and the error says which, so the person can end it by hand. A space already closed is
 // not a failure; `tabFound` false tells the page nothing was there to close.
-//   deps: { hc(args) -> { code, stderr }, terminals() (read again as needed), run(name, args), slot, spaces, panes, ticketSpace?, clearSlot() }.
+//   deps: { hc(args) -> { code, stderr }, terminals() (read again as needed), run(name, args), slot, spaces, panes, ticketSpace?, clearSlot(),
+//           host? (the saved record), clearHost?() }. The run's host (endHost) is ended after the run's terminals, before the space is closed.
 //   Resolves with { closed, error } (+ tabFound: false when no space was found).
-export async function endRun({ id, orchestrator, hc, terminals, run, slot, spaces, panes, ticketSpace = null, clearSlot }) {
+export async function endRun({ id, orchestrator, hc, terminals, run, slot, spaces, panes, ticketSpace = null, clearSlot, host = null, clearHost = () => {} }) {
   const live = () => (terminals() ?? []).filter((k) => k.state === "live" && (k.address === orchestrator || k.labels?.[RUN_LABEL] === id));
   const stuck = [];
   const kill = async (address) => {
@@ -276,6 +370,9 @@ export async function endRun({ id, orchestrator, hc, terminals, run, slot, space
   if (orchestrator) await kill(orchestrator);
   for (const k of live().filter((k) => k.address !== orchestrator)) await kill(k.address);
   if (stuck.length) return { closed: false, error: `couldn't end ${stuck.join("; ")}. Its space was kept; end it with hc kill.` };
+  const hosted = await endHost({ id, hc, terminals, run, spaces, panes, record: host }); // after its orchestrator (the host's child) and the rest
+  if (hosted.error) return { closed: false, error: `${hosted.error}. Its space was kept; end it with hc kill.` };
+  clearHost();
   const parts = runTabParts({ slot, spaces, panes });
   clearSlot();
   if (parts && parts.space !== ticketSpace) run("tab.close", { id: parts.tab }); // not the ticket's own space: the person's other tabs stay
@@ -288,14 +385,22 @@ export async function endRun({ id, orchestrator, hc, terminals, run, slot, space
 // guard, can't make a second tab): hc run, pane.json, the tab, then the wait for the agent, then its first task.
 // A failure after the orchestrator exists ends it again (kill and rm) and closes the tab, then throws. A tab that can't open
 // is only a problem to say: the run is going and View connects it.
-//   deps: { hc(args), writePaneJson(props), connect(props) -> slot (throws), closeTab() }
-//   Resolves with { orchestrator, problems }.
+//   deps: { hc(args), writePaneJson(props), connect(props) -> slot (throws), closeTab(), openHost?() -> host (throws), closeHost?(host) }
+//   The host (openHost, before anything else) is the orchestrator's parent so the Agents panel lists the run; one that won't open
+//   is only a problem to say and the run starts with no parent. A failure that ends the orchestrator ends the host too.
+//   Resolves with { orchestrator, problems, host }.
 export async function launchRun(deps, { id, key, workDir, argv, task, props }) {
-  const started = await deps.hc(orchestratorRunArgs({ id, key, workDir, argv })).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
-  const orchestrator = started.code === 0 ? parseStarted(started.stdout) : null;
-  if (!orchestrator) throw new Error(`The orchestrator didn't start: ${String(started.stderr || started.stdout || "").trim() || "hc gave no address"}`);
-  const full = { ...props, orchestrator };
   const problems = [];
+  let host = null;
+  if (deps.openHost) {
+    try { host = await deps.openHost(); }
+    catch (e) { problems.push(`The Agents panel won't list this run's agents: its host tab didn't open (${why(e)}). The run itself is going.`); }
+  }
+  const endHostToo = async () => { if (host) await Promise.resolve(deps.closeHost?.(host)).catch(() => {}); };
+  const started = await deps.hc(orchestratorRunArgs({ id, key, workDir, argv, parent: host?.address })).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+  const orchestrator = started.code === 0 ? parseStarted(started.stdout) : null;
+  if (!orchestrator) { await endHostToo(); throw new Error(`The orchestrator didn't start: ${String(started.stderr || started.stdout || "").trim() || "hc gave no address"}`); }
+  const full = { ...props, orchestrator };
   await deps.writePaneJson(full).catch(() => {}); // View reconnects from this, so it is there before anything else can look
   try { await deps.connect(full); }
   catch (e) { problems.push(`Its tab didn't open: ${why(e)}. It is running; View connects to it.`); }
@@ -303,13 +408,14 @@ export async function launchRun(deps, { id, key, workDir, argv, task, props }) {
     await deps.hc(["kill", orchestrator]).catch(() => {});
     await deps.hc(["rm", orchestrator]).catch(() => {});
     try { deps.closeTab(); } catch { /* nothing to close */ }
+    await endHostToo();
     throw new Error(message);
   };
   const ready = await waitReady({ hc: deps.hc, orchestrator });
   if (!ready.ok) await abort(`The orchestrator didn't start properly, so it was ended: ${ready.why}`);
   const sent = await deps.hc(["send", orchestrator, task]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
   if (sent.code !== 0) await abort(`The orchestrator didn't take its task, so it was ended: ${String(sent.stderr || sent.stdout || "").trim() || "hc send failed"}`);
-  return { orchestrator, problems };
+  return { orchestrator, problems, host };
 }
 
 // A new orchestrator for a run whose own has ended, started because the person pressed the red Merge button: the same command
@@ -317,12 +423,14 @@ export async function launchRun(deps, { id, key, workDir, argv, task, props }) {
 // fix. Like launchRun but the tab is there already: the new address is saved first (pane.json, and saveOrchestrator for the
 // page's shared state, so View and a reload follow it), then show puts it over the tab's left pane. A tab that can't show it is
 // only a problem to say. A failure after the orchestrator exists ends it again and throws.
-//   deps: { hc(args), writePaneJson(props), saveOrchestrator(address), show(address) (throws) }
+//   deps: { hc(args), writePaneJson(props), saveOrchestrator(address), show(address) (throws), findHost?() -> the run's live host or null }
+//   The new orchestrator goes under the run's host when it is still there (as the first did), else it has no parent.
 //   key (the ticket label) and argv (the orchestrator's command): as start.js saved them in pane.json; without them the run can't be started again.
 //   Resolves with { orchestrator, problems }.
 export async function restartOrchestrator(deps, { id, key, workDir, argv, task, props }) {
   if (!key || !Array.isArray(argv) || !argv.length) throw new Error("This run's orchestrator can't be started again: it was started before the command that opens it was saved. Fix it by hand.");
-  const started = await deps.hc(orchestratorRunArgs({ id, key, workDir, argv })).catch((e) => ({ code: 1, stdout: "", stderr: why(e) }));
+  const parent = deps.findHost?.()?.address ?? null;
+  const started = await deps.hc(orchestratorRunArgs({ id, key, workDir, argv, parent })).catch((e) => ({ code: 1, stdout: "", stderr: why(e) }));
   const orchestrator = started.code === 0 ? parseStarted(started.stdout) : null;
   if (!orchestrator) throw new Error(`The orchestrator didn't start: ${String(started.stderr || started.stdout || "").trim() || "hc gave no address"}`);
   const problems = [];
