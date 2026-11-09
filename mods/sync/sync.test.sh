@@ -102,6 +102,8 @@ new_world() {
   # Workflow starters live in a mod folder and sync like any other mod file; make sure the scratch repo has one.
   mkdir -p "$R/mods/github-tasks/starters"
   echo "name: scratch starter" > "$R/mods/github-tasks/starters/scratch-starter.yaml"
+  # A mod's own keys.json is an ordinary mod file; none ships now, so the scratch repo has one.
+  echo '{}' > "$R/mods/github-tasks/keys.json"
   # Installed skills are not in the repo: only mine/ and the file that records them.
   find "$R/skillshare/skills" -mindepth 1 -maxdepth 1 ! -name mine ! -name .metadata.json -exec rm -rf {} +
   write_metadata "$R/skillshare/skills/.metadata.json"
