@@ -1,4 +1,4 @@
-// The "New task" dialog: the pure side of it. The + on the Backlog header opens it as a small overlay the mod draws itself (a dimmed
+// The "New task" dialog: the pure side of it. The + in the Tasks header opens it as a small overlay the mod draws itself (a dimmed
 // backdrop and a compact panel in the middle, like the ticket editor's popup, popup.js): "Describe the ticket you want", a multi-line
 // box, Cancel and Continue. new-task.js draws it and starts the task; this file says what it does.
 import { MARGIN } from "./popup.js";

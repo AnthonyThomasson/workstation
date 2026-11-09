@@ -197,7 +197,7 @@ export class TaskSettings {
       .hover((s) => s.bg(on ? t.selected : t.hover)).on_mouse_down("left", stop).on_click(onClick).child(label);
     const heading = (text) => div().text_size(S().secondary).font_semibold().child(text);
     return v_flex().flex_none().gap(10)
-      .child(note(t, `The + beside Backlog opens this agent. The model and effort are passed to the agent when it starts.`))
+      .child(note(t, `The + in the Tasks header opens this agent. The model and effort are passed to the agent when it starts.`))
       .child(v_flex().gap(4).child(heading("Agent"))
         .child(h_flex().flex_wrap().gap(4).children(this.agents.length
           ? this.agents.map((a) => chip(`groom-agent-${a.key}`, a.name, a.key === agent?.key, (_e, cx) => { this.saveGroomer({ agent: a.key }); cx.notify(); }))

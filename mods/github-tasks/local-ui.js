@@ -48,7 +48,7 @@ export const LOCAL_STATUS_OPTIONS = pickableStatuses(FOLDERS.map((f) => ({ name:
 // Labels typed into the editor: "a, b" or one name. Empty pieces go; the rest is kept as typed.
 export const typedLabels = (text) => String(text ?? "").split(",").map((l) => l.trim()).filter(Boolean);
 
-// What the agent is first told by the + beside Backlog in local mode. todoDir, upNextDir: the exact folders; nextId: the id
+// What the agent is first told by the + in the Tasks header in local mode. todoDir, upNextDir: the exact folders; nextId: the id
 // for the new task. It waits for the person (or starts from their description), grills them like the GitHub prompt does, then writes one file.
 export function localNewTaskPrompt({ mainRoot, todoDir, upNextDir, nextId, description = "" }) {
   const name = String(mainRoot ?? "").split("/").filter(Boolean).pop() || "<repo>";
