@@ -9,12 +9,12 @@
 // workflow's agents, beside its orchestrator (run-page.js); "prompt", one read-only agent prompt (prompts-page.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, spaces, focused, panes, terminals, notify, openOverlay, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
+import { run, spaces, focused, notify, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
 import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, spelled, STATUSES, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, TASK_SOURCE } from "./model.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField } from "./loader.js";
 import { installedAgents, startNewTask, startLocalNewTask } from "./groom.js";
 import { setupProject, setupNote } from "./project-setup.js";
-import { S, icon, stop, note, iconButton, action, gh, later, app } from "./ui.js";
+import { S, icon, stop, note, iconButton, action, gh, later } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { TaskEditor, CHANGED } from "./editor.js";
 import { LocalTaskEditor } from "./local-editor.js";
@@ -27,11 +27,9 @@ import { WorkflowEditor } from "./workflow-editor.js";
 import { openOnce, ticketSubject } from "./open-tabs.js";
 import { RunPage } from "./run-page.js";
 import { PromptPage } from "./prompts-page.js";
-import { CloseConfirm } from "./close-confirm.js";
-import { closeFocusedTab, forgetAsking, ASKING, isAsking } from "./close-tab.js";
 import { WorkflowList } from "./workflow-list.js";
 import { loadWorkflows } from "./workflow-env.js";
-import { startRun, liveRunFor, viewRun } from "./start.js";
+import { startRun, liveRunFor, viewRun, reconnectRuns } from "./start.js";
 import { startDoctor } from "./doctor-env.js";
 import { DOCTOR_KEY, doctorFor } from "./doctor.js";
 
@@ -56,12 +54,6 @@ const shownHere = () => {
   return Boolean(panel && !panel.hidden && body?.active === SHOWN);
 };
 
-const CLOSE_DEPS = {
-  focused, panes, terminals, notify, run: app,
-  tabName: (id) => spaces().flatMap((s) => s.tabs ?? []).find((x) => x.id === id)?.name ?? "This task",
-  asking: (tab) => isAsking(shared(ASKING), tab),
-  ask: ({ tab, name }) => { setShared(ASKING, { ...(shared(ASKING) ?? {}), [tab]: Date.now() }); openOverlay({ mod: "github-tasks", props: { role: "close-confirm", tab, name }, kind: "dialog", modal: true, width: 420 }); },
-};
 const activeSpace = () => spaces().find((s) => s.active) ?? null;
 
 // Shows the settings in the layout's shared side panel.
@@ -91,7 +83,6 @@ export default class GitHubTasks extends View {
       return;
     }
     if (this.role === "prompt") { this.promptPage = new PromptPage(blockProps()); return; }
-    if (this.role === "close-confirm") { this.closeConfirm = new CloseConfirm(blockProps()); return; }
     if (this.role === "settings") {
       this.settingsKey = null;
       this.page = null;
@@ -111,13 +102,12 @@ export default class GitHubTasks extends View {
     this.doctor = startDoctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
     cx.timer.every(POLL, (cx) => this.refresh(cx));
     cx.timer.every(LOCAL_POLL, (cx) => { cx.notify(); this.tick(cx); }); // a run starting or ending turns a row's Start into View and back; local tasks and tasks.json are looked at again
-    forgetAsking({ setShared }); // no close-tab dialog is open at startup, so a mark saved before a crash is stale
+    // A restart drops what terminal.show showed: show each live run's orchestrator again in its tab (twice, in case the app was still loading).
+    cx.spawn(async (cx) => { await reconnectRuns(cx); await cx.sleep(5000); await reconnectRuns(cx); });
     cx.spawn(async (cx) => {
       for (;;) {
         const command = await nextCommand();
         if (command === "focus") this.handle.focus();
-        // keys.json binds the close-tab key to "github-tasks.close_tab"; a tab with a running workflow asks first (close-tab.js).
-        else if (command === "close_tab") closeFocusedTab(CLOSE_DEPS);
         cx.notify();
       }
     });
@@ -287,15 +277,11 @@ export default class GitHubTasks extends View {
     if (ctx) this.auth.start(cx, args, ctx.on, (cx) => this.refresh(cx));
   }
 
-  // The close-tab question went away by Esc: tell it, so the next key press may ask again.
-  async close() { await this.closeConfirm?.close(); }
-
   render(cx) {
     if (this.role === "editor") return this.editor.render(cx);
     if (this.role === "workflow-editor") return this.workflowEditor.render(cx);
     if (this.role === "run") return this.runPage.render(cx);
     if (this.role === "prompt") return this.promptPage.render(cx);
-    if (this.role === "close-confirm") return this.closeConfirm.render(cx);
     if (this.role === "settings") return this.renderSettings(cx);
     const t = theme();
 

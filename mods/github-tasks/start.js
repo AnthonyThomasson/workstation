@@ -1,12 +1,13 @@
-// Starts a workflow on a ticket: gets the ticket's worktree ready, writes what the agents read, and opens a tab with the
-// orchestrator's terminal on the left and the run page (run-page.js), the list of its agents, on the right. From there the
-// orchestrator runs the ticket itself (run.js says how).
-import { exec, hc, home, knownAgents, notify, panes, readTextFile, run, spaces, terminals, writeTextFile } from "herdr";
+// Starts a workflow on a ticket: gets the ticket's worktree ready, writes what the agents read, starts the orchestrator in
+// the background (owned by no tab or pane: bgrun.js) and opens a tab that shows it on the left, with the run page
+// (run-page.js), the list of its agents, on the right. From there the orchestrator runs the ticket itself (run.js says how).
+import { exec, focused, hc, home, knownAgents, notify, panes, readTextFile, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
+import { connectRun, guarded, launchRun, reapplyRuns, runTabParts, slotKey, viewTarget } from "./bgrun.js";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
 import { app } from "./ui.js";
 import { localTasks, repoHasGithubRemote, tasksConfig } from "./local-tasks-env.js";
 import { ROLES } from "./workflow-model.js";
-import { out, agentArgv, branchName, FOLDER_LABEL, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
+import { out, agentArgv, branchName, FOLDER_LABEL, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, SPACE_LABEL, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 
@@ -17,27 +18,67 @@ export const liveRunFor = (repo, ticket) => {
   return terminals().find((k) => k.state === "live" && k.labels?.[ROLE_LABEL] === "orchestrator" && k.labels?.[TICKET_LABEL] === key) ?? null;
 };
 
-// Brings a run's tab to the front with the run's own pane (the list of its agents) beside the
-// orchestrator. The pane is opened again when it's gone: closed, or never made because that part of Start failed.
-// ticket and repo: what the run is for, to name the pane. Doesn't throw; a pane that can't open leaves the tab as it is.
+// What is left of the run's tab, from the slot saved when it was connected (see runTabParts), or null.
+export const runTabOf = (id) => runTabParts({ slot: shared(slotKey(id)), spaces: spaces(), panes: panes() });
+
+// The tab that connects to a run's orchestrator (placeholder on the left, the orchestrator shown over it, the run page on
+// the right). props: the run page's; space: where to open it; folder: where the placeholder starts; existing: a tab that is
+// already there and lacks a part (see connectRun). Throws with the reason.
+function connect({ id, orchestrator, title, space, folder, props, existing = null }, cx) {
+  return connectRun({
+    app, run, paneOf: (made) => paneOf(made, cx), sleep: (ms) => cx.sleep(ms),
+    // The focused pane is the left one by now: the app says what it shows (an address). Not yet focused counts as not shown.
+    isShown: (orchestrator, left) => { const f = focused(); return f?.pane === left && f.shown === orchestrator; },
+    warn: (body) => notify({ title: "The orchestrator may not be showing", body, level: "warning" }),
+    setSlot: (runId, slot) => setShared(slotKey(runId), slot),
+  }, { id, orchestrator, name: title, space, folder, props, existing });
+}
+
+// A run being started, or a tab being connected: one at a time per run, so View (or Start again) never makes a second tab.
+const connecting = new Set();
+
+// Brings a run's tab to the front, showing its orchestrator again. When the tab was closed, opens a tab connected to the
+// same orchestrator, in the space the run started in (or the current one if that was closed); when it lost its left pane
+// or its run page, makes that good in the tab that is there. The run itself isn't touched. The run page's props come from
+// pane.json. A tab that can't be connected is said with the reason; this never fails silently and never throws.
+// ticket and repo: what the run is for, to name the tab.
 export async function viewRun(running, cx, { ticket, repo, project } = {}) {
-  const { "herdr.space": space, "herdr.tab": tab, [RUN_LABEL]: id, [FOLDER_LABEL]: folder } = running.labels;
-  if (space) run("space.select", { id: space });
-  if (tab) run("tab.select", { id: tab });
-  if (!tab || !id || panes().some((p) => p.tab === tab && p.mod === "github-tasks")) return;
+  const { [RUN_LABEL]: id, [FOLDER_LABEL]: folder, [SPACE_LABEL]: started } = running.labels ?? {};
+  const name = ticketName(ticket);
   try {
-    const pane = panes().find((p) => p.terminal === running.address)?.pane;
-    if (!pane) return;
-    const partial = {
-      role: "run", id, orchestrator: running.address, title: ticketName(ticket), workflow: "", branch: branchName(ticket), folder: folder ?? "",
-      ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null }, projectId: project?.id ?? null,
-      ...(ticket?.local ? { taskSource: "local", mainRoot: ticket.mainRoot, repoRoot: ticket.mainRoot } : {}), // the saved pane.json has the rest
-    };
-    // Start saved the full props (repoRoot, statusField, workflow name) beside the run's other files.
-    const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
-    await app("pane.split", { pane, direction: "right", mod: "github-tasks", props: reopenProps(saved, partial, running.address) });
-    run("pane.focus", { pane });
-  } catch { /* the tab is showing; only the list of agents is missing */ }
+    if (!id) throw new Error("the run has no id, so its details can't be found");
+    const open = runTabOf(id);
+    if (open?.left && open.page) {
+      run("space.select", { id: open.space });
+      run("tab.select", { id: open.tab });
+      app("terminal.show", { terminal: running.address, pane: open.left }).catch(() => {}); // if it had slipped off, put it back
+      return;
+    }
+    const did = await guarded(connecting, id, async () => {
+      const partial = {
+        role: "run", id, orchestrator: running.address, title: name, workflow: "", branch: branchName(ticket), folder: folder ?? "",
+        ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null }, projectId: project?.id ?? null,
+        ...(ticket?.local ? { taskSource: "local", mainRoot: ticket.mainRoot, repoRoot: ticket.mainRoot } : {}), // the saved pane.json has the rest
+      };
+      // Start saved the full props (repoRoot, statusField, workflow name) beside the run's other files.
+      const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
+      const props = reopenProps(saved, partial, running.address);
+      const space = viewTarget({ started: started ?? props.space, spaces: spaces(), current: spaces().find((s) => s.active)?.id });
+      const part = runTabOf(id); // read again: the person may have closed the rest meanwhile
+      await connect({ id, orchestrator: running.address, title: name, space, folder: folder ?? props.folder, props: { ...props, space: space ?? props.space }, existing: part ? { ...part } : null }, cx);
+      return true;
+    });
+    if (did === false) notify({ title: name, body: "This run's tab is still being opened. It will be in front in a moment.", level: "info" });
+  } catch (e) {
+    notify({ title: `Couldn't connect to ${name}`, body: `${e?.message ?? e}. The run itself is still going.`, level: "error" });
+  }
+}
+
+// After a Herdr restart the terminals shown in tabs are not kept: show each live run's orchestrator again in the tab it
+// has, so each run shows in exactly one tab. Waits for the app to list its spaces, panes and terminals. Safe to repeat.
+export async function reconnectRuns(cx) {
+  for (let i = 0; i < 40 && !(spaces().length && panes().length && terminals().length); i++) await cx.sleep(500);
+  return reapplyRuns({ terminals: terminals(), slot: (id) => shared(slotKey(id)), spaces: spaces(), panes: panes(), show: (a) => app("terminal.show", a) });
 }
 
 // Each role's agent as a command. An agent that isn't on this computer stops the run before anything changes.
@@ -126,32 +167,20 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   await writeRunFolder(id, { workflow, ticket, repo, runDir, workDir, repoRoot, branch, local: Boolean(found), noRemote: Boolean(found) && !found.githubRemote }, argv);
 
   const space = spaces().find((s) => s.active)?.id;
-  const made = await app("tab.new", {
-    name: ticketName(ticket), folder: workDir, argv: argv.orchestrator,
-    task: `Read ${runDir}/orchestrator.md and follow it.`,
-    ...(space ? { space } : {}),
-  });
-
-  // The orchestrator is running from here on, so what fails now is said without stopping it.
-  const problems = [];
-  const labels = await hc(["label", made.terminal, `${RUN_LABEL}=${id}`, `${ROLE_LABEL}=orchestrator`, `${TICKET_LABEL}=${key}`, `${FOLDER_LABEL}=${workDir}`]).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
-  if (labels.code !== 0) problems.push(`Start won't find this run again (${out(labels)}).`);
-  const pane = await paneOf(made, cx);
-  try {
-    if (!pane) throw new Error("its pane didn't appear");
-    const props = {
-      role: "run", id, orchestrator: made.terminal, title: ticketName(ticket), workflow: workflow.name, branch, folder: workDir,
-      repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null },
-      projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
-      // A local task: the page moves the task's file, and Create PR and Merge depend on whether origin is on GitHub.
-      ...(found ? { taskSource: "local", mainRoot: repoRoot, githubRemote: found.githubRemote } : {}),
-    };
-    await writeTextFile(`${runDir}/pane.json`, JSON.stringify(props), null).catch(() => {}); // View reopens the pane from this
-    await app("pane.split", { pane, direction: "right", mod: "github-tasks", props });
-    run("pane.focus", { pane }); // the person answers the orchestrator there
-  } catch (e) {
-    problems.push(`The list of its agents didn't open (${e?.message ?? e}).`);
-  }
-  if (problems.length) notify({ title: "The workflow started, with a problem", body: problems.join(" "), level: "warning" });
+  const props = {
+    role: "run", id, orchestrator: null, title: ticketName(ticket), workflow: workflow.name, branch, folder: workDir,
+    repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null },
+    projectId: board.project?.id ?? null, statusField: board.statusField ?? null, space: space ?? null,
+    // A local task: the page moves the task's file, and Create PR and Merge depend on whether origin is on GitHub.
+    ...(found ? { taskSource: "local", mainRoot: repoRoot, githubRemote: found.githubRemote } : {}),
+  };
+  // The orchestrator runs in the background, owned by no tab or pane, so closing the tab never ends it. It is guarded as
+  // a whole: from the moment it exists View and Start see it, and the tab is opened here, not by them (bgrun.js launchRun).
+  const launched = await guarded(connecting, id, () => launchRun({
+    hc, writePaneJson: (p) => writeTextFile(`${runDir}/pane.json`, JSON.stringify(p), null),
+    connect: (p) => connect({ id, orchestrator: p.orchestrator, title: p.title, space, folder: workDir, props: p }, cx),
+    closeTab: () => { const part = runTabOf(id); if (part) run("tab.close", { id: part.tab }); setShared(slotKey(id), null); },
+  }, { id, key, workDir, space, argv: argv.orchestrator, task: `Read ${runDir}/orchestrator.md and follow it.`, props }));
+  if (launched.problems.length) notify({ title: "The workflow started, with a problem", body: launched.problems.join(" "), level: "warning" });
   return { resumed: false };
 }

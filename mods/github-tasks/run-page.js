@@ -5,7 +5,8 @@
 // main.js builds one in init, calls refresh on a timer and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, hc, home, notify, run, setShared, shared, terminals, theme } from "herdr";
+import { exec, hc, home, notify, panes, run, setShared, shared, spaces, terminals, theme } from "herdr";
+import { endRun, mergeOutcome, slotKey } from "./bgrun.js";
 import { S, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
 import { agentsFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
@@ -239,10 +240,7 @@ export class RunPage {
           status: await this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
         }), exec);
         for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
-        if (!(await this.closeSession())) {
-          this.error = "Merged. This tab couldn't be closed for you: close it yourself.";
-          this.busy = null; cx.notify();
-        }
+        if (!(await this.closeSession())) { this.busy = null; cx.notify(); } // the page is still there: say what is left to do
       } catch (e) {
         if (!(await this.handOff(e))) this.error = String(e?.message ?? e);
         this.busy = null; cx.notify();
@@ -255,7 +253,7 @@ export class RunPage {
   // undone and listed. Then the task goes to done/ and the worktree, branch, run files and terminals go as in the pull request Merge.
   mergeLocal(cx) {
     if (this.busy) return;
-    this.busy = "merge"; this.error = null; cx.notify();
+    this.busy = "merge"; this.error = null; this.note = null; cx.notify();
     cx.spawn(async (cx) => {
       try {
         const workDirExists = (await exec("git", worktreeArgs(this.folder))).code === 0;
@@ -267,10 +265,7 @@ export class RunPage {
           message: squashMessage(title, this.ticket?.number), status: await this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
         }), exec);
         for (const body of warnings) notify({ title: "The task didn't move", body, level: "warning" });
-        if (!(await this.closeSession())) {
-          this.error = "Merged. This tab couldn't be closed for you: close it yourself.";
-          this.busy = null; cx.notify();
-        }
+        if (!(await this.closeSession())) { this.busy = null; cx.notify(); } // the page is still there: closeSession said what is left to do
       } catch (e) { this.error = String(e?.message ?? e); this.busy = null; cx.notify(); }
     });
   }
@@ -302,18 +297,19 @@ export class RunPage {
     return { args: statusArgs({ projectId: this.projectId, itemId: this.ticket.key, fieldId: this.statusField.id, optionId: option.id }) };
   }
 
-  // Ends the run's workers and reviewers, then its tab, which ends the orchestrator and this page with it.
-  // Resolves false when the tab couldn't be found, so the page can say so instead of staying on "Merging…".
+
+  // Ends the run: its orchestrator, workers and reviewers are killed on purpose (a background run ends no other way), then
+  // its tab is closed if it is open. Says what to do when something couldn't be ended or the tab couldn't be found: it
+  // never leaves the page on "Merging…". Resolves true when the tab (and so this page) was closed.
   async closeSession() {
-    const all = terminals();
-    for (const k of all.filter((x) => x.labels?.[RUN] === this.id && x.address !== this.orchestrator)) {
-      await hc(["kill", k.address]).catch(() => {});
-      await hc(["rm", k.address]).catch(() => {});
-    }
-    const tab = all.find((x) => x.address === this.orchestrator)?.labels?.["herdr.tab"];
-    if (!tab) return false;
-    run("tab.close", { id: tab });
-    return true;
+    const ended = await endRun({
+      id: this.id, orchestrator: this.orchestrator, hc, terminals, run, slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes(),
+      clearSlot: () => setShared(slotKey(this.id), null),
+    });
+    const outcome = mergeOutcome(ended);
+    if (outcome.error) this.error = outcome.error;
+    if (outcome.note) this.note = outcome.note;
+    return outcome.done;
   }
 
   renderSection(t, title, rows, empty) {
