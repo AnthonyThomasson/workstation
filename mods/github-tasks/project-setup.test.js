@@ -18,7 +18,7 @@ function fakeGh({ labels = [], statusField = { id: "F1", options: [{ id: "a", na
     if (args[0] === "api" && joined.includes("field(name:")) return failing.read ? fail("HTTP 500") : ok({ data: { node: { field: statusField } } });
     if (args[0] === "api" && joined.includes("updateProjectV2Field")) return failing.statuses ? fail("HTTP 403: forbidden") : ok({ data: {} });
     if (args[0] === "label" && args[1] === "list") return failing.list ? fail("HTTP 502") : ok(labels.map((name) => ({ name, color: "ededed" })));
-    if (args[0] === "label" && args[1] === "create") return failing.create === args[2] ? fail("could not create") : { code: 0, stdout: "", stderr: "" };
+    if (args[0] === "label" && args[1] === "create") return failing.create === args.find((a, i) => i > 1 && a !== "-R" && a !== "--" && args[i - 1] !== "-R") ? fail("could not create") : { code: 0, stdout: "", stderr: "" };
     throw new Error(`unexpected gh ${joined}`);
   };
   return { gh, calls };
@@ -52,6 +52,14 @@ test("a trigger label the repo lacks is created with plain gh label create, and 
   const result = await run(fake, [wf("bug", "feature"), wf("FEATURE", "Story")]);
   assert.deepEqual(created(fake.calls), [["label", "create", "feature", "-R", "acme/app"], ["label", "create", "Story", "-R", "acme/app"]]);
   assert.deepEqual(result.created, ["feature", "Story"]);
+  assert.deepEqual(result.problems, []);
+});
+
+test("a trigger label starting with a dash is created after --, so it isn't read as a flag", async () => {
+  const fake = fakeGh();
+  const result = await run(fake, [wf("-wip", "bug")]);
+  assert.deepEqual(created(fake.calls), [["label", "create", "-R", "acme/app", "--", "-wip"], ["label", "create", "bug", "-R", "acme/app"]]);
+  assert.deepEqual(result.created, ["-wip", "bug"]);
   assert.deepEqual(result.problems, []);
 });
 

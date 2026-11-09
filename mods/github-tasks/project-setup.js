@@ -57,7 +57,8 @@ export async function setupProject(gh, { repo, project, loadWorkflows, where }) 
     }
     for (const name of have ? wanted.filter((n) => !hasLabel(have, n)) : []) {
       try {
-        const r = await gh(["label", "create", name, "-R", repo], where);
+        // A name starting with "-" would be read as a flag, so it goes after "--".
+        const r = await gh(name.startsWith("-") ? ["label", "create", "-R", repo, "--", name] : ["label", "create", name, "-R", repo], where);
         if (r.code !== 0) throw new GitHubError(r.stderr || r.stdout);
         created.push(name);
       } catch (e) { problems.push(`The label "${name}" wasn't created: ${why(e)}`); doctorFixes = true; }
