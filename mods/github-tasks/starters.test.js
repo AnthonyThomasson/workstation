@@ -30,9 +30,7 @@ for (const file of ["bug.yaml", "story.yaml"]) {
   });
 
   test(`${file} retro proposes follow-up tickets with the question tool and adds the picked ones to To Do`, () => {
-    const retro = load(file).orchestrator.retro;
-    assert.match(retro, /propose follow-up tickets with the question tool/);
-    assert.match(retro, /add the ones the person picks to To Do/);
+    assert.equal(load(file).orchestrator.retro, "Look back on what slowed the run and what to write down for next time, then propose follow-up tickets with the question tool and add the ones the person picks to To Do.");
   });
 
   test(`${file} prompts do not mention a skill`, () => {
