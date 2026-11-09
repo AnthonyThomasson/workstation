@@ -18,6 +18,7 @@ import { createRunner } from "./jobs.js";
 import { createChannel } from "./channel.js";
 import { operate } from "./operations.js";
 import { findProject, loadResources, loadChecks } from "./loader.js";
+import { migrateKeys } from "./migrate.js";
 
 // The side panel is the layout's shared "panel" column, whose "panel-body" stack holds Files, Changes and
 // this panel (child "skills"). Like those two, it is open only while the column is shown on it.
@@ -28,9 +29,9 @@ const shownHere = () => {
 };
 // Shows this panel.
 const showPanel = () => { run("layout.select", { stack: STACK, child: SHOWN }); run("layout.show", { id: PANEL }); };
-const RECENT = "skillshare.recent.v1"; // install sources, newest first
-const HIDE_DISABLED = "skillshare.hideDisabled.v1"; // false lists disabled rows; unset or true hides them
-const IGNORED = "skillshare.doctorIgnored.v1"; // doctor warnings the person chose to hide: ["scope|name|message", ...]
+const RECENT = "skills.recent.v1"; // install sources, newest first
+const HIDE_DISABLED = "skills.hideDisabled.v1"; // false lists disabled rows; unset or true hides them
+const IGNORED = "skills.doctorIgnored.v1"; // doctor warnings the person chose to hide: ["scope|name|message", ...]
 const ignoredList = () => (Array.isArray(shared(IGNORED)) ? shared(IGNORED) : []);
 const doctorKey = (scope, c) => `${scope}|${c.name}|${c.message}`;
 const POLL = 20000, CHECK_EVERY = 10 * 60 * 1000, NOTICE_MS = 4000;
@@ -165,7 +166,7 @@ const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
 const warnBox = (t, text) => div().flex_none().px(12).py(10).rounded(6).bg(t.selected).text_size(S().secondary).text_color(t.blocked).child(text);
 const sectionLabel = (t, text) => div().flex_none().text_size(S().label).font_semibold().text_color(t.muted).child(text);
 
-const channel = createChannel({ get: (k) => shared(k), set: (k, v) => setShared(k, v) });
+const channel = createChannel({ get: shared, set: setShared });
 const request = (op) => channel.request(op);
 
 export default class Skillshare extends View {
@@ -174,6 +175,7 @@ export default class Skillshare extends View {
     if (this.role === "toggle") return;
     this.handle = cx.focus_handle();
     if (this.role !== "panel") return this.initDialog(cx);
+    migrateKeys(shared, setShared); // saved choices from the old skillshare.* keys; a write, so here and not in render
 
     this.view = "resources"; this.scope = "all"; this.kind = "skills"; this.query = ""; this.open = null;
     this.ctx = null; this.project = null; this.raw = {}; this.items = []; this.loading = false; this.loadedAt = 0;
