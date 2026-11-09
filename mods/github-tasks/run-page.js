@@ -253,7 +253,7 @@ export class RunPage {
   // undone and listed. Then the task goes to done/ and the worktree, branch, run files and terminals go as in the pull request Merge.
   mergeLocal(cx) {
     if (this.busy) return;
-    this.busy = "merge"; this.error = null; cx.notify();
+    this.busy = "merge"; this.error = null; this.note = null; cx.notify();
     cx.spawn(async (cx) => {
       try {
         const workDirExists = (await exec("git", worktreeArgs(this.folder))).code === 0;
