@@ -1,4 +1,4 @@
-// The New task dialog, in the overlay the + on the Backlog header opens (props.role "new-task"; new-task-dialog.js has the state and
+// The New task dialog, in the overlay the + in the Tasks header opens (props.role "new-task"; new-task-dialog.js has the state and
 // says what the buttons do). Not a View of its own: main.js builds one in init and draws it from render. Continue starts the task
 // (startTask) as the sidebar did before there was a dialog: GitHub mode or local mode, from the place the sidebar was looking at.
 import { div } from "gpui-kit";

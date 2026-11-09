@@ -247,7 +247,7 @@ export function newTaskStart(description) {
   ].join("\n");
 }
 
-// What the agent is first told by the + beside Backlog: it waits for the person to say what they want (or, given a
+// What the agent is first told by the + in the Tasks header: it waits for the person to say what they want (or, given a
 // description, reads the code and starts from it), grills them until the ticket is well defined, then asks before creating
 // it and which status it should start in.
 export function newTaskPrompt({ repo: repoName, project, backlog = STATUSES.backlog, groomed = STATUSES.groomed, description = "" }) {
