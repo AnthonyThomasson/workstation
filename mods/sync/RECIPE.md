@@ -92,7 +92,7 @@ To reinstall one entry by hand: `skillshare install <repo_url-without-https-and-
 - Herdr APIs include `exec`, `run`, `layout`, `theme`, `shared`/`setShared`, `notify`, `readTextFile`, `watchFolder`, `appHome`, `home`, timers (`cx.timer.every`, `cx.sleep`, `cx.spawn`) and `props`. App actions include `layout.select`, `layout.show` and `layout.hide`.
 - Programs and shell utilities include `sh`, `git` (`rev-parse` incl. `--absolute-git-dir`, `worktree list`, `symbolic-ref`, `ls-files`, `check-ignore`, `for-each-ref`, `switch`), `herdr-app`, `mktemp`, `rm`, `xargs`, `cksum`, `grep`, `awk`, `tail`, `basename`, `find`, `cat`, `ps`, `kill`, `sleep`. Long jobs detach with `setsid` where available or shell job control otherwise, clear `HC_SCOPE`, poll files in a temporary directory, and time out after 15 minutes.
 - Network access: none. The mod makes no `git fetch`, `pull` or `push` calls, and `sync.sh` does not either (Skillshare reinstalls of recorded skills may reach their sources). It reads the linked repo, runs `mods/sync/sync.sh` in the picked folder (which writes `~/.config/herdr-app` and `sync.json`), and writes temporary job files.
-- Art is `icons/sync.svg`, `chevron-down.svg`, `chevron-right.svg` and `close.svg`, referenced as `mods/sync/icons/<name>.svg` and tinted with theme colors.
+- Art is `icons/sync.svg`, `chevron-down.svg`, `chevron-right.svg`, `close.svg` and `search.svg`, referenced as `mods/sync/icons/<name>.svg` and tinted with theme colors.
 
 ## Watch out
 
