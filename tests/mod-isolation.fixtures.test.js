@@ -22,8 +22,9 @@ const EXPECTED = [
   "alpha/paths.js:3 file-path",
   "alpha/paths.js:6 file-path",
   "alpha/paths.js:7 file-path",
-  // own.js is also imported by mod code, so its fake name fails; helper.js is imported only by the test, so only its real name does
+  // own.js and helper.js are not *.test.js, so they are mod code even though only the test imports helper.js: fake names fail too
   "alpha/own.js:1 file-path",
+  "alpha/helper.js:1 file-path",
   "alpha/helper.js:2 file-path",
   // overlays: another mod, an unknown name, one found through popup(), a spread object, an unknown value
   "alpha/overlays.js:5 overlay",
@@ -51,7 +52,7 @@ const EXPECTED = [
   "alpha/bare.js:4 shared-key",
   "alpha/bare.js:6 shared-key",
   "alpha/broken.js:1 parse",
-  // *.test.js: only real mods fail; "demo", "skillshare.x" and the test-only helper's fake names pass
+  // *.test.js: only real mods fail; "demo" and "skillshare.x" pass
   "alpha/fake.test.js:2 import",
   "alpha/fake.test.js:6 file-path",
   "alpha/fake.test.js:9 overlay",

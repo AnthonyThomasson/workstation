@@ -13,9 +13,7 @@
 //              shared/setShared handed on as a value ({ get: shared }, f(shared), or (k) => shared(k) given to a
 //              function of the same mod) are followed into that function; what can't be followed fails.
 //   parse      the file is not valid JavaScript.
-// Test code: a *.test.js file, and any other .js file that is imported only by test code of the same mod (directly or
-// through other test-only helpers), such as a helper that builds sample repos. A file nothing imports is mod code.
-// In mod code a name must be this mod or on the allowlists below. In *.test.js files only the names of other
+// In mod code (every .js file that is not a *.test.js) a name must be this mod or on the allowlists below. In *.test.js files only the names of other
 // real mods (folders under the scanned root) fail: fake names used as sample data are fine.
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -558,24 +556,6 @@ export function checkMods(root) {
     }
   }
 
-  // A helper that only tests import (e.g. a file that builds sample repos) is test code too: sample names are fine there.
-  function markTestSupport(infos) {
-    const importers = new Map(infos.map((i) => [i, new Set()]));
-    for (const info of infos) {
-      for (const { spec } of info.specs) {
-        if (spec === null) continue;
-        try { const target = cache.get(resolveFile(info, spec)); if (target && target !== info) importers.get(target).add(info); } catch (e) { if (!(e instanceof Unfollow)) throw e; }
-      }
-    }
-    for (let changed = true; changed;) {
-      changed = false;
-      for (const info of infos) {
-        const from = importers.get(info);
-        if (!info.isTest && from.size && [...from].every((i) => i.isTest)) { info.isTest = true; changed = true; }
-      }
-    }
-  }
-
   // ---- Run ----
   const files = [];
   (function walk(dir) {
@@ -587,7 +567,6 @@ export function checkMods(root) {
     }
   })(root);
   for (const f of files) load(f);
-  markTestSupport(files.map((f) => cache.get(f)));
   for (const f of files) checkFile(cache.get(f));
   // Keys last: following a bare shared may add sinks from other files.
   const done = new Set();
