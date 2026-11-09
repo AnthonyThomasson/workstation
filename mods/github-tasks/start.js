@@ -23,28 +23,13 @@ export const liveRunFor = (repo, ticket) => {
 // What is left of the run's tab, from the slot saved when it was connected (see runTabParts), or null.
 export const runTabOf = (id) => runTabParts({ slot: shared(slotKey(id)), spaces: spaces(), panes: panes() });
 
-// The space a new space's first tab is in, which space.new may not say (the app lists it a moment later).
-async function spaceOfTab(tab, cx) {
-  for (let i = 0; i < 20; i++) {
-    const found = spaces().find((s) => (s.tabs ?? []).some((t) => t.id === tab));
-    if (found) return found.id;
-    await cx.sleep(100);
-  }
-  return null;
-}
-
 // The tab that connects to a run's orchestrator (placeholder on the left, the orchestrator shown over it, the run page on
 // the right). props: the run page's; space: the ticket's space to open it in, or null to make the ticket's space (named
 // title, at folder, the ticket's worktree); folder: where the placeholder starts; existing: a tab that is already there and
 // lacks a part (see connectRun). Resolves with the slot (created: true when this made the space). Throws with the reason.
 function connect({ id, orchestrator, title, space, folder, props, existing = null }, cx) {
   return connectRun({
-    app: async (name, args) => {
-      const made = await app(name, args);
-      if (name === "space.new" && !made.space) made.space = await spaceOfTab(made.tab, cx) ?? undefined;
-      return made;
-    },
-    run, paneOf: (made) => paneOf(made, cx), sleep: (ms) => cx.sleep(ms),
+    app, run, paneOf: (made) => paneOf(made, cx), sleep: (ms) => cx.sleep(ms),
     // The focused pane is the left one by now: the app says what it shows (an address). Not yet focused counts as not shown.
     isShown: (orchestrator, left) => { const f = focused(); return f?.pane === left && f.shown === orchestrator; },
     warn: (body) => notify({ title: "The orchestrator may not be showing", body, level: "warning" }),
@@ -82,7 +67,7 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
       const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
       const props = reopenProps(saved, partial, running.address);
       const workDir = folder ?? props.folder;
-      const space = viewTarget({ spaces: spaces(), panes: panes(), name, folder: workDir }); // the ticket's space, or null: make it again
+      const space = viewTarget({ spaces: spaces(), panes: panes(), folder: workDir, repoRoot: props.repoRoot ?? ticket?.mainRoot }); // the ticket's space, or null: make it again
       const part = runTabOf(id); // read again: the person may have closed the rest meanwhile
       await connect({ id, orchestrator: running.address, title: name, space, folder: workDir, props, existing: part ? { ...part } : null }, cx);
       return true;
@@ -197,7 +182,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   // a whole: from the moment it exists View and Start see it, and the tab is opened here, not by them (bgrun.js launchRun).
   // The run goes in the ticket's space: the one an earlier run of this ticket left (a failed or ended run), else a new one at
   // the worktree, which is taken down again if the start fails (closeTab).
-  const space = viewTarget({ spaces: spaces(), panes: panes(), name, folder: workDir });
+  const space = viewTarget({ spaces: spaces(), panes: panes(), folder: workDir, repoRoot });
   let created = null; // the space this Start made
   const launched = await guarded(connecting, id, () => launchRun({
     hc, writePaneJson: (p) => writeTextFile(`${runDir}/pane.json`, JSON.stringify(p), null),

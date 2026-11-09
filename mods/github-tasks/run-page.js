@@ -298,13 +298,13 @@ export class RunPage {
   }
 
 
-  // The ticket's space: its name is the page's title and its terminals are in the ticket's worktree (also once that is removed).
-  ticketSpace() { return findTicketSpace({ spaces: spaces(), panes: panes(), name: this.title, folder: this.folder }); }
+  // The ticket's space: its first terminal is in the ticket's worktree (also once that is removed).
+  ticketSpace() { return findTicketSpace({ spaces: spaces(), panes: panes(), folder: this.folder, repoRoot: this.repoRoot }); }
 
   // Looks in on a worker or reviewer. From the ticket's space first, so that keeping its terminal as a tab puts it there and
   // not in whichever space (the repo's) the person last looked at.
   peek(address) {
-    const space = peekSpace({ slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes(), name: this.title, folder: this.folder });
+    const space = peekSpace({ slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes(), folder: this.folder, repoRoot: this.repoRoot });
     if (space) run("space.select", { id: space });
     run("terminal.peek", { terminal: address });
   }

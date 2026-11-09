@@ -52,13 +52,16 @@ export async function guarded(busy, id, fn) {
 
 const inside = (path, folder) => path === folder || path.startsWith(`${folder.replace(/\/+$/, "")}/`);
 
-// The ticket's own space, if it is open: named for the ticket (name), on this computer, and either its folder is the ticket's
-// worktree (folder) or a terminal in it is. A space only called the same, or only in the same folder, is not the ticket's:
-// the repo's space is not named for a ticket. Its id, or null.
-export function findTicketSpace({ spaces, panes, name, folder }) {
-  if (!name || !folder) return null;
-  const found = (spaces ?? []).find((s) => !s.machine && s.name === name
-    && ((s.folder && inside(s.folder, folder)) || (panes ?? []).some((p) => p.cwd && inside(p.cwd, folder) && (s.tabs ?? []).some((t) => t.id === p.tab))));
+// The ticket's own space, if it is open: on this computer, and its folder is inside the ticket's worktree (folder), or so is
+// the folder of its first terminal (what the sidebar nests by; the space's folder can drift). Matching is by the worktree, not
+// by name, so a renamed issue or space is still found. The repo's space never is: it is skipped when its folder is the main
+// checkout (repoRoot), and a tab an older run opened at the worktree inside it doesn't count, as it is not its first terminal.
+// Its id, or null.
+export function findTicketSpace({ spaces, panes, folder, repoRoot = "" }) {
+  if (!folder || folder === repoRoot) return null;
+  const first = (s) => { const tab = s.tabs?.[0]?.id; return (panes ?? []).find((p) => p.tab === tab && p.cwd); };
+  const found = (spaces ?? []).find((s) => !s.machine && !(repoRoot && s.folder === repoRoot)
+    && ((s.folder && inside(s.folder, folder)) || (first(s) && inside(first(s).cwd, folder))));
   return found?.id ?? null;
 }
 
@@ -67,16 +70,16 @@ export function findTicketSpace({ spaces, panes, name, folder }) {
 export const viewTarget = findTicketSpace;
 
 // The space a worker's or reviewer's terminal is peeked from, so that keeping it as a tab lands in the ticket's space: the
-// space of the run's open tab, else the ticket's space found by name, else null.
-export function peekSpace({ slot, spaces, panes, name, folder }) {
-  return runTabParts({ slot, spaces, panes })?.space ?? findTicketSpace({ spaces, panes, name, folder });
+// space of the run's open tab, else the ticket's space found by its worktree, else null.
+export function peekSpace({ slot, spaces, panes, folder, repoRoot }) {
+  return runTabParts({ slot, spaces, panes })?.space ?? findTicketSpace({ spaces, panes, folder, repoRoot });
 }
 
 // Takes back what Start opened when the run fails to start: the space it made (confirmed: it holds only the run's tab), else
 // the tab it added to a space that was there already. Nothing to do when neither is open.
 export function undoRunTab({ created, part, run }) {
   if (created) run("space.close", { id: created, confirmed: true });
-  else if (part) run("tab.close", { id: part.tab });
+  else if (part) run("tab.close", { id: part.tab, confirmed: true }); // confirmed: it may be the space's last tab
 }
 
 const why = (e) => String(e?.message ?? e);
@@ -187,12 +190,13 @@ export async function reapplyRuns({ terminals, slot, spaces, panes, show }) {
 
 // Merge's end of a run: the orchestrator is killed on purpose first (nothing else ends a background run, and it would
 // start more workers meanwhile), then the terminals of the run that are left, read again; then, as the very last step (the
-// run page lives in it), the ticket's whole space is closed, confirmed, even with other tabs the person opened in it. The
-// space is the run tab's, else ticketSpace (found by name and worktree). A terminal that is still live after its kill is an
+// run page lives in it), the ticket's whole space is closed, confirmed, even with other tabs the person opened in it. That is
+// only done to the ticket's own space (ticketSpace, found by its worktree): a run from before the ticket got a space has its
+// tab in the repo's space, and then only that tab is closed. With no tab left, ticketSpace is closed. A terminal that is still live after its kill is an
 // error: the space and slot are kept and the error says which, so the person can end it by hand. A space already closed is
 // not a failure; `tabFound` false tells the page nothing was there to close.
 //   deps: { hc(args) -> { code, stderr }, terminals() (read again as needed), run(name, args), slot, spaces, panes, ticketSpace?, clearSlot() }.
-//   Resolves with { spaceClosed, error } (+ tabFound: false when no space was found).
+//   Resolves with { closed, error } (+ tabFound: false when no space was found).
 export async function endRun({ id, orchestrator, hc, terminals, run, slot, spaces, panes, ticketSpace = null, clearSlot }) {
   const live = () => (terminals() ?? []).filter((k) => k.state === "live" && (k.address === orchestrator || k.labels?.[RUN_LABEL] === id));
   const stuck = [];
@@ -203,12 +207,13 @@ export async function endRun({ id, orchestrator, hc, terminals, run, slot, space
   };
   if (orchestrator) await kill(orchestrator);
   for (const k of live().filter((k) => k.address !== orchestrator)) await kill(k.address);
-  if (stuck.length) return { spaceClosed: false, error: `couldn't end ${stuck.join("; ")}. Its space was kept; end it with hc kill.` };
-  const target = runTabParts({ slot, spaces, panes })?.space ?? ticketSpace;
+  if (stuck.length) return { closed: false, error: `couldn't end ${stuck.join("; ")}. Its space was kept; end it with hc kill.` };
+  const parts = runTabParts({ slot, spaces, panes });
   clearSlot();
-  if (!target) return { spaceClosed: false, error: null, tabFound: false };
-  run("space.close", { id: target, confirmed: true });
-  return { spaceClosed: true, error: null };
+  if (parts && parts.space !== ticketSpace) run("tab.close", { id: parts.tab }); // not the ticket's own space: the person's other tabs stay
+  else if (ticketSpace) run("space.close", { id: ticketSpace, confirmed: true });
+  else return { closed: false, error: null, tabFound: false };
+  return { closed: true, error: null };
 }
 
 // Starts a run's orchestrator and opens its tab at once, so the person watches it boot (and View, held off by the caller's
@@ -239,10 +244,10 @@ export async function launchRun(deps, { id, key, workDir, space, argv, task, pro
   return { orchestrator, problems };
 }
 
-// What the run page shows once Merge has ended the run: done (its space, and so the page, is closed), an error naming what
+// What the run page shows once Merge has ended the run: done (its space, or for an older run its tab, and so the page, is closed), an error naming what
 // couldn't be ended, or a note that the space couldn't be found. Anything but done frees the page from "Merging…".
 export function mergeOutcome(ended) {
-  if (ended.spaceClosed) return { done: true, error: null, note: null };
+  if (ended.closed) return { done: true, error: null, note: null };
   if (ended.error) return { done: false, error: `Merged, but ${ended.error}`, note: null };
   return { done: false, error: null, note: { text: "Merged. This run's space couldn't be found to close: close it yourself.", detail: "The run has ended; only its space is left." } };
 }
