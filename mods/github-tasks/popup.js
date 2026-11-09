@@ -45,3 +45,10 @@ export const editorOverlay = (props) => ({
   mod: "github-tasks", kind: "window", key: "github-tasks.editor", width: 1, height: 1, frame: "none",
   props: { ...props, popup: true },
 });
+
+// Whether the panel has just come on screen: it renders once the window has a size, and only then is the editor's root there
+// to take the keyboard.
+export const panelAppeared = (before, after) => !panelSize(before) && Boolean(panelSize(after));
+
+// The buttons whose presses the popup stops: a window drags on any press its mod doesn't stop, and remembers where it was dropped.
+export const PRESS_BUTTONS = ["left", "right", "middle"];

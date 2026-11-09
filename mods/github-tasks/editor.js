@@ -16,12 +16,14 @@ import { matchWorkflows } from "./match.js";
 import { loadWorkflows } from "./workflow-env.js";
 import { startRun } from "./start.js";
 import { markdownLiteral } from "./settings-model.js";
-import { panelSize, closeStep, escStep, afterSave } from "./popup.js";
+import { panelSize, panelAppeared, closeStep, escStep, afterSave, PRESS_BUTTONS } from "./popup.js";
 
 // Set to the time of each save, so the panel's list refreshes.
 export const CHANGED = "github-tasks.changed";
 
 const tabName = (ticket, title) => (ticket.draft ? title : `#${ticket.number} ${title}`);
+// Stops presses of every button (but `except`) on an element, so the popup's window isn't dragged by them.
+const stopPresses = (el, except) => PRESS_BUTTONS.filter((b) => b !== except).reduce((e, b) => e.on_mouse_down(b, stop), el);
 const SIGN_IN_KINDS = { "no-write-scope": REFRESH, "no-scope": REFRESH, "no-auth": LOGIN };
 
 export class TaskEditor {
@@ -73,7 +75,7 @@ export class TaskEditor {
     this.window = null;
     this.prompt = false;
     this.pending = null;
-    if (this.popup) cx.timer.after(50, () => this.handle.focus()); // a window doesn't take the keyboard when it opens
+    if (this.popup) cx.timer.after(50, () => this.handle.focus()); // a window doesn't take the keyboard when it opens (render also focuses once the panel is there)
     this.load(cx);
   }
 
@@ -317,11 +319,17 @@ export class TaskEditor {
     const t = theme(), panel = panelSize(this.window);
     // The backdrop covers the window; a press on it asks to close, and the panel stops presses so they don't. The
     // stops also keep the window from being dragged.
-    return div().id("editor-popup").size_full().flex().items_center().justify_center().bg("#000000a6")
-      .on_size_change((win, cx) => { this.window = win; cx.notify(); })
-      .on_mouse_down("left", (_e, cx) => { this.requestClose(cx); cx.stop_propagation(); })
-      .when(Boolean(panel), (el) => el.child(div().id("editor-panel").w(panel.width).h(panel.height).flex_none().rounded(12).border_1().border_color(t.border)
-        .overflow_hidden().shadow_lg().on_mouse_down("left", stop).child(this.renderEditor(cx))));
+    const backdrop = div().id("editor-popup").size_full().flex().items_center().justify_center().bg("#000000a6")
+      .on_size_change((win, cx) => {
+        // The editor's root only exists once the window is measured, so that is when it can take the keyboard.
+        if (panelAppeared(this.window, win)) cx.timer.after(50, () => this.handle.focus());
+        this.window = win;
+        cx.notify();
+      })
+      .on_mouse_down("left", (_e, cx) => { this.requestClose(cx); cx.stop_propagation(); });
+    return stopPresses(backdrop, "left")
+      .when(Boolean(panel), (el) => el.child(stopPresses(div().id("editor-panel").w(panel.width).h(panel.height).flex_none().rounded(12).border_1().border_color(t.border)
+        .overflow_hidden().shadow_lg()).child(this.renderEditor(cx))));
   }
 
   renderEditor(cx) {

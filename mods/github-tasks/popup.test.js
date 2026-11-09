@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { panelSize, closeStep, escStep, afterSave, editorOverlay, MIN_WIDTH, MIN_HEIGHT, MARGIN } from "./popup.js";
+import { panelAppeared, PRESS_BUTTONS, panelSize, closeStep, escStep, afterSave, editorOverlay, MIN_WIDTH, MIN_HEIGHT, MARGIN } from "./popup.js";
 
 test("the panel is 80% of the window", () => {
   assert.deepEqual(panelSize({ width: 2000, height: 1200 }), { width: 1600, height: 960 });
@@ -96,4 +96,14 @@ test("the overlay's props keep the autoStart and local extras", () => {
   assert.equal(o.props.autoStart, true);
   assert.deepEqual(o.props.local, { mainRoot: "/r" });
   assert.equal(o.props.popup, true);
+});
+
+test("the panel first shows when the window is first measured, and not again on a resize", () => {
+  assert.equal(panelAppeared(null, { width: 1200, height: 800 }), true);
+  assert.equal(panelAppeared({ width: 1200, height: 800 }, { width: 1000, height: 700 }), false);
+  assert.equal(panelAppeared(null, { width: 0, height: 0 }), false);
+});
+
+test("a press of any button on the popup is stopped, so the window can't be dragged", () => {
+  assert.deepEqual(PRESS_BUTTONS, ["left", "right", "middle"]);
 });
