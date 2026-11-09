@@ -6,7 +6,7 @@
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
 // workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket, in a popup (props.popup)
 // opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow in the center (workflow-editor.js); "run", a started
-// workflow's agents, beside its orchestrator (run-page.js); "prompt", one read-only agent prompt (prompts-page.js).
+// workflow's agents, beside its orchestrator (run-page.js); "investigation", a New Task session's Done button, beside its agent (investigation-page.js); "prompt", one read-only agent prompt (prompts-page.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, notify, shared, setShared, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
@@ -30,6 +30,8 @@ import { PromptPage } from "./prompts-page.js";
 import { WorkflowList } from "./workflow-list.js";
 import { loadWorkflows } from "./workflow-env.js";
 import { startRun, liveRunFor, viewRun, reconnectRuns } from "./start.js";
+import { reconnectInvestigations } from "./investigate.js";
+import { InvestigationPage } from "./investigation-page.js";
 import { startDoctor } from "./doctor-env.js";
 import { DOCTOR_KEY, doctorFor } from "./doctor.js";
 import { SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload } from "./space-lists.js";
@@ -83,6 +85,11 @@ export default class GitHubTasks extends View {
       cx.timer.every(3000, (cx) => { this.runPage.refresh(cx); cx.notify(); }); // agents starting and ending, and their status
       return;
     }
+    if (this.role === "investigation") {
+      this.investigationPage = new InvestigationPage(blockProps());
+      cx.timer.every(3000, (cx) => cx.notify()); // the agent's status, and its end
+      return;
+    }
     if (this.role === "prompt") { this.promptPage = new PromptPage(blockProps()); return; }
     if (this.role === "settings") {
       this.settingsKey = null;
@@ -106,6 +113,8 @@ export default class GitHubTasks extends View {
     cx.timer.every(LOCAL_POLL, (cx) => { cx.notify(); this.tick(cx); }); // a run starting or ending turns a row's Start into View and back; local tasks and tasks.json are looked at again
     // A restart drops what terminal.show showed: show each live run's orchestrator again in its tab (twice, in case the app was still loading).
     cx.spawn(async (cx) => { await reconnectRuns(cx); await cx.sleep(5000); await reconnectRuns(cx); });
+    // The same for New Task sessions (Investigations), which are shown in tabs like a run's orchestrator.
+    cx.spawn(async (cx) => { await reconnectInvestigations(cx); await cx.sleep(5000); await reconnectInvestigations(cx); });
     cx.spawn(async (cx) => {
       for (;;) {
         const command = await nextCommand();
@@ -255,6 +264,7 @@ export default class GitHubTasks extends View {
     if (this.role === "editor") return this.editor.render(cx);
     if (this.role === "workflow-editor") return this.workflowEditor.render(cx);
     if (this.role === "run") return this.runPage.render(cx);
+    if (this.role === "investigation") return this.investigationPage.render(cx);
     if (this.role === "prompt") return this.promptPage.render(cx);
     if (this.role === "settings") return this.renderSettings(cx);
     const t = theme();
@@ -388,7 +398,8 @@ export default class GitHubTasks extends View {
     return this.agents.find((a) => a.key === saved) ?? this.agents.find((a) => a.key === "claude") ?? this.agents[0] ?? null;
   }
 
-  startTask(cx) {
+  // description: what the person wants the ticket to be about, if they said (the agent starts from it); none: it asks.
+  startTask(cx, description = "") {
     const ctx = this.ctx, project = this.project, agent = this.agent(), local = this.source === "local";
     if (!ctx || !agent || this.startingTask || (local ? !this.place?.mainRoot || this.place.remote : !project)) return;
     this.startingTask = true;
@@ -396,14 +407,14 @@ export default class GitHubTasks extends View {
     cx.spawn(async (cx) => {
       try {
         if (local) {
-          await startLocalNewTask({ agent, mainRoot: this.place.mainRoot, groomer: normalizeGroomer(shared(GROOMER_KEY)), where: { cwd: ctx.folder, on: ctx.on } });
+          await startLocalNewTask({ agent, description, mainRoot: this.place.mainRoot, groomer: normalizeGroomer(shared(GROOMER_KEY)), where: { cwd: ctx.folder, on: ctx.on } }, cx);
           this.localError = null;
           return;
         }
         // The prompt names the statuses as the project spells them ("Todo", not the fixed "To Do").
         const where = { cwd: ctx.folder, on: ctx.on };
         const options = (await loadStatusField(gh, project.id, where).catch(() => null))?.options ?? [];
-        await startNewTask({ agent, repo: this.repo, project, settings: { backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) }, groomer: normalizeGroomer(shared(GROOMER_KEY)), where });
+        await startNewTask({ agent, description, repo: this.repo, project, settings: { backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) }, groomer: normalizeGroomer(shared(GROOMER_KEY)), where }, cx);
         this.error = null;
       } catch (e) {
         this.error = { kind: "other", message: String(e?.message ?? e) };

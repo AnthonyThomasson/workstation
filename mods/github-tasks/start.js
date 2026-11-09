@@ -27,19 +27,19 @@ export const runTabOf = (id, name, ticketSpace = null) => runTabParts({ slot: sh
 // The tab that connects to a run's orchestrator (placeholder on the left, the orchestrator shown over it, the run page on
 // the right). props: the run page's; space: the ticket's space to open it in, or null to make the ticket's space (named
 // title, at folder, the ticket's worktree); folder: where the placeholder starts; existing: a tab that is already there and
-// lacks a part (see connectRun). Resolves with the slot (created: true when this made the space). Throws with the reason.
-function connect({ id, orchestrator, title, space, folder, props, existing = null }, cx) {
+// lacks a part (see connectRun); kind: "run", or "investigation" (investigate.js reuses this). Resolves with the slot (created: true when this made the space). Throws with the reason.
+export function connect({ id, orchestrator, title, space, folder, props, existing = null, kind = "run" }, cx) {
   return connectRun({
     app, run, paneOf: (made) => paneOf(made, cx), sleep: (ms) => cx.sleep(ms),
     // The focused pane is the left one by now: the app says what it shows (an address). Not yet focused counts as not shown.
     isShown: (orchestrator, left) => { const f = focused(); return f?.pane === left && f.shown === orchestrator; },
     warn: (body) => notify({ title: "The orchestrator may not be showing", body, level: "warning" }),
     setSlot: (runId, slot) => setShared(slotKey(runId), slot),
-  }, { id, orchestrator, name: title, space, spaceName: title, folder, props, existing });
+  }, { id, orchestrator, name: title, space, spaceName: title, folder, props, existing, kind });
 }
 
 // A run being started, or a tab being connected: one at a time per run, so View (or Start again) never makes a second tab.
-const connecting = new Set();
+export const connecting = new Set();
 
 // Brings a run's tab to the front, showing its orchestrator again. When the tab was closed, opens a tab connected to the
 // same orchestrator, in the ticket's space (or, if that was closed too, in a new one at the worktree); when it lost its left pane
