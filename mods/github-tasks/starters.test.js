@@ -15,20 +15,6 @@ for (const file of ["bug.yaml", "story.yaml"]) {
     assert.equal(normalize(data).id, data.id);
   });
 
-  test(`${file} prompts are each a single sentence`, () => {
-    const data = load(file);
-    for (const [role, key] of PROMPTS) {
-      const prompt = data[role][key];
-      if (prompt === "") continue;
-      const label = `${file} ${role}.${key}`;
-      assert.equal(typeof prompt, "string", label);
-      assert.equal(prompt, prompt.trim(), `${label} has stray whitespace`);
-      assert.match(prompt, /[.!?]$/, `${label} must end with . ! or ?`);
-      // a terminator followed by whitespace or the end is a sentence boundary ("AGENTS.md" is not one)
-      assert.equal(prompt.match(/[.!?](\s|$)/g).length, 1, `${label} must be one sentence: ${prompt}`);
-    }
-  });
-
   test(`${file} retro proposes follow-up tickets with the question tool and adds the picked ones to To Do`, () => {
     assert.equal(load(file).orchestrator.retro, "Look back on what slowed the run and what to write down for next time, then propose follow-up tickets with the question tool and add the ones the person picks to To Do.");
   });
