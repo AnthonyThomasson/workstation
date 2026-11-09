@@ -11,7 +11,8 @@ import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, panes, terminals, notify, openOverlay, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
 import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, spelled, STATUSES, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE } from "./model.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField } from "./loader.js";
-import { installedAgents, startNewTask, startProjectSetup } from "./groom.js";
+import { installedAgents, startNewTask } from "./groom.js";
+import { setupProject, setupNote } from "./project-setup.js";
 import { S, icon, stop, note, iconButton, action, gh, later, app } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { TaskEditor, CHANGED } from "./editor.js";
@@ -352,14 +353,15 @@ export default class GitHubTasks extends View {
   }
 
   // The Create Project button, shown when the repo has no project: makes one linked to the repo, selects
-  // it and lists its tickets, then opens the default agent to set it up with the Herdr modules.
+  // it and lists its tickets, then sets it up without an agent (project-setup.js): the five statuses, and the
+  // labels the saved workflows trigger on. The project stays linked even if a step fails; the sidebar says which.
   makeProject(cx) {
-    const ctx = this.ctx, repo = this.repo, agent = this.agent();
+    const ctx = this.ctx, repo = this.repo;
     if (!ctx || !repo || this.makingProject) return;
     this.makingProject = true;
     this.setupError = null;
     cx.notify();
-    const where = { cwd: ctx.folder, on: ctx.on }, groomer = normalizeGroomer(shared(GROOMER_KEY));
+    const where = { cwd: ctx.folder, on: ctx.on };
     cx.spawn(async (cx) => {
       try {
         const project = await createProject(gh, repo, where);
@@ -369,10 +371,9 @@ export default class GitHubTasks extends View {
         this.loading = false;
         const at = this.token;
         this.refresh(cx);
-        // The project exists by now, so a failure to open the agent is shown apart from the list's errors.
-        await startProjectSetup({ agent, repo, project, groomer, where }).catch((e) => {
-          if (at === this.token) this.setupError = `The project was made, but its setup didn't open: ${e?.message ?? e}`;
-        });
+        // The project exists by now, so a failure to set it up is shown apart from the list's errors.
+        const { problems } = await setupProject(gh, { repo, project, loadWorkflows, where });
+        if (at === this.token) this.setupError = setupNote(problems);
       } catch (e) {
         this.error = e instanceof GitHubError ? e : { kind: "other", message: String(e?.message ?? e) };
       } finally {
