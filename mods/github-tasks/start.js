@@ -175,7 +175,9 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
     role: "run", id, orchestrator: null, title: name, workflow: workflow.name, branch, folder: workDir,
     repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null },
     projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
-    // A local task: the page moves the task's file, and Create PR and Merge depend on whether origin is on GitHub.
+    // What a new orchestrator needs if this one ends and the person presses the red Merge button (bgrun.js restartOrchestrator).
+    orchestratorArgv: argv.orchestrator, ticketLabel: key,
+    // A local task: the page moves the task's file, and Merge depends on whether origin is on GitHub (no remote: a local squash).
     ...(found ? { taskSource: "local", mainRoot: repoRoot, githubRemote: found.githubRemote } : {}),
   };
   // The orchestrator runs in the background, owned by no tab or pane, so closing the tab never ends it. It is guarded as

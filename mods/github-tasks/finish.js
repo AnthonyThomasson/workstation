@@ -14,7 +14,7 @@ export const stageOf = (agents) => (agents.reviewers?.length ? 2 : agents.worker
 // keeps it. saved: the value kept in shared state, any of 1, "1" or nothing.
 export const finalSeen = ({ reviewers = [], saved } = {}) => reviewers.some((r) => r.final) || Boolean(Number(saved));
 
-// Merge, Create PR and the automatic pull request wait for the final review to have started and every worker and reviewer to have ended.
+// Merge and the automatic pull request wait for the final review to have started and every worker and reviewer to have ended.
 export const canMerge = ({ finalSeen: seen, workers = [], reviewers = [] }) =>
   Boolean(seen) && !workers.some((w) => w.live) && !reviewers.some((r) => r.live);
 
@@ -152,7 +152,7 @@ const upper = (v) => String(v ?? "").toUpperCase();
 export function parsePrState(text) {
   let p;
   try { p = JSON.parse(text); } catch { return null; }
-  if (!p || typeof p !== "object") return null;
+  if (!p || typeof p !== "object" || Array.isArray(p)) return null;
   const rollup = Array.isArray(p.statusCheckRollup) ? p.statusCheckRollup : [];
   return {
     conflicting: upper(p.mergeable) === "CONFLICTING",
@@ -168,6 +168,7 @@ export function mergeFailure({ error, prState } = {}) {
   const message = String(error.message ?? error);
   const kind = error.step === "tree-status" && error.found ? "commit"
     : error.step === "ahead" && error.found ? "push"
+    : error.step === "push-branch" ? "push" // the push that opens the pull request failed
     : error.conflict ? "conflicts"
     : error.step === "pr-merge" && prState?.conflicting ? "conflicts"
     : error.step === "pr-merge" && prState?.failingChecks ? "checks"
@@ -181,7 +182,7 @@ function fixSteps({ kind, branch, workDir, noRemote }) {
   const push = `push the ticket branch with \`git -C ${workDir} push origin ${branch}\``;
   if (noRemote && kind === "push") kind = "merge"; // a local run has no remote to push to
   const fix = {
-    commit: noRemote ? `${commit}, then report back` : `${commit}, then ${push}`,
+    commit: noRemote ? commit : `${commit}, then ${push}`, // the suffix below asks for the report
     push,
     conflicts: noRemote
       ? `bring the default branch into the ticket branch: rebase it onto the default branch in ${workDir} and resolve the conflicts, through a worker and a reviewer`
@@ -212,15 +213,48 @@ export function restartTask({ runDir, failure, branch, workDir, noRemote }) {
   return `Read ${runDir}/orchestrator.md and follow its rules, but skip the planning and the questions: the ticket is already built and merged into the ticket branch ${branch}. ${failureLine({ failure, branch, workDir })} Fix only this: ${fixSteps({ kind: failure.kind, branch, workDir, noRemote })}. Any change still goes through a worker and a reviewer; then report.`;
 }
 
-// Whether the "orchestrator is fixing it" state is over. fixing: the saved record { seenWorking }; status: the orchestrator's
-// status word; live: whether its terminal is still there. Returns the record to save, or null when the state ends: the
-// orchestrator was seen working and is now done or idle, or it is gone. Working (and blocked, which waits for the person) is still
-// going; before the first working the message may not have landed, so an idle status doesn't end it yet. Merge never retries by itself.
-export function fixingDone({ fixing, status, live }) {
+// The "orchestrator is fixing it" record, made when the fix message is sent: { label, error, seenWorking, turn }. status: the
+// orchestrator's status word then; turn: its turn counter then (hc reports one per terminal), or nothing when unknown.
+// seenWorking starts true when it was working already.
+export const fixingStart = ({ failure, status, turn }) => ({
+  label: failure.label, error: failure.error, seenWorking: status === "working" || status === "blocked", turn: Number.isFinite(turn) ? turn : null,
+});
+
+// What the page says under the disabled Merge while the orchestrator is fixing it.
+export const fixingNote = (fixing) => `The orchestrator is fixing it (${fixing.label}). Merge comes back when it is done.`;
+
+// Whether the "orchestrator is fixing it" state is over. fixing: the record (fixingStart); status: the orchestrator's status
+// word; live: whether its terminal is still there; turn: its turn counter now. Returns the record to keep, or null when the state
+// ends: the orchestrator is gone, or it is done or idle after working (seen working, or its turn counter has moved past the one
+// at send time, which catches a turn that began and ended between two looks). Working (and blocked, which waits for the person)
+// is still going; done or idle with neither sign means the message may not have landed yet. A send that was lost never ends by
+// itself: the page offers to dismiss it. Merge never retries by itself.
+export function fixingDone({ fixing, status, live, turn }) {
   if (!fixing || !live) return null;
-  if (status === "working" || status === "blocked") return { seenWorking: true };
-  if (fixing.seenWorking && (status === "done" || status === "idle")) return null;
-  return { seenWorking: Boolean(fixing.seenWorking) };
+  if (status === "working" || status === "blocked") return { ...fixing, seenWorking: true };
+  const advanced = Number.isFinite(turn) && Number.isFinite(fixing.turn) && turn > fixing.turn;
+  if ((status === "done" || status === "idle") && (fixing.seenWorking || advanced)) return null;
+  return fixing;
+}
+
+// What the Merge button is. failure: the red state (mergeFailure), fixing: the record, busy: "merge" | "pr" | "fix" | null,
+// ready: the gate (canMerge, and a run page that knows its folder and branch). Returns { mode, label, enabled }:
+// normal (Merge, enabled when ready), red (the fix's label, enabled until pressed), fixing (Merge, disabled; the note says why).
+export function mergeView({ ready, busy, failure, fixing }) {
+  if (fixing) return { mode: "fixing", label: "Merge", enabled: false };
+  if (failure) return { mode: "red", label: busy === "fix" ? "Sending…" : failure.label, enabled: !busy };
+  const label = busy === "merge" ? "Merging…" : busy === "pr" ? "Opening PR…" : "Merge";
+  return { mode: "normal", label, enabled: Boolean(ready) && !busy };
+}
+
+// The red state and the fixing record as shared state kept them (JSON), or null when they aren't that.
+export function restoreFailure(saved) {
+  if (!saved || typeof saved !== "object" || Array.isArray(saved) || !LABELS[saved.kind] || typeof saved.error !== "string") return null;
+  return { kind: saved.kind, label: LABELS[saved.kind], error: saved.error };
+}
+export function restoreFixing(saved) {
+  if (!saved || typeof saved !== "object" || Array.isArray(saved) || typeof saved.label !== "string") return null;
+  return { label: saved.label, error: typeof saved.error === "string" ? saved.error : "", seenWorking: Boolean(saved.seenWorking), turn: Number.isFinite(saved.turn) ? saved.turn : null };
 }
 
 // gh args for the pull request; the body links the ticket when it has a number. body: replaces that (a local task has no GitHub issue to close).
@@ -231,6 +265,19 @@ export function prArgs({ branch, title, number, body }) {
 // The pull request's URL from what gh printed, or null.
 export const parsePrUrl = (text) => String(text ?? "").match(/https:\/\/\S+\/pull\/\d+/)?.[0] ?? null;
 export const prNumber = (url) => url?.match(/\/pull\/(\d+)/)?.[1] ?? null;
+
+// Opens the pull request, as the first part of Merge when the run has none yet (and for the automatic pull request): pushes the
+// branch with -u, then `gh pr create`. exec(cmd, args, opts) -> { code, stdout, stderr }. Resolves { url, state: "OPEN", number }.
+// Throws an Error saying why, with step "push-branch" or "open-pr" for mergeFailure (Push branch / Fix merge).
+export async function openPullRequest(exec, { folder, branch, title, number, body }) {
+  const said = (r) => String(r.stderr || r.stdout || "").trim();
+  const push = await exec("git", ["-C", folder, "push", "-u", "origin", branch]);
+  if (push.code !== 0) throw Object.assign(new Error(`The push failed: ${said(push)}`), { step: "push-branch" });
+  const made = await exec("gh", prArgs({ branch, title, number, body }), { cwd: folder });
+  const url = parsePrUrl(made.stdout) ?? parsePrUrl(made.stderr); // gh says "already exists" with the URL on stderr
+  if (!url) throw Object.assign(new Error(`gh didn't open a pull request: ${said(made)}`), { step: "open-pr" });
+  return { url, state: "OPEN", number: prNumber(url) };
+}
 
 // gh args that say where the branch's pull request stands: prints JSON { url, state, number, headRefOid }.
 export const prViewArgs = (branch) => ["pr", "view", branch, "--json", "url,state,number,headRefOid"];

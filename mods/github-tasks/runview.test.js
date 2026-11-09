@@ -62,6 +62,12 @@ test("a finished terminal says finished whatever it last reported", () => {
   assert.equal(row(term("t1", "worker", { state: "finished", status: "working" })).status, "finished");
 });
 
+test("a row carries the terminal's turn counter, or null", () => {
+  assert.equal(row({ address: "t1", state: "live", turn: 7 }).turn, 7);
+  assert.equal(row({ address: "t1", state: "live" }).turn, null);
+  assert.equal(orchestratorOf([term("t1", "orchestrator", { turn: 3 })], "t1").turn, 3);
+});
+
 test("the orchestrator is found by address", () => {
   assert.equal(orchestratorOf([term("t1", "orchestrator")], "t1").address, "t1");
   assert.equal(orchestratorOf([], "t1"), null);

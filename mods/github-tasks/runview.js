@@ -25,6 +25,7 @@ export function row(k) {
     // What it says it is doing, else what its terminal is titled.
     detail: reportOf(k)?.msg || k.title || "",
     started: k.created_ms ?? 0,
+    turn: Number.isFinite(k.turn) ? k.turn : null, // hc counts a terminal's turns: Merge's "fixing" state ends when it moves
     role: k.labels?.[ROLE] ?? null,
   };
 }

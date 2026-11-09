@@ -248,6 +248,36 @@ export async function launchRun(deps, { id, key, workDir, argv, task, props }) {
   return { orchestrator, problems };
 }
 
+// A new orchestrator for a run whose own has ended, started because the person pressed the red Merge button: the same command
+// and labels as the first (so the run's agents, View and the page find it), shown in the run's tab, and its first task is the
+// fix. Like launchRun but the tab is there already: the new address is saved first (pane.json, and saveOrchestrator for the
+// page's shared state, so View and a reload follow it), then show puts it over the tab's left pane. A tab that can't show it is
+// only a problem to say. A failure after the orchestrator exists ends it again and throws.
+//   deps: { hc(args), writePaneJson(props), saveOrchestrator(address), show(address) (throws) }
+//   key (the ticket label) and argv (the orchestrator's command): as start.js saved them in pane.json; without them the run can't be started again.
+//   Resolves with { orchestrator, problems }.
+export async function restartOrchestrator(deps, { id, key, workDir, argv, task, props }) {
+  if (!key || !Array.isArray(argv) || !argv.length) throw new Error("This run's orchestrator can't be started again: it was started before the command that opens it was saved. Fix it by hand.");
+  const started = await deps.hc(orchestratorRunArgs({ id, key, workDir, argv })).catch((e) => ({ code: 1, stdout: "", stderr: why(e) }));
+  const orchestrator = started.code === 0 ? parseStarted(started.stdout) : null;
+  if (!orchestrator) throw new Error(`The orchestrator didn't start: ${String(started.stderr || started.stdout || "").trim() || "hc gave no address"}`);
+  await deps.writePaneJson({ ...props, orchestrator }).catch(() => {});
+  deps.saveOrchestrator(orchestrator);
+  const problems = [];
+  try { await deps.show(orchestrator); }
+  catch (e) { problems.push(`It isn't showing in the run's tab: ${why(e)}. It is running; View shows it.`); }
+  const abort = async (message) => {
+    await deps.hc(["kill", orchestrator]).catch(() => {});
+    await deps.hc(["rm", orchestrator]).catch(() => {});
+    throw new Error(message);
+  };
+  const ready = await waitReady({ hc: deps.hc, orchestrator });
+  if (!ready.ok) await abort(`The new orchestrator didn't start properly, so it was ended: ${ready.why}`);
+  const sent = await deps.hc(["send", orchestrator, task]).catch((e) => ({ code: 1, stdout: "", stderr: why(e) }));
+  if (sent.code !== 0) await abort(`The new orchestrator didn't take its task, so it was ended: ${String(sent.stderr || sent.stdout || "").trim() || "hc send failed"}`);
+  return { orchestrator, problems };
+}
+
 // What the run page shows once Merge has ended the run: done (its space, or for an older run its tab, and so the page, is closed), an error naming what
 // couldn't be ended, or a note that the space couldn't be found. Anything but done frees the page from "Merging…".
 export function mergeOutcome(ended) {

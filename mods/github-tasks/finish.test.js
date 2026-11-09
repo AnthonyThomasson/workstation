@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, optionFor, statusArgs, mergeSteps, runSteps, prArgs, prViewArgs, parsePrUrl, prNumber, parsePr, LABELS, prStateArgs, parsePrState, mergeFailure, fixMessage, restartTask, fixingDone } from "./finish.js";
+import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, optionFor, statusArgs, mergeSteps, runSteps, prArgs, prViewArgs, parsePrUrl, prNumber, parsePr, LABELS, prStateArgs, parsePrState, mergeFailure, fixMessage, restartTask, fixingDone, fixingStart, fixingNote, mergeView, restoreFailure, restoreFixing, openPullRequest } from "./finish.js";
 
 test("canMerge needs the final reviewer seen and nobody live", () => {
   const ended = { live: false }, live = { live: true, status: "idle" };
@@ -534,6 +534,9 @@ test("parsePrState reads conflicts and failing checks of both kinds, and not pas
   assert.equal(parsePrState("not json"), null);
   assert.equal(parsePrState(""), null);
   assert.equal(parsePrState("null"), null);
+  assert.equal(parsePrState("[]"), null, "a JSON array is not the object asked for");
+  assert.equal(parsePrState("[1]"), null);
+  assert.equal(parsePrState("12"), null);
 });
 
 // --- what the orchestrator is sent ---------------------------------------------------------------------------------------
@@ -575,7 +578,13 @@ test("fixMessage for a local run pushes nothing", () => {
     assert.match(text, /push nothing/, kind);
   }
   assert.match(fixMessage({ failure: failure("conflicts"), ...here, noRemote: true }), /rebase it onto the default branch in \/r-9-x/);
-  assert.match(fixMessage({ failure: failure("commit"), ...here, noRemote: true }), /commit what is left.*reviewer.*then report back/);
+  assert.match(fixMessage({ failure: failure("commit"), ...here, noRemote: true }), /commit what is left.*new work\)\. Report back when it is done/);
+});
+
+test("fixMessage and restartTask ask for a report back once", () => {
+  for (const kind of Object.keys(LABELS)) for (const noRemote of [false, true]) {
+    assert.equal(fixMessage({ failure: failure(kind), ...here, noRemote }).match(/report back/gi).length, 1, `${kind} ${noRemote}`);
+  }
 });
 
 test("restartTask is the first task of a new orchestrator: the rules, no planning or questions, only this fix", () => {
@@ -593,21 +602,123 @@ test("restartTask is the first task of a new orchestrator: the rules, no plannin
 
 // --- when "the orchestrator is fixing it" ends -----------------------------------------------------------------------------
 
+const sent = (extra = {}) => ({ label: "Fix conflicts", error: "e", seenWorking: false, turn: 4, ...extra });
+
+test("fixingStart records the label, the error, the turn at send time and whether it was working already", () => {
+  const f = failure("conflicts", "boom");
+  assert.deepEqual(fixingStart({ failure: f, status: "idle", turn: 4 }), { label: "Fix conflicts", error: "boom", seenWorking: false, turn: 4 });
+  assert.equal(fixingStart({ failure: f, status: "working", turn: 4 }).seenWorking, true, "seeded from the status at send time");
+  assert.equal(fixingStart({ failure: f, status: "blocked", turn: 4 }).seenWorking, true);
+  assert.equal(fixingStart({ failure: f, status: "done" }).turn, null, "no turn counter known");
+  assert.equal(fixingStart({ failure: f, status: "done", turn: "x" }).turn, null);
+});
+
 test("fixingDone: keeps going until the orchestrator has been seen working and is then done or idle", () => {
-  const sent = { seenWorking: false };
-  assert.deepEqual(fixingDone({ fixing: sent, status: "idle", live: true }), { seenWorking: false }, "idle before it picked the message up");
-  assert.deepEqual(fixingDone({ fixing: sent, status: "done", live: true }), { seenWorking: false });
-  assert.deepEqual(fixingDone({ fixing: sent, status: "working", live: true }), { seenWorking: true });
-  assert.deepEqual(fixingDone({ fixing: { seenWorking: true }, status: "working", live: true }), { seenWorking: true });
-  assert.deepEqual(fixingDone({ fixing: { seenWorking: true }, status: "blocked", live: true }), { seenWorking: true }, "waiting for the person is still going");
-  assert.deepEqual(fixingDone({ fixing: sent, status: "blocked", live: true }), { seenWorking: true });
-  assert.deepEqual(fixingDone({ fixing: { seenWorking: true }, status: "unknown", live: true }), { seenWorking: true });
-  assert.equal(fixingDone({ fixing: { seenWorking: true }, status: "idle", live: true }), null);
-  assert.equal(fixingDone({ fixing: { seenWorking: true }, status: "done", live: true }), null);
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "idle", live: true, turn: 4 }), sent(), "idle before it picked the message up (the turn has not moved)");
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "done", live: true, turn: 4 }), sent());
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "working", live: true, turn: 4 }), sent({ seenWorking: true }));
+  assert.deepEqual(fixingDone({ fixing: sent({ seenWorking: true }), status: "working", live: true, turn: 5 }), sent({ seenWorking: true }));
+  assert.deepEqual(fixingDone({ fixing: sent({ seenWorking: true }), status: "blocked", live: true }), sent({ seenWorking: true }), "waiting for the person is still going");
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "blocked", live: true }), sent({ seenWorking: true }));
+  assert.deepEqual(fixingDone({ fixing: sent({ seenWorking: true }), status: "unknown", live: true }), sent({ seenWorking: true }));
+  assert.equal(fixingDone({ fixing: sent({ seenWorking: true }), status: "idle", live: true }), null);
+  assert.equal(fixingDone({ fixing: sent({ seenWorking: true }), status: "done", live: true }), null);
+});
+
+test("fixingDone: a turn that went working then idle between two looks still ends it, as the turn counter moved", () => {
+  assert.equal(fixingDone({ fixing: sent(), status: "idle", live: true, turn: 5 }), null);
+  assert.equal(fixingDone({ fixing: sent(), status: "done", live: true, turn: 6 }), null);
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "working", live: true, turn: 5 }), sent({ seenWorking: true }), "still working: not yet");
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "idle", live: true, turn: 3 }), sent(), "a counter that went back is not an advance");
+});
+
+test("fixingDone: without a turn counter it falls back to having seen it working", () => {
+  assert.deepEqual(fixingDone({ fixing: sent({ turn: null }), status: "idle", live: true, turn: 9 }), sent({ turn: null }));
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "idle", live: true }), sent());
+  assert.equal(fixingDone({ fixing: sent({ turn: null, seenWorking: true }), status: "idle", live: true }), null);
+});
+
+test("fixingDone: an orchestrator that was working when the message was sent ends at its first done or idle", () => {
+  const f = fixingStart({ failure: failure("checks"), status: "working", turn: 2 });
+  assert.equal(fixingDone({ fixing: f, status: "idle", live: true, turn: 2 }), null);
 });
 
 test("fixingDone: ends when the orchestrator is gone, and does nothing without a record", () => {
-  assert.equal(fixingDone({ fixing: { seenWorking: false }, status: "idle", live: false }), null);
-  assert.equal(fixingDone({ fixing: { seenWorking: true }, status: "working", live: false }), null);
+  assert.equal(fixingDone({ fixing: sent(), status: "idle", live: false }), null);
+  assert.equal(fixingDone({ fixing: sent({ seenWorking: true }), status: "working", live: false }), null);
   assert.equal(fixingDone({ fixing: null, status: "working", live: true }), null);
+});
+
+test("fixingNote names the fix", () => {
+  assert.equal(fixingNote(sent()), "The orchestrator is fixing it (Fix conflicts). Merge comes back when it is done.");
+});
+
+// --- the Merge button -------------------------------------------------------------------------------------------------------
+
+test("mergeView: Merge is enabled when ready and nothing is going, with or without a pull request", () => {
+  assert.deepEqual(mergeView({ ready: true }), { mode: "normal", label: "Merge", enabled: true });
+  assert.deepEqual(mergeView({ ready: false }), { mode: "normal", label: "Merge", enabled: false });
+  assert.deepEqual(mergeView({ ready: true, busy: "merge" }), { mode: "normal", label: "Merging…", enabled: false });
+  assert.deepEqual(mergeView({ ready: true, busy: "pr" }), { mode: "normal", label: "Opening PR…", enabled: false });
+});
+
+test("mergeView: a failure makes the button red with its label, enabled until it is pressed", () => {
+  const f = failure("checks");
+  assert.deepEqual(mergeView({ ready: true, failure: f }), { mode: "red", label: "Fix checks", enabled: true });
+  assert.deepEqual(mergeView({ ready: false, failure: f }), { mode: "red", label: "Fix checks", enabled: true }, "the red state does not depend on the gate");
+  assert.deepEqual(mergeView({ ready: true, failure: f, busy: "fix" }), { mode: "red", label: "Sending…", enabled: false });
+});
+
+test("mergeView: while the orchestrator is fixing it, Merge is disabled and the red state is not shown", () => {
+  assert.deepEqual(mergeView({ ready: true, failure: failure("checks"), fixing: sent() }), { mode: "fixing", label: "Merge", enabled: false });
+  assert.deepEqual(mergeView({ ready: true, fixing: sent() }), { mode: "fixing", label: "Merge", enabled: false });
+});
+
+test("restoreFailure and restoreFixing read what shared state kept, and refuse anything else", () => {
+  assert.deepEqual(restoreFailure({ kind: "checks", label: "x", error: "boom" }), { kind: "checks", label: "Fix checks", error: "boom" });
+  assert.equal(restoreFailure({ kind: "nope", error: "x" }), null);
+  assert.equal(restoreFailure({ kind: "checks" }), null);
+  assert.equal(restoreFailure(null), null);
+  assert.equal(restoreFailure("checks"), null);
+  assert.deepEqual(restoreFixing({ label: "Fix checks", error: "e", seenWorking: 1, turn: 3 }), { label: "Fix checks", error: "e", seenWorking: true, turn: 3 });
+  assert.deepEqual(restoreFixing({ label: "Fix checks" }), { label: "Fix checks", error: "", seenWorking: false, turn: null });
+  assert.equal(restoreFixing({}), null);
+  assert.equal(restoreFixing(null), null);
+  assert.equal(restoreFixing([]), null);
+});
+
+// --- opening the pull request as part of Merge -----------------------------------------------------------------------------
+
+const prExec = (answers) => {
+  const calls = [];
+  const exec = async (cmd, args, opts) => {
+    calls.push([cmd, ...args].join(" "));
+    const hit = Object.entries(answers).find(([k]) => calls.at(-1).includes(k));
+    return { code: 0, stdout: "", stderr: "", ...(hit?.[1] ?? {}) };
+  };
+  return { exec, calls };
+};
+const pr = { folder: "/w", branch: "workflow/9-x", title: "Do it", number: 9 };
+
+test("openPullRequest pushes with -u, then opens the pull request and returns its url and number", async () => {
+  const { exec, calls } = prExec({ "pr create": { stdout: "https://github.com/o/r/pull/12\n" } });
+  assert.deepEqual(await openPullRequest(exec, pr), { url: "https://github.com/o/r/pull/12", state: "OPEN", number: "12" });
+  assert.deepEqual(calls, ["git -C /w push -u origin workflow/9-x", "gh pr create --head workflow/9-x --title #9 Do it --body Closes #9"]);
+});
+
+test("openPullRequest: a body replaces the Closes line, and 'already exists' on stderr still gives the url", async () => {
+  const { exec, calls } = prExec({ "pr create": { code: 1, stderr: "a pull request for branch already exists:\nhttps://github.com/o/r/pull/3\n" } });
+  assert.equal((await openPullRequest(exec, { ...pr, body: "Local task 9" })).number, "3");
+  assert.ok(calls[1].endsWith("--body Local task 9"));
+});
+
+test("openPullRequest: a failed push is a Push branch failure, a refused pull request is Fix merge", async () => {
+  const bad = prExec({ "push -u": { code: 1, stderr: "rejected" } });
+  const e1 = await openPullRequest(bad.exec, pr).catch((e) => e);
+  assert.match(e1.message, /The push failed: rejected/);
+  assert.equal(mergeFailure({ error: e1 }).label, "Push branch");
+  assert.equal(bad.calls.length, 1, "nothing after the failed push");
+  const e2 = await openPullRequest(prExec({ "pr create": { code: 1, stderr: "no permission" } }).exec, pr).catch((e) => e);
+  assert.match(e2.message, /gh didn't open a pull request: no permission/);
+  assert.equal(mergeFailure({ error: e2 }).label, "Fix merge");
 });
