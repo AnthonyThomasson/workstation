@@ -163,7 +163,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   const runDir = `${home()}/.herdr/workflow-runs/${id}`;
   const argv = await resolveAgents(workflow, runDir); // before the worktree: this fails without changing anything
   const branch = branchName(ticket);
-  const workDir = await prepareWorktree(git, repoRoot, branch, worktreePath(repoRoot, branch));
+  const workDir = await prepareWorktree(git, repoRoot, branch, worktreePath(repoRoot, branch, home()));
   await writeRunFolder(id, { workflow, ticket, repo, runDir, workDir, repoRoot, branch, local: Boolean(found), noRemote: Boolean(found) && !found.githubRemote }, argv);
 
   const space = spaces().find((s) => s.active)?.id;

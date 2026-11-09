@@ -21,8 +21,15 @@ export function branchName(ticket) {
   return ticket?.number ? `workflow/${ticket.number}-${name}` : `workflow/${name}`;
 }
 
-// Beside the repo, named for the branch: ~/src/app -> ~/src/app-12-fix-login.
-export const worktreePath = (repoRoot, branch) => `${repoRoot}-${branch.replace(/^workflow\//, "").replace(/\//g, "-")}`;
+// Where Herdr's own worktree mod puts a branch: <home>/.herdr/worktrees/<repo>/<branch slug>, so Herdr nests the
+// ticket's space under the repo's. `repoRoot` is the main checkout (never a worktree), which names <repo>; the slug is
+// the mod's own (runs of anything but letters, digits, . _ - become one -, none at the ends), so "workflow/12-fix" is
+// "workflow-12-fix". The jobs' worktrees are this path plus `--<job>`. `home` is passed in to keep this pure.
+export const worktreePath = (repoRoot, branch, home) => {
+  const repo = repoRoot.replace(/\/+$/, "").split("/").pop();
+  const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return `${home.replace(/\/+$/, "")}/.herdr/worktrees/${repo}/${slug}`;
+};
 
 // Short, because it starts every terminal's name, which may only be 32 long.
 export const runId = (ticket, now = Date.now()) => `${ticket?.number ?? "draft"}-${now.toString(36)}`;
@@ -158,7 +165,7 @@ export function reviewerPrompt({ workflow, ticket, repo, runDir, workDir, repoRo
 
 // The only way a run's agents start, so each gets its role's agent, model, permissions and labels whatever the
 // orchestrator types. It waits for the agent to be ready before giving it its brief: a send to one still booting can be lost.
-// workDir: the ticket's worktree, on `branch`; the jobs' worktrees go beside it, as the role prompts say.
+// workDir: the ticket's worktree, on `branch`; the jobs' worktrees go beside it as `<workDir>--<job>`, as the role prompts say.
 export function spawnScript({ id, runDir, workDir, branch, argv }) {
   const roleArgs = (role) => `  ${role}) set -- ${argv[role].map(shQuote).join(" ")} ;;`;
   const room = Math.max(1, 32 - id.length - 1); // a terminal's name is at most 32 long

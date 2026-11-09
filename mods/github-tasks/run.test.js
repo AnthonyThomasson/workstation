@@ -17,8 +17,28 @@ test("branch names come from the number and title", () => {
   assert.equal(branchName({ number: 3, title: "!!!" }), "workflow/3-ticket");
 });
 
-test("a worktree sits beside the repo", () => {
-  assert.equal(worktreePath("/src/app", "workflow/12-fix"), "/src/app-12-fix");
+test("a ticket's worktree is where Herdr's worktree mod puts that branch", () => {
+  assert.equal(worktreePath("/src/app", "workflow/12-fix", "/Users/me"), "/Users/me/.herdr/worktrees/app/workflow-12-fix");
+});
+
+test("the worktree folder is named for the main checkout, whatever else is passed", () => {
+  assert.equal(worktreePath("/src/my app/", "workflow/3-x", "/h/"), "/h/.herdr/worktrees/my app/workflow-3-x");
+});
+
+test("odd branch names are slugged the way Herdr's worktree mod does", () => {
+  const at = (branch) => worktreePath("/src/app", branch, "/h");
+  assert.equal(at("workflow/12-fix the login: now!"), "/h/.herdr/worktrees/app/workflow-12-fix-the-login-now");
+  assert.equal(at("feat//a..b_c"), "/h/.herdr/worktrees/app/feat-a..b_c");
+  assert.equal(at("/lead/trail/"), "/h/.herdr/worktrees/app/lead-trail");
+});
+
+test("a job's worktree sits beside the ticket's, as <ticket slug>--<job>", () => {
+  const ticketDir = worktreePath("/src/app", "workflow/12-fix", "/h");
+  const script = spawnScript({ id: "12-abc", runDir: "/runs/x", workDir: ticketDir, branch: "workflow/12-fix", argv: { worker: ["a"], reviewer: ["b"] } });
+  assert.ok(script.includes(`job_base='${ticketDir}'`));
+  assert.ok(script.includes('job_dir="$job_base--$job"'));
+  assert.equal(`${ticketDir}--auth`, "/h/.herdr/worktrees/app/workflow-12-fix--auth");
+  assert.ok(mergeScript({ id: "12-abc", workDir: ticketDir, branch: "workflow/12-fix", number: 12 }).includes(`job_base='${ticketDir}'`));
 });
 
 test("run ids and ticket keys", () => {
@@ -257,7 +277,7 @@ function scratch() {
   git(repo, "init", "-q", "-b", "main");
   git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "first");
   const branch = "workflow/12-fix";
-  const ticketDir = worktreePath(repo, branch);
+  const ticketDir = worktreePath(repo, branch, join(dir, "home")); // the parent folders don't exist yet: git makes them
   git(repo, "worktree", "add", "-q", "-b", branch, ticketDir);
   const bin = join(dir, "bin");
   mkdirSync(bin);

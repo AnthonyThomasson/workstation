@@ -34,7 +34,7 @@ export async function baseFor(git, repoRoot) {
 
 const branchExists = async (git, dir, branch) => (await git(dir, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`)).code === 0;
 
-// The ticket's own git worktree, at `target` (beside the repo). The repo's folder is never switched. A worktree that
+// The ticket's own git worktree, at `target` (under Herdr's worktrees folder; git makes the missing parent folders). The repo's folder is never switched. A worktree that
 // already has the branch is used again, unless its folder was deleted by hand, which prune forgets first.
 export async function prepareWorktree(git, repoRoot, branch, target) {
   await git(repoRoot, "worktree", "prune");
