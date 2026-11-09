@@ -269,3 +269,49 @@ test("the prompt works without a repo or project, and is empty with no issues", 
   const prompt = fixPrompt(issues, { repo: null, project: null });
   assert.doesNotMatch(prompt, /null|undefined/);
 });
+
+// ---- Local tasks -----------------------------------------------------------------------------------
+
+const brokenGithub = { project: null, statuses: undefined, auth: { installed: true, signedIn: true, scopes: ["repo"] } };
+
+test("local tasks skip the project, status and scope checks", () => {
+  assert.deepEqual(kinds(diagnose(healthy({ ...brokenGithub, source: "local", githubRemote: true }))), [], "no project, no project scope: fine");
+  const statuses = [{ name: "To Do" }, { name: "in progress" }];
+  assert.deepEqual(diagnose(healthy({ source: "local", statuses, carried: [{ kind: "no-project" }] })), []);
+  assert.deepEqual(kinds(diagnose(healthy({ ...brokenGithub, source: "github" }))), ["gh-scope", "no-project"], "github mode is unchanged");
+  assert.deepEqual(kinds(diagnose(healthy({ ...brokenGithub }))), ["gh-scope", "no-project"], "no source is github");
+});
+
+test("local tasks check gh-auth only when the origin is on GitHub", () => {
+  const signedOut = { installed: true, signedIn: false, scopes: null };
+  assert.deepEqual(kinds(diagnose(healthy({ source: "local", githubRemote: true, auth: signedOut }))), ["gh-auth"]);
+  assert.deepEqual(kinds(diagnose(healthy({ source: "local", githubRemote: true, auth: { installed: false } }))), ["gh-auth"]);
+  assert.deepEqual(diagnose(healthy({ source: "local", githubRemote: false, auth: signedOut })), []);
+  assert.deepEqual(diagnose(healthy({ source: "local", auth: signedOut })), [], "an unknown remote is not accused");
+});
+
+test("local tasks still check agents and workflow files", () => {
+  const issues = diagnose(healthy({
+    source: "local", groomerAgent: "gemini", workflows: { items: [], errors: ["bug.yaml: Line 2: bad"] },
+  }));
+  assert.deepEqual(kinds(issues), ["agent-missing", "workflow-invalid"]);
+});
+
+test("the signature includes the task source", () => {
+  const base = { place: { cwd: "/a", root: "/a" }, workflowsChanged: 1, groomer: { agent: "claude" } };
+  const sig = doctorSignature(base);
+  assert.equal(doctorSignature({ ...base, source: "github" }), sig, "no source is github");
+  assert.notEqual(doctorSignature({ ...base, source: "local" }), sig);
+});
+
+test("the prompt for local tasks says the repo uses local tasks and names no project", () => {
+  const issues = diagnose(healthy({
+    source: "local", githubRemote: true, groomerAgent: "gemini", auth: { installed: true, signedIn: false, scopes: null },
+  }));
+  const prompt = fixPrompt(issues, { repo: "me/app", project: PROJECT, source: "local" });
+  assert.match(prompt, /local tasks/);
+  assert.doesNotMatch(prompt, /GitHub Project|projects\/3|"app"|Statuses:|gh project/);
+  assert.match(prompt, /gh auth login|gh isn't signed in/);
+  assert.match(prompt, /Agent: /);
+  assert.match(fixPrompt(diagnose(healthy({ groomerAgent: "gemini" })), context), /GitHub Project "app"/, "github mode names the project");
+});

@@ -37,6 +37,9 @@ function fakes(over = {}) {
     repoRootOf: async ({ cwd }) => (cwd?.startsWith("/repo") ? "/repo" : null),
     groomerAgent: () => null,
     chosenProject: () => undefined,
+    mainCheckoutOf: async () => "/main",
+    taskSource: async () => "github",
+    hasGithubRemote: async () => true,
     ...over.deps,
   };
   return deps;
@@ -418,4 +421,114 @@ test("a failed repo-root lookup is asked again; an answer is kept", async () => 
   await doctor.look(false);
   await doctor.look(false);
   assert.equal(asked, n, "the answer is cached");
+});
+
+// ---- Local tasks -----------------------------------------------------------------------------------
+
+const localDeps = (extra = {}) => ({ taskSource: async () => "local", ...extra });
+const noScope = { code: 0, stdout: "  ✓ Logged in to github.com account me\n  - Active account: true\n  - Token scopes: 'repo'\n", stderr: "" };
+const signedOut = { code: 1, stdout: "", stderr: "You are not logged into any GitHub hosts." };
+
+test("in local mode gh is not asked about the repo or project, and the project and scope issues are skipped", async () => {
+  const deps = fakes({ auth: noScope, projects: new Error("must not be asked"), repo: new Error("must not be asked"), deps: localDeps() });
+  const found = await check({ ...place, source: "local", main: "/main" }, deps);
+  assert.deepEqual(found.issues, []);
+  assert.deepEqual(deps.calls, ["auth"], "only the sign-in is asked");
+  assert.equal(found.source, "local");
+  assert.equal(found.repo, null);
+  assert.equal(found.project, null);
+  assert.deepEqual(found.place, { cwd: "/repo/src", on: null, root: "/repo" }, "the published place has no source or main");
+});
+
+test("in local mode gh-auth is flagged only when the origin is on GitHub", async () => {
+  const on = fakes({ auth: signedOut });
+  assert.deepEqual(kinds(await check({ ...place, source: "local", main: "/main" }, on)), ["gh-auth"]);
+  const asked = [];
+  const off = fakes({ auth: signedOut, deps: { hasGithubRemote: async (root) => { asked.push(root); return false; } } });
+  const found = await check({ ...place, source: "local", main: "/main" }, off);
+  assert.deepEqual(found.issues, []);
+  assert.deepEqual(off.calls, [], "gh is not run at all");
+  assert.deepEqual(asked, ["/main"], "the remote is read from the main checkout");
+  const unknown = fakes({ auth: signedOut, deps: { hasGithubRemote: async () => { throw new Error("git"); } } });
+  assert.deepEqual((await check({ ...place, source: "local", main: "/main" }, unknown)).issues, []);
+});
+
+test("in local mode agents and workflows are still checked", async () => {
+  const deps = fakes({ deps: { groomerAgent: () => "gemini", knownAgents: async () => [{ key: "gemini", installed: false }], loadWorkflows: async () => ({ items: [], errors: ["a.yaml: bad"] }) } });
+  const found = await check({ ...place, source: "local", main: "/main" }, deps);
+  assert.deepEqual(kinds(found), ["agent-missing", "workflow-invalid"]);
+});
+
+test("a github place is checked as before, with the github source", async () => {
+  const deps = fakes();
+  const found = await check({ ...place, source: "github", main: "/main" }, deps);
+  assert.equal(found.source, "github");
+  assert.equal(found.repo, "me/app");
+  assert.deepEqual(deps.calls, ["auth", "repo", "projects", "field"]);
+});
+
+test("the watcher reads tasks.json of the main checkout and publishes the source", async () => {
+  const roots = [];
+  const deps = fakes({ auth: noScope, deps: { taskSource: async (root) => { roots.push(root); return "local"; }, mainCheckoutOf: async ({ cwd }) => { roots.push(cwd); return "/main"; } } });
+  const doctor = watcher(deps);
+  at(deps, "/repo/src");
+  await doctor.look(false);
+  assert.deepEqual(roots, ["/repo/src", "/main"]);
+  const found = deps.store.get(DOCTOR_KEY);
+  assert.equal(found.source, "local");
+  assert.deepEqual(found.issues, []);
+});
+
+test("toggling the task source checks again at the next look, and only then", async () => {
+  let source = "github";
+  const deps = fakes({ auth: noScope, deps: { taskSource: async () => source } });
+  const doctor = watcher(deps);
+  at(deps, "/repo");
+  await doctor.look(false);
+  assert.deepEqual(kinds(deps.store.get(DOCTOR_KEY)), ["gh-scope"]);
+  const writes = deps.writes.length;
+  await doctor.look(false);
+  assert.equal(deps.writes.length, writes, "nothing changed: no check");
+  source = "local";
+  await doctor.look(false);
+  assert.equal(deps.store.get(DOCTOR_KEY).source, "local");
+  assert.deepEqual(deps.store.get(DOCTOR_KEY).issues, []);
+  source = "github";
+  await doctor.look(false);
+  assert.deepEqual(kinds(deps.store.get(DOCTOR_KEY)), ["gh-scope"]);
+});
+
+test("a remote space, a folder outside a repo and an unreadable tasks.json are github", async () => {
+  let asked = 0;
+  const deps = fakes({ auth: noScope, deps: { taskSource: async () => { asked++; return "local"; } } });
+  const remote = watcher(deps);
+  at(deps, "/repo/src", "box");
+  await remote.look(false);
+  assert.equal(deps.store.get(DOCTOR_KEY).source, "github", "local tasks work only on this computer");
+  const outside = fakes({ deps: { taskSource: async () => { asked++; return "local"; } } });
+  const lone = watcher(outside);
+  at(outside, "/tmp/x");
+  await lone.look(false);
+  assert.equal(outside.store.get(DOCTOR_KEY).source, "github");
+  assert.equal(asked, 0, "tasks.json is not read there");
+  const broken = fakes({ deps: { taskSource: async () => { throw new Error("io"); } } });
+  const w = watcher(broken);
+  at(broken, "/repo");
+  await w.look(false);
+  assert.equal(broken.store.get(DOCTOR_KEY).source, "github");
+});
+
+test("the main checkout is asked once per folder, a failed ask again", async () => {
+  let asked = 0, fail = true;
+  const deps = fakes({ deps: { mainCheckoutOf: async () => { asked++; if (fail) throw new Error("git"); return "/main"; } } });
+  const doctor = watcher(deps);
+  at(deps, "/repo");
+  await doctor.look(false);
+  await doctor.look(false);
+  assert.equal(asked, 2, "a failed ask is asked again");
+  fail = false;
+  await doctor.look(false);
+  await doctor.look(false);
+  await doctor.look(false);
+  assert.equal(asked, 3);
 });
