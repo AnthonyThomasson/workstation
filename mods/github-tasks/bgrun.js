@@ -261,9 +261,10 @@ export async function restartOrchestrator(deps, { id, key, workDir, argv, task, 
   const started = await deps.hc(orchestratorRunArgs({ id, key, workDir, argv })).catch((e) => ({ code: 1, stdout: "", stderr: why(e) }));
   const orchestrator = started.code === 0 ? parseStarted(started.stdout) : null;
   if (!orchestrator) throw new Error(`The orchestrator didn't start: ${String(started.stderr || started.stdout || "").trim() || "hc gave no address"}`);
-  await deps.writePaneJson({ ...props, orchestrator }).catch(() => {});
-  deps.saveOrchestrator(orchestrator);
   const problems = [];
+  try { await deps.writePaneJson({ ...props, orchestrator }); }
+  catch (e) { problems.push(`The run's pane.json wasn't updated with the new orchestrator: ${why(e)}. View may connect to the old address until it is.`); }
+  deps.saveOrchestrator(orchestrator);
   try { await deps.show(orchestrator); }
   catch (e) { problems.push(`It isn't showing in the run's tab: ${why(e)}. It is running; View shows it.`); }
   const abort = async (message) => {

@@ -155,7 +155,7 @@ export function parsePrState(text) {
   if (!p || typeof p !== "object" || Array.isArray(p)) return null;
   const rollup = Array.isArray(p.statusCheckRollup) ? p.statusCheckRollup : [];
   return {
-    conflicting: upper(p.mergeable) === "CONFLICTING",
+    conflicting: upper(p.mergeable) === "CONFLICTING" || upper(p.mergeStateStatus) === "DIRTY", // DIRTY: the branch has conflicts with its base
     failingChecks: rollup.some((c) => BAD_CONCLUSIONS.has(upper(c?.conclusion)) || BAD_STATES.has(upper(c?.state))),
   };
 }
@@ -215,25 +215,28 @@ export function restartTask({ runDir, failure, branch, workDir, noRemote }) {
 
 // The "orchestrator is fixing it" record, made when the fix message is sent: { label, error, seenWorking, turn }. status: the
 // orchestrator's status word then; turn: its turn counter then (hc reports one per terminal), or nothing when unknown.
-// seenWorking starts true when it was working already.
-export const fixingStart = ({ failure, status, turn }) => ({
-  label: failure.label, error: failure.error, seenWorking: status === "working" || status === "blocked", turn: Number.isFinite(turn) ? turn : null,
-});
+// seenWorking starts false when the turn is known (the turn counter tells when a turn has ended, and a turn already in progress
+// may be about to end), else from the status.
+export const fixingStart = ({ failure, status, turn }) => {
+  const known = Number.isFinite(turn);
+  return { label: failure.label, error: failure.error, seenWorking: !known && (status === "working" || status === "blocked"), turn: known ? turn : null };
+};
 
 // What the page says under the disabled Merge while the orchestrator is fixing it.
 export const fixingNote = (fixing) => `The orchestrator is fixing it (${fixing.label}). Merge comes back when it is done.`;
 
 // Whether the "orchestrator is fixing it" state is over. fixing: the record (fixingStart); status: the orchestrator's status
 // word; live: whether its terminal is still there; turn: its turn counter now. Returns the record to keep, or null when the state
-// ends: the orchestrator is gone, or it is done or idle after working (seen working, or its turn counter has moved past the one
-// at send time, which catches a turn that began and ended between two looks). Working (and blocked, which waits for the person)
+// ends: the orchestrator is gone, or its turn counter has moved past the one at send time and it is not working or blocked (which
+// catches a turn that began and ended between two looks, and an agent that reports "unknown"), or it is done or idle after being seen working. Working (and blocked, which waits for the person)
 // is still going; done or idle with neither sign means the message may not have landed yet. A send that was lost never ends by
 // itself: the page offers to dismiss it. Merge never retries by itself.
 export function fixingDone({ fixing, status, live, turn }) {
   if (!fixing || !live) return null;
   if (status === "working" || status === "blocked") return { ...fixing, seenWorking: true };
   const advanced = Number.isFinite(turn) && Number.isFinite(fixing.turn) && turn > fixing.turn;
-  if ((status === "done" || status === "idle") && (fixing.seenWorking || advanced)) return null;
+  if (advanced) return null;
+  if ((status === "done" || status === "idle") && fixing.seenWorking) return null;
   return fixing;
 }
 

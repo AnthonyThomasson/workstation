@@ -101,6 +101,14 @@ export function orchestratorOf(terminals, address) {
   return k ? row(k) : null;
 }
 
+// A live orchestrator of the run, found by its labels (the newest if there are several), or null. The run page uses it before it
+// starts a new one: the run may have one already that the page did not know of.
+export function liveOrchestratorFor(terminals, id) {
+  const live = (terminals ?? []).filter((k) => k.state === "live" && k.labels?.[ROLE] === "orchestrator" && k.labels?.[RUN] === id);
+  live.sort((a, b) => (b.created_ms ?? 0) - (a.created_ms ?? 0));
+  return live[0] ? row(live[0]) : null;
+}
+
 const WORDS = { working: "Working", blocked: "Needs you", done: "Done", idle: "Idle", error: "Error", finished: "Finished", unknown: "Running" }; // unknown: it hasn't reported, and a plain program never will
 export const statusLabel = (status) => WORDS[status] ?? status;
 

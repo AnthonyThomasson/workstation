@@ -5,11 +5,11 @@
 // main.js builds one in init, calls refresh on a timer and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, hc, home, notify, panes, run, setShared, shared, spaces, terminals, theme, writeTextFile } from "herdr";
+import { exec, hc, home, notify, panes, run, setShared, shared, spaces, terminals, readTextFile, theme, writeTextFile } from "herdr";
 import { endRun, findTicketSpace, mergeOutcome, peekSpace, restartOrchestrator, runTabParts, slotKey } from "./bgrun.js";
 import { S, app, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
-import { agentsFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
+import { agentsFor, liveOrchestratorFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
 import { branchArgs, canMerge, finalSeen, fixMessage, fixingDone, fixingNote, fixingStart, mergeFailure, mergeSteps, mergeView, openPullRequest, optionFor, parsePr, parsePrState, prStateArgs, prViewArgs, restartTask, restoreFailure, restoreFixing, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
 import { defaultBranchOf, localMergeSteps, localPrBody, moveToStage, squashMessage } from "./local-runs.js";
 import { localTasks, repoHasGithubRemote } from "./local-tasks-env.js";
@@ -213,7 +213,11 @@ export class RunPage {
         .when(Boolean(this.fixing), (el) => el.child(div().id("run-merge-dismiss").flex_none().text_size(S().secondary).text_color(t.foreground).cursor_pointer()
           .hover((s) => s.text_color(t.muted)).tooltip("Stop waiting for the orchestrator: Merge works again.").on_mouse_down("left", stop)
           .on_click((_e, cx) => this.dismissFixing(cx)).child("Dismiss")))))
-      .when(red, (el) => el.child(div().id("run-merge-error").text_size(S().secondary).text_color(t.blocked).child(this.failure.error)))
+      .when(red, (el) => el.child(v_flex().gap(2)
+        .child(div().id("run-merge-error").text_size(S().secondary).text_color(t.blocked).child(this.failure.error))
+        .child(div().id("run-failure-dismiss").flex_none().text_size(S().secondary).text_color(t.foreground).cursor_pointer()
+          .hover((s) => s.text_color(t.muted)).tooltip("Fixed it yourself? Back to a plain Merge.").on_mouse_down("left", stop)
+          .on_click((_e, cx) => this.dismissFailure(cx)).child("Dismiss"))))
       .when(Boolean(this.error), (el) => el.child(div().text_size(S().secondary).text_color(t.blocked).child(this.error)));
   }
 
@@ -248,6 +252,9 @@ export class RunPage {
 
   dismissFixing(cx) { this.setFixing(null); cx.notify(); }
 
+  // For when the person fixed the failure by hand: back to a plain Merge, which finds out again whether it works.
+  dismissFailure(cx) { if (this.busy) return; this.setFailure(null); this.error = null; cx.notify(); }
+
   // The red button was pressed: hand the error to the orchestrator in one message (fixMessage), or when it has ended start a new one
   // with the fix as its first task (restartTask), shown in the run's tab. Then the button is Merge again, disabled, and the note says
   // the orchestrator is fixing it. A send that fails keeps the red state and says why.
@@ -258,10 +265,14 @@ export class RunPage {
     cx.spawn(async (cx) => {
       try {
         const input = { failure, branch: this.branch, workDir: this.folder, noRemote: this.noPr() };
-        const lead = orchestratorOf(terminals(), this.orchestrator);
+        let lead = orchestratorOf(terminals(), this.orchestrator);
+        if (!lead?.live) { // this run may have a live orchestrator the page did not know of: use it, don't start a second one
+          const other = liveOrchestratorFor(terminals(), this.id);
+          if (other) { lead = other; await this.useOrchestrator(other.address); }
+        }
         let record;
         if (lead?.live) {
-          const sent = await hc(["send", this.orchestrator, fixMessage(input)]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+          const sent = await hc(["send", lead.address, fixMessage(input)]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
           if (sent.code !== 0) throw new Error(`Couldn't hand it to the orchestrator: ${out(sent) || "hc send failed"}`);
           record = fixingStart({ failure, status: lead.status, turn: lead.turn });
         } else {
@@ -276,12 +287,26 @@ export class RunPage {
     });
   }
 
+  // Follows an orchestrator of the run found by its labels: its address is kept in shared state and in pane.json, as for a new one.
+  async useOrchestrator(address) {
+    this.orchestrator = address;
+    setShared(leadKey(this.id), address);
+    try { await this.writePaneJson({ ...this.props, orchestrator: address }); }
+    catch (e) { notify({ title: "The run's pane.json wasn't updated", body: String(e?.message ?? e), level: "warning" }); }
+  }
+
+  // pane.json is replaced with writeTextFile's compare-and-swap: it wants the text it replaces, so that is read first.
+  async writePaneJson(props) {
+    const path = `${home()}/.herdr/workflow-runs/${this.id}/pane.json`;
+    const current = (await readTextFile(path).catch(() => null)) ?? null;
+    await writeTextFile(path, JSON.stringify(props), current);
+  }
+
   // Starts a new orchestrator for the run (bgrun.js restartOrchestrator) and shows it in the run's tab, if that is still open.
   async restartLead(task) {
-    const runDir = `${home()}/.herdr/workflow-runs/${this.id}`;
     const { problems } = await restartOrchestrator({
       hc,
-      writePaneJson: (p) => writeTextFile(`${runDir}/pane.json`, JSON.stringify(p), null),
+      writePaneJson: (p) => this.writePaneJson(p),
       saveOrchestrator: (address) => { this.orchestrator = address; setShared(leadKey(this.id), address); },
       show: async (address) => {
         const parts = runTabParts({ slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes() });

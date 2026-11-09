@@ -636,6 +636,14 @@ test("restart: pane.json gets the run's props with the new address", async () =>
   assert.deepEqual(written, { role: "run", id: "r1", orchestrator: "t9", folder: "/w" });
 });
 
+test("restart: a pane.json that can't be written is a problem to say, and the run goes on", async () => {
+  const f = fakeRestart();
+  f.deps.writePaneJson = async () => { throw new Error("file changed"); };
+  const got = await restartOrchestrator(f.deps, restart);
+  assert.match(got.problems[0], /pane\.json.*file changed.*View/);
+  assert.ok(f.log.includes("hc send t9") && f.log.includes("save t9"));
+});
+
 test("restart: a tab that can't show it is a problem to say, and the task is still sent", async () => {
   const f = fakeRestart({ show: async () => { throw new Error("no pane"); } });
   const got = await restartOrchestrator(f.deps, restart);

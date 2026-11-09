@@ -526,6 +526,9 @@ test("prStateArgs asks gh for mergeable, mergeStateStatus and statusCheckRollup"
 test("parsePrState reads conflicts and failing checks of both kinds, and not passing, pending or skipped ones", () => {
   assert.deepEqual(parsePrState('{"mergeable":"CONFLICTING","statusCheckRollup":[]}'), { conflicting: true, failingChecks: false });
   assert.deepEqual(parsePrState('{"mergeable":"UNKNOWN"}'), { conflicting: false, failingChecks: false });
+  assert.equal(parsePrState('{"mergeable":"UNKNOWN","mergeStateStatus":"DIRTY"}').conflicting, true, "DIRTY means conflicts too");
+  assert.equal(parsePrState('{"mergeable":"MERGEABLE","mergeStateStatus":"dirty"}').conflicting, true);
+  assert.equal(parsePrState('{"mergeable":"MERGEABLE","mergeStateStatus":"BEHIND"}').conflicting, false);
   const checks = (...c) => parsePrState(JSON.stringify({ mergeable: "MERGEABLE", statusCheckRollup: c })).failingChecks;
   for (const conclusion of ["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"]) assert.equal(checks({ __typename: "CheckRun", conclusion }), true, conclusion);
   for (const state of ["FAILURE", "ERROR"]) assert.equal(checks({ __typename: "StatusContext", state }), true, state);
@@ -607,8 +610,10 @@ const sent = (extra = {}) => ({ label: "Fix conflicts", error: "e", seenWorking:
 test("fixingStart records the label, the error, the turn at send time and whether it was working already", () => {
   const f = failure("conflicts", "boom");
   assert.deepEqual(fixingStart({ failure: f, status: "idle", turn: 4 }), { label: "Fix conflicts", error: "boom", seenWorking: false, turn: 4 });
-  assert.equal(fixingStart({ failure: f, status: "working", turn: 4 }).seenWorking, true, "seeded from the status at send time");
-  assert.equal(fixingStart({ failure: f, status: "blocked", turn: 4 }).seenWorking, true);
+  assert.equal(fixingStart({ failure: f, status: "working", turn: 4 }).seenWorking, false, "a known turn: the end of the turn in progress is not the end of the fix");
+  assert.equal(fixingStart({ failure: f, status: "working" }).seenWorking, true, "no turn known: seeded from the status at send time");
+  assert.equal(fixingStart({ failure: f, status: "blocked", turn: null }).seenWorking, true);
+  assert.equal(fixingStart({ failure: f, status: "idle" }).seenWorking, false);
   assert.equal(fixingStart({ failure: f, status: "done" }).turn, null, "no turn counter known");
   assert.equal(fixingStart({ failure: f, status: "done", turn: "x" }).turn, null);
 });
@@ -638,9 +643,17 @@ test("fixingDone: without a turn counter it falls back to having seen it working
   assert.equal(fixingDone({ fixing: sent({ turn: null, seenWorking: true }), status: "idle", live: true }), null);
 });
 
-test("fixingDone: an orchestrator that was working when the message was sent ends at its first done or idle", () => {
-  const f = fixingStart({ failure: failure("checks"), status: "working", turn: 2 });
-  assert.equal(fixingDone({ fixing: f, status: "idle", live: true, turn: 2 }), null);
+test("fixingDone: with no turn counter, an orchestrator that was working when the message was sent ends at its first done or idle", () => {
+  const f = fixingStart({ failure: failure("checks"), status: "working" });
+  assert.equal(fixingDone({ fixing: f, status: "idle", live: true }), null);
+});
+
+test("fixingDone: an advanced turn ends it for any status but working and blocked (an agent that reports unknown)", () => {
+  assert.equal(fixingDone({ fixing: sent(), status: "unknown", live: true, turn: 5 }), null);
+  assert.equal(fixingDone({ fixing: sent(), status: undefined, live: true, turn: 5 }), null);
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "unknown", live: true, turn: 4 }), sent(), "not advanced");
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "blocked", live: true, turn: 5 }), sent({ seenWorking: true }));
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "working", live: true, turn: 5 }), sent({ seenWorking: true }));
 });
 
 test("fixingDone: ends when the orchestrator is gone, and does nothing without a record", () => {
