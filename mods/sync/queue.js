@@ -74,7 +74,6 @@ export function createSyncQueue({ sync, changed, now = Date.now, setTimer = setT
       if (running) { followUp = true; return; }
       start();
     },
-    running: () => running,
     stop() { stop(); followUp = false; sawChange = false; dirty = false; gen++; },
   };
 }
