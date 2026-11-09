@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { connectRun, endRun, guarded, mergeOutcome, launchRun, holdShown, findRunTab, runTabParts, waitReady, orchestratorRunArgs, parseStarted, placeholderArgv, reapplyRuns, slotKey, viewTarget, findTicketSpace, peekSpace, undoRunTab } from "./bgrun.js";
+import { connectRun, endRun, guarded, mergeOutcome, launchRun, holdShown, findRunTab, runTabParts, waitReady, orchestratorRunArgs, parseStarted, placeholderArgv, reapplyRuns, slotKey, viewTarget, findTicketSpace, peekSpace, undoRunTab, restartOrchestrator } from "./bgrun.js";
 import { ticketName } from "./run.js";
 
 const SPACES = [{ id: "s1", tabs: [{ id: "tA" }, { id: "tB" }] }, { id: "s2", tabs: [{ id: "tC" }] }];
@@ -599,4 +599,81 @@ test("what the page says after Merge: nothing when its tab was closed, an error 
   assert.equal(gone.done, false);
   assert.equal(gone.error, null);
   assert.match(gone.note.text, /close it yourself/);
+});
+
+// restartOrchestrator: a new orchestrator for a run whose own has ended, with a task of its own.
+function fakeRestart({ ready = answer({ reason: "status", status: "idle", ended: true }), send = { code: 0, stdout: "", stderr: "" }, run = { code: 0, stdout: '{"address":"t9"}', stderr: "" }, show = async () => {} } = {}) {
+  const log = [], runs = [];
+  const deps = {
+    hc: async (a) => {
+      log.push(`hc ${a.slice(0, 2).join(" ")}`);
+      if (a[0] === "run") { runs.push(a); return run; }
+      if (a[0] === "wait") return ready;
+      if (a[0] === "send") return send;
+      return { code: 0, stdout: "", stderr: "" };
+    },
+    writePaneJson: async (props) => { log.push(`pane.json ${props.orchestrator}`); },
+    saveOrchestrator: (address) => log.push(`save ${address}`),
+    show: async (address) => { log.push(`show ${address}`); return show(address); },
+  };
+  return { deps, log, runs };
+}
+const restart = { id: "r1", key: "o/r#1", workDir: "/w", argv: ["claude", "--effort", "high"], task: "Read x. Fix only this.", props: { role: "run", id: "r1", orchestrator: "t5", folder: "/w" } };
+
+test("restart: starts it like the first one, saves its address, shows it, waits for it, then sends the task", async () => {
+  const f = fakeRestart();
+  const got = await restartOrchestrator(f.deps, restart);
+  assert.deepEqual(f.log, ["hc run --bg", "pane.json t9", "save t9", "show t9", "hc wait t9", "hc send t9"]);
+  assert.deepEqual(f.runs[0], orchestratorRunArgs({ id: "r1", key: "o/r#1", workDir: "/w", argv: ["claude", "--effort", "high"] }));
+  assert.deepEqual(got, { orchestrator: "t9", problems: [] });
+});
+
+test("restart: pane.json gets the run's props with the new address", async () => {
+  let written;
+  const f = fakeRestart();
+  f.deps.writePaneJson = async (p) => { written = p; };
+  await restartOrchestrator(f.deps, restart);
+  assert.deepEqual(written, { role: "run", id: "r1", orchestrator: "t9", folder: "/w" });
+});
+
+test("restart: a pane.json that can't be written is a problem to say, and the run goes on", async () => {
+  const f = fakeRestart();
+  f.deps.writePaneJson = async () => { throw new Error("file changed"); };
+  const got = await restartOrchestrator(f.deps, restart);
+  assert.match(got.problems[0], /pane\.json.*file changed.*View/);
+  assert.ok(f.log.includes("hc send t9") && f.log.includes("save t9"));
+});
+
+test("restart: a tab that can't show it is a problem to say, and the task is still sent", async () => {
+  const f = fakeRestart({ show: async () => { throw new Error("no pane"); } });
+  const got = await restartOrchestrator(f.deps, restart);
+  assert.match(got.problems[0], /no pane/);
+  assert.match(got.problems[0], /View/);
+  assert.ok(f.log.includes("hc send t9"));
+});
+
+test("restart: without the command that starts it, it says so and starts nothing", async () => {
+  const f = fakeRestart();
+  for (const argv of [undefined, [], "claude"]) await assert.rejects(restartOrchestrator(f.deps, { ...restart, argv }), /can't be started again/);
+  await assert.rejects(restartOrchestrator(f.deps, { ...restart, key: undefined }), /can't be started again/);
+  assert.deepEqual(f.log, []);
+});
+
+test("restart: an orchestrator that doesn't start throws and saves nothing", async () => {
+  const f = fakeRestart({ run: { code: 1, stdout: "", stderr: "no such program" } });
+  await assert.rejects(restartOrchestrator(f.deps, restart), /didn't start.*no such program/);
+  assert.deepEqual(f.log, ["hc run --bg"]);
+});
+
+test("restart: an agent that ended while starting is killed and removed, and no task is sent", async () => {
+  const f = fakeRestart({ ready: answer({ reason: "exit", status: null, ended: true, exit_code: 1 }) });
+  await assert.rejects(restartOrchestrator(f.deps, restart), /ended while starting/);
+  assert.ok(!f.log.includes("hc send t9"));
+  assert.deepEqual(f.log.slice(-2), ["hc kill t9", "hc rm t9"]);
+});
+
+test("restart: a task that can't be sent kills and removes the new orchestrator and says why", async () => {
+  const f = fakeRestart({ send: { code: 1, stdout: "", stderr: "terminal is busy" } });
+  await assert.rejects(restartOrchestrator(f.deps, restart), /terminal is busy/);
+  assert.deepEqual(f.log.slice(-2), ["hc kill t9", "hc rm t9"]);
 });

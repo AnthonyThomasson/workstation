@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, optionFor, statusArgs, mergeSteps, runSteps, prArgs, prViewArgs, parsePrUrl, prNumber, parsePr, handOffStep, handOffMessage, handOffNote } from "./finish.js";
+import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, optionFor, statusArgs, mergeSteps, runSteps, prArgs, prViewArgs, parsePrUrl, prNumber, parsePr, LABELS, prStateArgs, parsePrState, mergeFailure, fixMessage, restartTask, fixingDone, fixingStart, fixingNote, mergeView, restoreFailure, restoreFixing, openPullRequest } from "./finish.js";
 
 test("canMerge needs the final reviewer seen and nobody live", () => {
   const ended = { live: false }, live = { live: true, status: "idle" };
@@ -456,46 +456,305 @@ test("runSteps: a step can be code (run) and a check can read the output (check)
   await assert.rejects(runSteps([check], fake({ x: { code: 1, stderr: "bad" } }).exec), /Couldn't\. bad/);
 });
 
-// A Merge that stops at the ahead or tree-status check is handed to the orchestrator.
-const stopOf = async (answers) => runSteps(mergeSteps(ctx), fake(answers).exec).then(() => null, (e) => e);
+// --- a failed Merge: which fix its button names ---------------------------------------------------------------------------
 
-test("runSteps names the check a dirty stop came from, and only a dirty stop", async () => {
-  assert.equal((await stopOf({ "r-9-x status": { stdout: " M a.js\n" } })).step, "tree-status");
+const stopOf = async (answers, extra = {}) => runSteps(mergeSteps({ ...ctx, ...extra }), fake(answers).exec).then(() => null, (e) => e);
+const PR_FAIL = { "gh pr merge": { code: 1, stderr: "GraphQL: Pull request is not mergeable" } };
+
+test("runSteps marks an error with the step it stopped at, found when the step saw the problem, and cleanup after the merge", async () => {
+  const dirty = await stopOf({ "r-9-x status": { stdout: " M a.js\n" } });
+  assert.equal(dirty.step, "tree-status"); assert.equal(dirty.found, true); assert.equal(dirty.phase, undefined);
   assert.equal((await stopOf({ "rev-list": { stdout: "abc123\n" } })).step, "ahead");
-  assert.equal((await stopOf({ "fetch origin": { code: 128, stderr: "no host" } })).step, undefined);
-  assert.equal((await stopOf({ "status --porcelain": { code: 128, stderr: "bad" } })).step, undefined);
-  assert.equal((await stopOf({ "gh pr merge": { code: 1, stderr: "policy" } })).step, undefined);
+  const cantLook = await stopOf({ "status --porcelain": { code: 128, stderr: "bad" } });
+  assert.equal(cantLook.step, "tree-status"); assert.equal(cantLook.found, undefined, "a check that couldn't run found nothing");
+  assert.equal((await stopOf({ "fetch origin": { code: 128, stderr: "no host" } })).step, "fetch");
+  const refused = await stopOf(PR_FAIL);
+  assert.equal(refused.step, "pr-merge"); assert.equal(refused.phase, undefined, "the merge itself is not the clean-up");
+  for (const [answer, step] of [["graphql", "status"], ["worktree remove", "remove-worktree"], ["branch -D", "delete-branch"], ["rm -rf", "remove-run-files"]]) {
+    const e = await stopOf({ [answer]: { code: 1, stderr: "x" } });
+    assert.equal(e.step, step); assert.equal(e.phase, "cleanup", step);
+  }
+  assert.equal((await stopOf({ "worktree prune": { code: 1, stderr: "x" } }, { workDirExists: false })).phase, "cleanup");
 });
 
-test("only the ahead and tree-status stops are handed to the orchestrator", async () => {
-  assert.equal(handOffStep(await stopOf({ "r-9-x status": { stdout: " M a.js\n" } })), "tree-status");
-  assert.equal(handOffStep(await stopOf({ "rev-list": { stdout: "abc123\n" } })), "ahead");
-  assert.equal(handOffStep(await stopOf({ "gh pr merge": { code: 1, stderr: "policy" } })), null);
-  assert.equal(handOffStep(await stopOf({ "worktree remove": { code: 1, stderr: "busy" } })), null);
-  assert.equal(handOffStep(new Error("Couldn't look up the pull request")), null);
-  assert.equal(handOffStep(null), null);
+const failureOf = async (answers, prState, extra) => mergeFailure({ error: await stopOf(answers, extra), prState });
+const prState = (o) => parsePrState(JSON.stringify(o));
+
+test("mergeFailure: leftover changes are Commit changes, commits origin lacks are Push branch", async () => {
+  assert.deepEqual(await failureOf({ "r-9-x status": { stdout: " M a.js\n" } }), { kind: "commit", label: "Commit changes", error: (await stopOf({ "r-9-x status": { stdout: " M a.js\n" } })).message });
+  assert.equal((await failureOf({ "rev-list": { stdout: "abc123\n" } })).label, "Push branch");
+  assert.equal(LABELS.commit, "Commit changes"); assert.equal(LABELS.push, "Push branch");
 });
 
-test("the message to the orchestrator quotes the error and asks for a commit, a plain push and a report", () => {
-  const error = "workflow/9-x has commits that origin/workflow/9-x doesn't. Run `git -C /r-9-x push origin workflow/9-x` so the pull request has them, then press Merge again.";
-  const text = handOffMessage({ step: "ahead", error, branch: "workflow/9-x", workDir: "/r-9-x" });
-  assert.ok(text.includes("Merge stopped"));
-  assert.ok(text.includes(error));
-  assert.ok(text.includes("git -C /r-9-x push origin workflow/9-x"));
-  assert.match(text, /reviewer check it first if it is new work/);
-  assert.match(text, /never force/i);
-  assert.match(text, /rebased.*stop and ask the person/s);
-  assert.match(text, /report back/i);
-  assert.ok(!text.includes('"'), "it goes in one double-quoted argument of hc send");
-  assert.ok(!text.includes("\n"), "one line");
-  assert.match(handOffMessage({ step: "tree-status", error: "x", branch: "b", workDir: "/w" }), /uncommitted/);
+test("mergeFailure: when gh pr merge fails, the PR's state decides: conflicting, then failing checks, else Fix merge", async () => {
+  assert.equal((await failureOf(PR_FAIL, prState({ mergeable: "CONFLICTING", mergeStateStatus: "DIRTY", statusCheckRollup: [] }))).label, "Fix conflicts");
+  assert.equal((await failureOf(PR_FAIL, prState({ mergeable: "MERGEABLE", statusCheckRollup: [{ __typename: "CheckRun", conclusion: "FAILURE" }] }))).label, "Fix checks");
+  assert.equal((await failureOf(PR_FAIL, prState({ mergeable: "CONFLICTING", statusCheckRollup: [{ conclusion: "FAILURE" }] }))).kind, "conflicts", "conflicts win");
+  assert.equal((await failureOf(PR_FAIL, prState({ mergeable: "MERGEABLE", mergeStateStatus: "BEHIND", statusCheckRollup: [{ conclusion: "SUCCESS" }] }))).label, "Fix merge");
+  assert.equal((await failureOf(PR_FAIL, null)).label, "Fix merge", "the state couldn't be asked");
+  assert.equal((await failureOf(PR_FAIL)).label, "Fix merge");
 });
 
-test("the note says why Merge stopped and that the orchestrator is fixing it, keeping the error", () => {
-  const error = "/r-9-x has uncommitted changes. Commit or discard them.";
-  const n = handOffNote({ step: "tree-status", error });
-  assert.equal(n.detail, error);
-  assert.match(n.text, /^Merge stopped: .*uncommitted changes/);
-  assert.match(n.text, /The orchestrator is fixing it; press Merge again once it reports\.$/);
-  assert.match(handOffNote({ step: "ahead", error }).text, /commits origin doesn't have/);
+test("mergeFailure never reads the error text", async () => {
+  const f = await failureOf({ "gh pr merge": { code: 1, stderr: "Pull request has merge conflicts and failing checks" } }, prState({ mergeable: "MERGEABLE", statusCheckRollup: [] }));
+  assert.equal(f.label, "Fix merge");
+  assert.match(f.error, /merge conflicts and failing checks/, "the error is kept whole");
+});
+
+test("mergeFailure: any other failure before the merge is Fix merge, and the PR state is not used for it", async () => {
+  const conflicting = prState({ mergeable: "CONFLICTING", statusCheckRollup: [] });
+  assert.equal((await failureOf({ "fetch origin": { code: 128, stderr: "no host" } }, conflicting)).label, "Fix merge");
+  assert.equal((await failureOf({ "status --porcelain": { code: 128, stderr: "bad" } })).label, "Fix merge", "tree-status that couldn't run");
+  assert.equal((await failureOf({ "rev-list": { code: 128, stderr: "bad" } })).label, "Fix merge");
+  const mismatch = new Error("The branch's pull request is https://x/pull/2, not https://x/pull/1 that this run opened. Nothing was merged.");
+  assert.equal(mergeFailure({ error: mismatch }).label, "Fix merge");
+  assert.equal(mergeFailure({ error: new Error("Couldn't look up the pull request: no") }).label, "Fix merge");
+  assert.equal((await failureOf({ "rev-list": { stdout: "abc\n" } }, null, { prMerged: true, headOid: "abcdef1234", number: 12 })).label, "Fix merge", "commits beyond a merged PR (not-in-pr)");
+});
+
+test("mergeFailure: a failure after the merge is a plain error", async () => {
+  for (const answer of ["graphql", "worktree remove", "branch -D", "rm -rf"]) {
+    assert.equal(await failureOf({ [answer]: { code: 1, stderr: "x" } }, prState({ mergeable: "CONFLICTING" })), null, answer);
+  }
+  assert.equal(mergeFailure({ error: null }), null);
+});
+
+test("prStateArgs asks gh for mergeable, mergeStateStatus and statusCheckRollup", () => {
+  assert.deepEqual(prStateArgs(12), ["pr", "view", "12", "--json", "mergeable,mergeStateStatus,statusCheckRollup"]);
+});
+
+test("parsePrState reads conflicts and failing checks of both kinds, and not passing, pending or skipped ones", () => {
+  assert.deepEqual(parsePrState('{"mergeable":"CONFLICTING","statusCheckRollup":[]}'), { conflicting: true, failingChecks: false });
+  assert.deepEqual(parsePrState('{"mergeable":"UNKNOWN"}'), { conflicting: false, failingChecks: false });
+  assert.equal(parsePrState('{"mergeable":"UNKNOWN","mergeStateStatus":"DIRTY"}').conflicting, true, "DIRTY means conflicts too");
+  assert.equal(parsePrState('{"mergeable":"MERGEABLE","mergeStateStatus":"dirty"}').conflicting, true);
+  assert.equal(parsePrState('{"mergeable":"MERGEABLE","mergeStateStatus":"BEHIND"}').conflicting, false);
+  const checks = (...c) => parsePrState(JSON.stringify({ mergeable: "MERGEABLE", statusCheckRollup: c })).failingChecks;
+  for (const conclusion of ["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"]) assert.equal(checks({ __typename: "CheckRun", conclusion }), true, conclusion);
+  for (const state of ["FAILURE", "ERROR"]) assert.equal(checks({ __typename: "StatusContext", state }), true, state);
+  assert.equal(checks({ conclusion: "SUCCESS" }, { conclusion: "SKIPPED" }, { conclusion: "NEUTRAL" }, { conclusion: "" , status: "IN_PROGRESS" }, { state: "SUCCESS" }, { state: "PENDING" }), false);
+  assert.equal(checks({ conclusion: "SUCCESS" }, { state: "ERROR" }), true);
+  assert.equal(parsePrState("not json"), null);
+  assert.equal(parsePrState(""), null);
+  assert.equal(parsePrState("null"), null);
+  assert.equal(parsePrState("[]"), null, "a JSON array is not the object asked for");
+  assert.equal(parsePrState("[1]"), null);
+  assert.equal(parsePrState("12"), null);
+});
+
+// --- what the orchestrator is sent ---------------------------------------------------------------------------------------
+
+const failure = (kind, error = "the error: it failed") => ({ kind, label: LABELS[kind], error });
+const here = { branch: "workflow/9-x", workDir: "/r-9-x" };
+
+test("fixMessage is one line with no double quotes, carrying the label, the whole error, the branch and the worktree", () => {
+  const error = 'Merging b conflicts in:\n  a.txt\n  "b c.txt"\nNothing was cleaned up.';
+  for (const kind of Object.keys(LABELS)) for (const noRemote of [false, true]) {
+    const text = fixMessage({ failure: failure(kind, error), ...here, noRemote });
+    assert.ok(!text.includes('"') && !text.includes("\n"), `${kind}: one line, no double quotes`);
+    assert.ok(text.includes(LABELS[kind]), kind);
+    assert.ok(text.includes("Merging b conflicts in: a.txt 'b c.txt' Nothing was cleaned up."), "the error, on one line");
+    assert.ok(text.includes("workflow/9-x") && text.includes("/r-9-x"), kind);
+    assert.match(text, /[Rr]eport back/);
+    assert.match(text, /[Nn]ever commit to or push the default branch/);
+  }
+});
+
+test("fixMessage per kind, with a remote", () => {
+  const m = (kind) => fixMessage({ failure: failure(kind), ...here });
+  assert.match(m("conflicts"), /rebase.*default branch.*\/r-9-x/);
+  assert.ok(m("conflicts").includes("`git -C /r-9-x push --force-with-lease origin workflow/9-x`"));
+  assert.match(m("checks"), /failing checks through a worker and a reviewer, then push/);
+  assert.ok(m("checks").includes("`git -C /r-9-x push origin workflow/9-x`"));
+  assert.match(m("commit"), /commit what is left in \/r-9-x \(have a reviewer check it first if it is new work\), then push/);
+  assert.ok(m("push").includes("`git -C /r-9-x push origin workflow/9-x`"));
+  assert.doesNotMatch(m("push"), /force/);
+  assert.match(m("merge"), /fix it if you can/);
+  assert.match(m("merge"), /needs the person.*say that you can't fix it/);
+});
+
+test("fixMessage for a local run pushes nothing", () => {
+  for (const kind of Object.keys(LABELS)) {
+    const text = fixMessage({ failure: failure(kind), ...here, noRemote: true });
+    assert.doesNotMatch(text, /git -C \S+ push/, kind);
+    assert.doesNotMatch(text, /force-with-lease|origin/, kind);
+    assert.match(text, /push nothing/, kind);
+  }
+  assert.match(fixMessage({ failure: failure("conflicts"), ...here, noRemote: true }), /rebase it onto the default branch in \/r-9-x/);
+  assert.match(fixMessage({ failure: failure("commit"), ...here, noRemote: true }), /commit what is left.*new work\)\. Report back when it is done/);
+});
+
+test("fixMessage and restartTask ask for a report back once", () => {
+  for (const kind of Object.keys(LABELS)) for (const noRemote of [false, true]) {
+    assert.equal(fixMessage({ failure: failure(kind), ...here, noRemote }).match(/report back/gi).length, 1, `${kind} ${noRemote}`);
+  }
+});
+
+test("restartTask is the first task of a new orchestrator: the rules, no planning or questions, only this fix", () => {
+  const text = restartTask({ runDir: "/h/.herdr/workflow-runs/9-abc", failure: failure("conflicts"), ...here });
+  assert.ok(text.includes("/h/.herdr/workflow-runs/9-abc/orchestrator.md"));
+  assert.match(text, /skip the planning and the questions/);
+  assert.match(text, /already built and merged into the ticket branch/);
+  assert.match(text, /through a worker and a reviewer/);
+  assert.ok(text.includes("Fix conflicts") && text.includes("the error: it failed") && text.includes("/r-9-x") && text.includes("workflow/9-x"));
+  assert.ok(text.includes("--force-with-lease"));
+  assert.ok(!text.includes('"') && !text.includes("\n"));
+  assert.doesNotMatch(restartTask({ runDir: "/r", failure: failure("conflicts"), ...here, noRemote: true }), /origin|push --force/);
+  assert.match(restartTask({ runDir: "/r", failure: failure("merge"), ...here }), /can't fix it/);
+});
+
+// --- when "the orchestrator is fixing it" ends -----------------------------------------------------------------------------
+
+const sent = (extra = {}) => ({ label: "Fix conflicts", error: "e", seenWorking: false, turn: 4, busy: false, ...extra });
+
+test("fixingStart records the label, the error, the turn at send time and whether it was working already", () => {
+  const f = failure("conflicts", "boom");
+  assert.deepEqual(fixingStart({ failure: f, status: "idle", turn: 4 }), { label: "Fix conflicts", error: "boom", seenWorking: false, turn: 4, busy: false });
+  assert.equal(fixingStart({ failure: f, status: "working", turn: 4 }).busy, true, "working at send time: the message queues behind the turn in progress");
+  assert.equal(fixingStart({ failure: f, status: "blocked", turn: 4 }).busy, true);
+  assert.equal(fixingStart({ failure: f, status: "done", turn: 4 }).busy, false);
+  assert.equal(fixingStart({ failure: f }).busy, false);
+  assert.equal(fixingStart({ failure: f, status: "working", turn: 4 }).seenWorking, false, "a known turn: the end of the turn in progress is not the end of the fix");
+  assert.equal(fixingStart({ failure: f, status: "working" }).seenWorking, true, "no turn known: seeded from the status at send time");
+  assert.equal(fixingStart({ failure: f, status: "blocked", turn: null }).seenWorking, true);
+  assert.equal(fixingStart({ failure: f, status: "idle" }).seenWorking, false);
+  assert.equal(fixingStart({ failure: f, status: "done" }).turn, null, "no turn counter known");
+  assert.equal(fixingStart({ failure: f, status: "done", turn: "x" }).turn, null);
+});
+
+test("fixingDone: keeps going until the orchestrator has been seen working and is then done or idle", () => {
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "idle", live: true, turn: 4 }), sent(), "idle before it picked the message up (the turn has not moved)");
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "done", live: true, turn: 4 }), sent());
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "working", live: true, turn: 4 }), sent({ seenWorking: true }));
+  assert.deepEqual(fixingDone({ fixing: sent({ seenWorking: true }), status: "working", live: true, turn: 5 }), sent({ seenWorking: true }));
+  assert.deepEqual(fixingDone({ fixing: sent({ seenWorking: true }), status: "blocked", live: true }), sent({ seenWorking: true }), "waiting for the person is still going");
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "blocked", live: true }), sent({ seenWorking: true }));
+  assert.deepEqual(fixingDone({ fixing: sent({ seenWorking: true }), status: "unknown", live: true }), sent({ seenWorking: true }));
+  assert.equal(fixingDone({ fixing: sent({ seenWorking: true }), status: "idle", live: true }), null);
+  assert.equal(fixingDone({ fixing: sent({ seenWorking: true }), status: "done", live: true }), null);
+});
+
+test("fixingDone: a turn that went working then idle between two looks still ends it, as the turn counter moved", () => {
+  assert.equal(fixingDone({ fixing: sent(), status: "idle", live: true, turn: 5 }), null);
+  assert.equal(fixingDone({ fixing: sent(), status: "done", live: true, turn: 6 }), null);
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "working", live: true, turn: 5 }), sent({ seenWorking: true }), "still working: not yet");
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "idle", live: true, turn: 3 }), sent(), "a counter that went back is not an advance");
+});
+
+test("fixingDone: without a turn counter it falls back to having seen it working", () => {
+  assert.deepEqual(fixingDone({ fixing: sent({ turn: null }), status: "idle", live: true, turn: 9 }), sent({ turn: null }));
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "idle", live: true }), sent());
+  assert.equal(fixingDone({ fixing: sent({ turn: null, seenWorking: true }), status: "idle", live: true }), null);
+});
+
+test("fixingDone: with no turn counter, an orchestrator that was working when the message was sent ends at its first done or idle", () => {
+  const f = fixingStart({ failure: failure("checks"), status: "working" });
+  assert.equal(fixingDone({ fixing: f, status: "idle", live: true }), null);
+});
+
+test("fixingDone: an advanced turn ends it for any status but working and blocked (an agent that reports unknown)", () => {
+  assert.equal(fixingDone({ fixing: sent(), status: "unknown", live: true, turn: 5 }), null);
+  assert.equal(fixingDone({ fixing: sent(), status: undefined, live: true, turn: 5 }), null);
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "unknown", live: true, turn: 4 }), sent(), "not advanced");
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "blocked", live: true, turn: 5 }), sent({ seenWorking: true }));
+  assert.deepEqual(fixingDone({ fixing: sent(), status: "working", live: true, turn: 5 }), sent({ seenWorking: true }));
+});
+
+test("fixingDone: an orchestrator that was busy at send time finishes that turn first, so the counter must move by two", () => {
+  const busy = (extra = {}) => sent({ busy: true, ...extra });
+  assert.deepEqual(fixingDone({ fixing: busy(), status: "idle", live: true, turn: 5 }), busy(), "turn N+1 is the end of the turn in progress, not the fix");
+  assert.deepEqual(fixingDone({ fixing: busy(), status: "done", live: true, turn: 5 }), busy());
+  assert.deepEqual(fixingDone({ fixing: busy(), status: "unknown", live: true, turn: 5 }), busy());
+  assert.equal(fixingDone({ fixing: busy(), status: "idle", live: true, turn: 6 }), null, "the fix's own turn has ended");
+  assert.equal(fixingDone({ fixing: busy(), status: "unknown", live: true, turn: 7 }), null);
+  assert.deepEqual(fixingDone({ fixing: busy(), status: "working", live: true, turn: 6 }), busy({ seenWorking: true }), "still working: not yet");
+  assert.deepEqual(fixingDone({ fixing: busy({ seenWorking: true }), status: "idle", live: true, turn: 5 }), busy({ seenWorking: true }), "seen working in the turn in progress, which then ends: still fixing");
+  assert.deepEqual(fixingDone({ fixing: busy({ seenWorking: true }), status: "done", live: true, turn: 4 }), busy({ seenWorking: true }));
+  assert.equal(fixingDone({ fixing: busy({ seenWorking: true }), status: "idle", live: true, turn: 6 }), null, "moved by two: the fix's turn ended");
+  assert.equal(fixingDone({ fixing: busy({ seenWorking: true, turn: null }), status: "idle", live: true, turn: 5 }), null, "no turn at send: the seen-working rule stays");
+  assert.deepEqual(fixingDone({ fixing: busy({ seenWorking: true }), status: "idle", live: true }), busy({ seenWorking: true }), "a counter missing from one look does not fall back to the status rule");
+  assert.equal(fixingDone({ fixing: sent({ busy: false }), status: "idle", live: true, turn: 5 }), null, "not busy at send: one move is enough");
+  assert.equal(fixingDone({ fixing: busy(), status: "idle", live: false, turn: 5 }), null, "gone still ends it");
+  assert.deepEqual(fixingDone({ fixing: busy({ turn: null }), status: "idle", live: true, turn: 9 }), busy({ turn: null }), "no turn at send: the seen-working rule only");
+});
+
+test("fixingDone: ends when the orchestrator is gone, and does nothing without a record", () => {
+  assert.equal(fixingDone({ fixing: sent(), status: "idle", live: false }), null);
+  assert.equal(fixingDone({ fixing: sent({ seenWorking: true }), status: "working", live: false }), null);
+  assert.equal(fixingDone({ fixing: null, status: "working", live: true }), null);
+});
+
+test("fixingNote names the fix", () => {
+  assert.equal(fixingNote(sent()), "The orchestrator is fixing it (Fix conflicts). Merge comes back when it is done.");
+});
+
+// --- the Merge button -------------------------------------------------------------------------------------------------------
+
+test("mergeView: Merge is enabled when ready and nothing is going, with or without a pull request", () => {
+  assert.deepEqual(mergeView({ ready: true }), { mode: "normal", label: "Merge", enabled: true });
+  assert.deepEqual(mergeView({ ready: false }), { mode: "normal", label: "Merge", enabled: false });
+  assert.deepEqual(mergeView({ ready: true, busy: "merge" }), { mode: "normal", label: "Merging…", enabled: false });
+  assert.deepEqual(mergeView({ ready: true, busy: "pr" }), { mode: "normal", label: "Opening PR…", enabled: false });
+});
+
+test("mergeView: a failure makes the button red with its label, enabled until it is pressed", () => {
+  const f = failure("checks");
+  assert.deepEqual(mergeView({ ready: true, failure: f }), { mode: "red", label: "Fix checks", enabled: true });
+  assert.deepEqual(mergeView({ ready: false, failure: f }), { mode: "red", label: "Fix checks", enabled: true }, "the red state does not depend on the gate");
+  assert.deepEqual(mergeView({ ready: true, failure: f, busy: "fix" }), { mode: "red", label: "Sending…", enabled: false });
+});
+
+test("mergeView: while the orchestrator is fixing it, Merge is disabled and the red state is not shown", () => {
+  assert.deepEqual(mergeView({ ready: true, failure: failure("checks"), fixing: sent() }), { mode: "fixing", label: "Merge", enabled: false });
+  assert.deepEqual(mergeView({ ready: true, fixing: sent() }), { mode: "fixing", label: "Merge", enabled: false });
+});
+
+test("restoreFailure and restoreFixing read what shared state kept, and refuse anything else", () => {
+  assert.deepEqual(restoreFailure({ kind: "checks", label: "x", error: "boom" }), { kind: "checks", label: "Fix checks", error: "boom" });
+  assert.equal(restoreFailure({ kind: "nope", error: "x" }), null);
+  assert.equal(restoreFailure({ kind: "checks" }), null);
+  assert.equal(restoreFailure(null), null);
+  assert.equal(restoreFailure("checks"), null);
+  assert.deepEqual(restoreFixing({ label: "Fix checks", error: "e", seenWorking: 1, turn: 3 }), { label: "Fix checks", error: "e", seenWorking: true, turn: 3, busy: false });
+  assert.equal(restoreFixing({ label: "Fix checks", busy: true }).busy, true);
+  assert.deepEqual(restoreFixing({ label: "Fix checks" }), { label: "Fix checks", error: "", seenWorking: false, turn: null, busy: false });
+  assert.equal(restoreFixing({}), null);
+  assert.equal(restoreFixing(null), null);
+  assert.equal(restoreFixing([]), null);
+});
+
+// --- opening the pull request as part of Merge -----------------------------------------------------------------------------
+
+const prExec = (answers) => {
+  const calls = [];
+  const exec = async (cmd, args, opts) => {
+    calls.push([cmd, ...args].join(" "));
+    const hit = Object.entries(answers).find(([k]) => calls.at(-1).includes(k));
+    return { code: 0, stdout: "", stderr: "", ...(hit?.[1] ?? {}) };
+  };
+  return { exec, calls };
+};
+const pr = { folder: "/w", branch: "workflow/9-x", title: "Do it", number: 9 };
+
+test("openPullRequest pushes with -u, then opens the pull request and returns its url and number", async () => {
+  const { exec, calls } = prExec({ "pr create": { stdout: "https://github.com/o/r/pull/12\n" } });
+  assert.deepEqual(await openPullRequest(exec, pr), { url: "https://github.com/o/r/pull/12", state: "OPEN", number: "12" });
+  assert.deepEqual(calls, ["git -C /w push -u origin workflow/9-x", "gh pr create --head workflow/9-x --title #9 Do it --body Closes #9"]);
+});
+
+test("openPullRequest: a body replaces the Closes line, and 'already exists' on stderr still gives the url", async () => {
+  const { exec, calls } = prExec({ "pr create": { code: 1, stderr: "a pull request for branch already exists:\nhttps://github.com/o/r/pull/3\n" } });
+  assert.equal((await openPullRequest(exec, { ...pr, body: "Local task 9" })).number, "3");
+  assert.ok(calls[1].endsWith("--body Local task 9"));
+});
+
+test("openPullRequest: a failed push is a Push branch failure, a refused pull request is Fix merge", async () => {
+  const bad = prExec({ "push -u": { code: 1, stderr: "rejected" } });
+  const e1 = await openPullRequest(bad.exec, pr).catch((e) => e);
+  assert.match(e1.message, /The push failed: rejected/);
+  assert.equal(mergeFailure({ error: e1 }).label, "Push branch");
+  assert.equal(bad.calls.length, 1, "nothing after the failed push");
+  const e2 = await openPullRequest(prExec({ "pr create": { code: 1, stderr: "no permission" } }).exec, pr).catch((e) => e);
+  assert.match(e2.message, /gh didn't open a pull request: no permission/);
+  assert.equal(mergeFailure({ error: e2 }).label, "Fix merge");
 });

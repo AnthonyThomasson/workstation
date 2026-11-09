@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agentsFor, keep, lsQueries, orchestratorOf, parseLs, row, sameKept, statusColor, statusLabel } from "./runview.js";
+import { agentsFor, liveOrchestratorFor, keep, lsQueries, orchestratorOf, parseLs, row, sameKept, statusColor, statusLabel } from "./runview.js";
 
 // What `hc ls --all --json` gives for a terminal: no labels, the query was the filter.
 const ls = (address, extra = {}) => ({ address, name: `n-${address}`, state: "live", status: "working", ...extra });
@@ -60,6 +60,22 @@ test("a row falls back on the title, the name and the address", () => {
 
 test("a finished terminal says finished whatever it last reported", () => {
   assert.equal(row(term("t1", "worker", { state: "finished", status: "working" })).status, "finished");
+});
+
+test("a row carries the terminal's turn counter, or null", () => {
+  assert.equal(row({ address: "t1", state: "live", turn: 7 }).turn, 7);
+  assert.equal(row({ address: "t1", state: "live" }).turn, null);
+  assert.equal(orchestratorOf([term("t1", "orchestrator", { turn: 3 })], "t1").turn, 3);
+});
+
+test("liveOrchestratorFor finds a live orchestrator of the run by its labels, the newest if there are several", () => {
+  const all = [term("t1", "orchestrator", { state: "finished" }), term("t2", "worker"), term("t3", "orchestrator", { created_ms: 5 }),
+    term("t4", "orchestrator", { created_ms: 9 }), term("t5", "orchestrator", { labels: { "herdr.workflow.run": "r2" } })];
+  assert.equal(liveOrchestratorFor(all, "r1").address, "t4");
+  assert.equal(liveOrchestratorFor(all.slice(0, 2), "r1"), null, "an ended one and a worker are not it");
+  assert.equal(liveOrchestratorFor(all, "r9"), null);
+  assert.equal(liveOrchestratorFor([], "r1"), null);
+  assert.equal(liveOrchestratorFor(undefined, "r1"), null);
 });
 
 test("the orchestrator is found by address", () => {

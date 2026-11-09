@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runSteps } from "./finish.js";
+import { runSteps, mergeFailure } from "./finish.js";
 import { defaultBranchOf, localMergeSteps, localPrBody, moveToStage, squashMessage } from "./local-runs.js";
 import { makeLocalTasks } from "./local-tasks.js";
 
@@ -185,6 +185,42 @@ test("a failed commit puts the main checkout back too", async () => {
   await assert.rejects(runSteps(localMergeSteps(ctx), exec), /hook said no/);
   assert.ok(ran.includes("git -C /r reset --merge"));
   assert.ok(!ran.some((l) => /worktree remove|branch -D/.test(l)));
+});
+
+// --- local Merge: which fix the button names ---------------------------------------------------------------------------
+
+const labelOf = async (answers, extra = {}) => {
+  const e = await runSteps(localMergeSteps({ ...ctx, ...extra }), fake(answers).exec).then(() => null, (err) => err);
+  return mergeFailure({ error: e })?.label ?? null;
+};
+
+test("local Merge failures: leftover changes are Commit changes", async () => {
+  assert.equal(await labelOf({ "-C /r-7-fix-login status": { stdout: " M a.txt\n" } }), "Commit changes");
+});
+
+test("local Merge failures: a squash conflict that names files is Fix conflicts", async () => {
+  assert.equal(await labelOf({ "merge --squash": { code: 1, stdout: "CONFLICT\n" }, "--diff-filter=U": { stdout: "a.txt\n" } }), "Fix conflicts");
+});
+
+test("local Merge failures: everything else before the clean-up is Fix merge", async () => {
+  assert.equal(await labelOf({ "branch --show-current": { stdout: "feature\n" } }), "Fix merge", "main-branch");
+  assert.equal(await labelOf({ "-C /r status": { stdout: " M x\n" } }), "Fix merge", "main-status");
+  assert.equal(await labelOf({ "-C /r-7-fix-login status": { code: 128, stderr: "bad" } }), "Fix merge", "tree-status that couldn't run");
+  assert.equal(await labelOf({ "merge --squash": { code: 1, stderr: "boom" } }), "Fix merge", "a squash with no conflicting files");
+  assert.equal(await labelOf({ "diff --cached --quiet": { code: 1 }, " commit ": { code: 1, stderr: "hook said no" } }), "Fix merge", "commit");
+  assert.equal(await labelOf({ "diff --cached --quiet": { code: 2, stderr: "bad" } }), "Fix merge", "commit: couldn't look at the staged files");
+});
+
+test("local Merge failures: a missing default branch stops before any step and is Fix merge", () => {
+  let error;
+  try { localMergeSteps({ ...ctx, defaultBranch: null }); } catch (e) { error = e; }
+  assert.equal(mergeFailure({ error }).label, "Fix merge");
+});
+
+test("local Merge failures: a failure in the clean-up is a plain error", async () => {
+  for (const answer of ["worktree remove", "branch -D", "rm -rf"]) assert.equal(await labelOf({ [answer]: { code: 1, stderr: "x" } }), null, answer);
+  const move = { status: { move: async () => { throw new Error("no file"); } } };
+  assert.equal(await labelOf({}, move), null, "moving the task");
 });
 
 // --- local Merge: real git ----------------------------------------------------------------------------------------
