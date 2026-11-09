@@ -25,3 +25,10 @@ test("bad YAML says which line", () => {
   assert.throws(() => parse("a: 1\na: 2\n"), /written twice/);
   assert.throws(() => parse("a:\n\tb: 1\n"), /tabs/);
 });
+
+test("an ISO timestamp is written plain and reads back as the same string", () => {
+  const doc = { createdAt: "2026-11-08T10:00:00Z", id: 7 };
+  assert.equal(stringify(doc), "createdAt: 2026-11-08T10:00:00Z\nid: 7\n");
+  assert.deepEqual(parse(stringify(doc)), doc);
+  assert.equal(stringify({ a: "2026-11-08" }), 'a: "2026-11-08"\n'); // only the full timestamp is plain
+});
