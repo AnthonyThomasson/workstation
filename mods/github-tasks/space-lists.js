@@ -48,12 +48,13 @@ export function clearTickets(view) {
 export const isCurrent = (view, token) => token === view.token;
 
 // What is on screen, if there is a list to keep; null when only placeholders, an error or "no project" show.
-// A GitHub list counts only while its repo was found for the folder the space is in now: after a cd the old
-// repo's tickets stay up until the new folder's repo is known, and they must not be kept as this space's.
+// A list counts only while it was found for the folder the space is in now (the GitHub repo's folder, the local
+// place's folder): after a cd the old repo's tickets stay up until the new folder is known, and they must not be
+// kept as this space's.
 // Errors are never kept.
 export function snapshotOf(view) {
   if (view.source === "local") {
-    if (!view.localStages) return null;
+    if (!view.localStages || view.place?.folder !== view.ctx?.folder) return null; // after a cd the old repo's sections stay up until the place is read again
     return { source: "local", place: view.place, localStages: view.localStages };
   }
   if (!view.loaded || !view.project || !view.repo || view.repoFolder !== view.ctx?.folder) return null;

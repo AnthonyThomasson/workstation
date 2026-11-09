@@ -131,6 +131,17 @@ test("a space not opened yet this session shows placeholders", () => {
   assert.equal(view.restored, null);
 });
 
+test("a local list is not saved after a cd, before the new folder's place is read", () => {
+  const view = local();
+  view.ctx = ctx("a", "/code/other");
+  assert.equal(snapshotOf(view), null);
+  const lists = new SpaceLists();
+  lists.save("a|undefined", local());
+  assert.ok(lists.has("a|undefined"));
+  lists.save("a|undefined", view);
+  assert.equal(lists.has("a|undefined"), false);
+});
+
 test("each space keeps its own list", () => {
   const lists = new SpaceLists();
   lists.save("a|undefined", github());
