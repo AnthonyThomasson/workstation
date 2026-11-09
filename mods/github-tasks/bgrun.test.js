@@ -7,19 +7,19 @@ const SPACES = [{ id: "s1", tabs: [{ id: "tA" }, { id: "tB" }] }, { id: "s2", ta
 const PANES = [{ pane: "pA", tab: "tA", terminal: "t9" }, { pane: "pB", tab: "tB", terminal: "t8" }, { pane: "pM", tab: "tB", mod: "github-tasks", terminal: null }];
 
 test("the orchestrator starts in the background with no parent, no pane labels, and the run's labels", () => {
-  const args = orchestratorRunArgs({ id: "22-x", key: "o/r#22", workDir: "/w", space: "s1", argv: ["claude", "--effort", "high"] });
+  const args = orchestratorRunArgs({ id: "22-x", key: "o/r#22", workDir: "/w", argv: ["claude", "--effort", "high"] });
   assert.deepEqual(args.slice(0, 5), ["run", "--bg", "--json", "--no-parent", "--cwd"]);
   assert.equal(args[5], "/w");
   assert.deepEqual(args.slice(args.indexOf("--") + 1), ["claude", "--effort", "high"]);
   const labels = args.flatMap((a, i) => (args[i - 1] === "--label" ? [a] : []));
   assert.deepEqual(labels.sort(), [
-    "herdr.role=orchestrator", "herdr.workflow.folder=/w", "herdr.workflow.run=22-x", "herdr.workflow.space=s1", "herdr.workflow.ticket=o/r#22",
+    "herdr.role=orchestrator", "herdr.workflow.folder=/w", "herdr.workflow.run=22-x", "herdr.workflow.ticket=o/r#22",
   ]);
   assert.ok(!labels.some((l) => l.startsWith("herdr.space") || l.startsWith("herdr.tab")), "those would adopt it into a pane");
 });
 
-test("no space label when the run started outside any space", () => {
-  const args = orchestratorRunArgs({ id: "a", key: "k", workDir: "/w", space: null, argv: ["x"] });
+test("no space label is written: the ticket's space is found by its worktree", () => {
+  const args = orchestratorRunArgs({ id: "a", key: "k", workDir: "/w", argv: ["x"] });
   assert.ok(!args.some((a) => a.startsWith("herdr.workflow.space")));
 });
 
@@ -87,6 +87,18 @@ test("the repo's space is never the ticket's, even one a run before this change 
   assert.equal(findTicketSpace({ spaces: old, panes, ...where }), null);
   // and a space at the main checkout is skipped even when the "worktree" is the repo root
   assert.equal(findTicketSpace({ spaces: TICKET, panes: TPANES, folder: "/r", repoRoot: "/r" }), null);
+});
+
+test("the repo's space whose folder drifted into the worktree is not the ticket's: its first terminal, still at the repo, decides", async () => {
+  const drifted = [{ ...TICKET[0], folder: "/wt/ticket" }]; // folder follows the focused pane, which is in the worktree
+  const panes = [{ pane: "pA", tab: "tA", cwd: "/r" }, { pane: "pB", tab: "tB", cwd: "/wt/ticket" }];
+  const ticketSpace = findTicketSpace({ spaces: drifted, panes, ...where });
+  assert.equal(ticketSpace, null);
+  // so Merge closes only the run's tab in it, never the repo's space
+  const core = fakeCore({ live: [] });
+  const calls = [];
+  await endRun(endDeps(core, { spaces: drifted, panes, ticketSpace, run: (n, a) => calls.push([n, a]) }));
+  assert.deepEqual(calls, [["tab.close", { id: "tB" }]]);
 });
 
 test("a space on another machine is never the ticket's", () => {
@@ -511,7 +523,7 @@ function fakeLaunch({ ready = answer({ reason: "status", status: "idle", ended: 
   };
   return { deps, log };
 }
-const launch = { id: "r1", key: "o/r#1", workDir: "/w", space: "s1", argv: ["claude"], task: "Read x and follow it.", props: { role: "run", id: "r1", orchestrator: null } };
+const launch = { id: "r1", key: "o/r#1", workDir: "/w", argv: ["claude"], task: "Read x and follow it.", props: { role: "run", id: "r1", orchestrator: null } };
 
 test("launch: pane.json is written and the tab opened before the wait for the agent to boot, then the task is sent", async () => {
   const f = fakeLaunch();

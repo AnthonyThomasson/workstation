@@ -4,14 +4,14 @@
 // the run. The tab is the first tab of the ticket's own space, rooted at the ticket's worktree and named for the ticket,
 // which the Spaces sidebar nests under the repo's space; Merge closes that space. Pure apart from the deps it is handed,
 // so node --test runs it.
-import { FOLDER_LABEL, ROLE_LABEL, RUN_LABEL, SPACE_LABEL, TICKET_LABEL, shQuote } from "./run.js";
+import { FOLDER_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL, shQuote } from "./run.js";
 
 // Where the run's tab is saved (shared state, as herdr.tab labels are gone): { tab, left, space }.
 export const slotKey = (id) => `github-tasks.runtab.${id}`;
 
 // `hc run` for the orchestrator: no parent, so nothing but a kill or Merge ends it; its labels are set at birth.
-export function orchestratorRunArgs({ id, key, workDir, space, argv }) {
-  const labels = [`${RUN_LABEL}=${id}`, `${ROLE_LABEL}=orchestrator`, `${TICKET_LABEL}=${key}`, `${FOLDER_LABEL}=${workDir}`, ...(space ? [`${SPACE_LABEL}=${space}`] : [])];
+export function orchestratorRunArgs({ id, key, workDir, argv }) {
+  const labels = [`${RUN_LABEL}=${id}`, `${ROLE_LABEL}=orchestrator`, `${TICKET_LABEL}=${key}`, `${FOLDER_LABEL}=${workDir}`];
   return ["run", "--bg", "--json", "--no-parent", "--cwd", workDir, ...labels.flatMap((l) => ["--label", l]), "--", ...argv];
 }
 
@@ -52,16 +52,20 @@ export async function guarded(busy, id, fn) {
 
 const inside = (path, folder) => path === folder || path.startsWith(`${folder.replace(/\/+$/, "")}/`);
 
-// The ticket's own space, if it is open: on this computer, and its folder is inside the ticket's worktree (folder), or so is
-// the folder of its first terminal (what the sidebar nests by; the space's folder can drift). Matching is by the worktree, not
+// The ticket's own space, if it is open: on this computer, and its first terminal is inside the ticket's worktree (folder;
+// what the sidebar nests by). The space's own folder is only used when no first terminal is known, as it can drift with the
+// focused pane (a repo space would then look like the ticket's). Matching is by the worktree, not
 // by name, so a renamed issue or space is still found. The repo's space never is: it is skipped when its folder is the main
 // checkout (repoRoot), and a tab an older run opened at the worktree inside it doesn't count, as it is not its first terminal.
 // Its id, or null.
 export function findTicketSpace({ spaces, panes, folder, repoRoot = "" }) {
   if (!folder || folder === repoRoot) return null;
   const first = (s) => { const tab = s.tabs?.[0]?.id; return (panes ?? []).find((p) => p.tab === tab && p.cwd); };
-  const found = (spaces ?? []).find((s) => !s.machine && !(repoRoot && s.folder === repoRoot)
-    && ((s.folder && inside(s.folder, folder)) || (first(s) && inside(first(s).cwd, folder))));
+  const found = (spaces ?? []).find((s) => {
+    if (s.machine || (repoRoot && s.folder === repoRoot)) return false;
+    const terminal = first(s);
+    return terminal ? inside(terminal.cwd, folder) : Boolean(s.folder && inside(s.folder, folder));
+  });
   return found?.id ?? null;
 }
 
@@ -222,8 +226,8 @@ export async function endRun({ id, orchestrator, hc, terminals, run, slot, space
 // is only a problem to say: the run is going and View connects it.
 //   deps: { hc(args), writePaneJson(props), connect(props) -> slot (throws), closeTab() }
 //   Resolves with { orchestrator, problems }.
-export async function launchRun(deps, { id, key, workDir, space, argv, task, props }) {
-  const started = await deps.hc(orchestratorRunArgs({ id, key, workDir, space, argv })).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+export async function launchRun(deps, { id, key, workDir, argv, task, props }) {
+  const started = await deps.hc(orchestratorRunArgs({ id, key, workDir, argv })).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
   const orchestrator = started.code === 0 ? parseStarted(started.stdout) : null;
   if (!orchestrator) throw new Error(`The orchestrator didn't start: ${String(started.stderr || started.stdout || "").trim() || "hc gave no address"}`);
   const full = { ...props, orchestrator };

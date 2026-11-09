@@ -9,7 +9,6 @@ export const SKILL = "hc --skill"; // the manual for the desktop app's herdr-cor
 // Labels on a run's terminals. runview.js reads the same ones.
 export const RUN_LABEL = "herdr.workflow.run"; // on every terminal of a run: its id
 export const TICKET_LABEL = "herdr.workflow.ticket"; // on the orchestrator: which ticket, so Start finds a run in progress
-export const SPACE_LABEL = "herdr.workflow.space"; // on the orchestrator: the space the run started in, where View opens its tab again (not herdr.space, which would adopt it into a pane)
 export const FOLDER_LABEL = "herdr.workflow.folder"; // on every terminal: the folder it works in
 export const FINAL_LABEL = "herdr.workflow.final"; // "1" on the final reviewer, which reviews the whole ticket branch
 export const NAME_LABEL = "herdr.workflow.name"; // on a worker or reviewer: the name the orchestrator gave it
