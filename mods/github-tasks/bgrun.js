@@ -50,10 +50,12 @@ export function parseStarted(stdout) {
 // The program the tab's own terminal runs: a note, then it waits for ever (a program that exits closes its pane).
 // The orchestrator is shown over it, so the note only reads when the connection is lost; it says nothing about the run's
 // state, which may well have ended by then.
-// kind: "run" (the default), or "investigation" (investigate.js: the tab of a New Task agent, which works like a run's).
+// kind: "run" (the default), "investigation" (investigate.js: the tab of a New Task agent, which works like a run's), or
+// "investigation-ended" (the same tab opened again after its agent ended on its own: it says so).
 const NOTES = {
   run: (a) => `This tab shows orchestrator ${a} of the run. When it is not showing, View reconnects it.`,
   investigation: (a) => `This tab shows agent ${a} of an investigation. When it is not showing, View reconnects it.`,
+  "investigation-ended": (a) => `Agent ${a} of this investigation has ended. Press Done to remove its worktree and branch.`,
 };
 export const placeholderArgv = (orchestrator, kind = "run") => ["sh", "-c", `printf '%s\\n' ${shQuote(NOTES[kind](orchestrator))}; exec tail -f /dev/null`];
 
@@ -260,8 +262,13 @@ const why = (e) => String(e?.message ?? e);
 // the slot returned then has created: true, and a failure closes that whole space.
 //   deps: { app(name, args) -> made, paneOf(made) -> pane id | null, run(name, args), setSlot(id, slot), sleep(ms),
 //           isShown?(orchestrator, left), warn?(message) }
-//   kind: which placeholder note the left pane prints (placeholderArgv).
+//   kind: which placeholder note the left pane prints (placeholderArgv), and what the messages call the agent: "orchestrator", or "agent"
+//   for an investigation's.
+//   "investigation-ended" is an investigation's tab opened again after its agent ended on its own, so Done can be pressed: the
+//   agent's terminal is shown if the app still has it, and not being able to show it is no failure.
 export async function connectRun(deps, { id, orchestrator, name, space, spaceName, folder, props, existing = null, kind = "run" }) {
+  const ended = kind === "investigation-ended";
+  const who = kind.startsWith("investigation") ? "agent" : "orchestrator";
   let made = null, tab = existing?.tab, left = existing?.left ?? null, page = existing?.page ?? null, createdSpace = false;
   try {
     if (!existing) {
@@ -290,9 +297,10 @@ export async function connectRun(deps, { id, orchestrator, name, space, spaceNam
     deps.run("tab.select", { id: tab });
     const show = async () => {
       try { await deps.app("terminal.show", { terminal: orchestrator, pane: left }); }
-      catch (e) { throw new Error(`the orchestrator ${orchestrator} couldn't be shown (${why(e)})`); }
+      catch (e) { throw new Error(`the ${who} ${orchestrator} couldn't be shown (${why(e)})`); }
     };
-    await show(); // fails here, before the page opens, when the orchestrator can't be shown at all
+    if (ended) await show().catch(() => {}); // nothing is going on in it: the note on the left says it has ended
+    else await show(); // fails here, before the page opens, when the orchestrator can't be shown at all
     if (!page) {
       try { await deps.app("pane.split", { pane: left, direction: "right", mod: "github-tasks", props }); }
       catch (e) { throw new Error(`the run page couldn't open (${why(e)})`); }
@@ -300,8 +308,10 @@ export async function connectRun(deps, { id, orchestrator, name, space, spaceNam
     const slot = { tab, left, space: where ?? null };
     deps.setSlot(id, slot);
     deps.run("pane.focus", { pane: left });
-    const held = await holdShown(deps, { orchestrator, left, show });
-    if (held === false) deps.warn?.(`The orchestrator ${orchestrator} may not be showing in its tab yet. Press View on the ticket to show it again; the run itself is going.`);
+    const held = ended ? null : await holdShown(deps, { orchestrator, left, show });
+    if (held === false) deps.warn?.(who === "agent"
+      ? `The agent ${orchestrator} may not be showing in its tab yet. Click its row under Investigations to show it again; the agent itself is going.`
+      : `The orchestrator ${orchestrator} may not be showing in its tab yet. Press View on the ticket to show it again; the run itself is going.`);
     return createdSpace ? { ...slot, created: true } : slot;
   } catch (e) {
     if (made) {

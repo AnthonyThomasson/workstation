@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   INVESTIGATION_LABEL, INVESTIGATIONS_KEY, beginInvestigation, checkStart, deleteBranch, endInvestigation, firstLine, investigationBranch,
-  investigationId, investigationLabel, investigationRunArgs, investigationsFor, liveInvestigations, reapplyInvestigations, removeWorktree,
-  savedList, tabNameFor, withEntry, withoutEntry,
+  investigationId, investigationLabel, investigationRow, investigationRunArgs, investigationsFor, liveInvestigations, reapplyInvestigations, removeWorktree,
+  savedList, tabNameFor, unsafeToRemove, withEntry, withoutEntry,
 } from "./investigations.js";
 import { placeholderArgv, slotKey } from "./bgrun.js";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
@@ -63,31 +63,61 @@ test("the saved state has one shared key", () => {
 const E = (id, repoRoot, agent) => ({ id, label: id, repoRoot, repo: "app", branch: `investigate/${id}`, workDir: `/wt/${id}`, agent });
 const live = (id, address, extra = {}) => ({ address, state: "live", labels: { [INVESTIGATION_LABEL]: id }, ...extra });
 
-test("investigationsFor keeps this repo's sessions whose agent is alive, and drops the rest", () => {
+test("investigationsFor keeps this repo's sessions, ended ones too, with each agent's status", () => {
   const saved = [E("a", "/r1", "t1"), E("b", "/r1", "t2"), E("c", "/r2", "t3"), E("d", "/r1", "t4")];
-  const terminals = [live("a", "t1"), { address: "t2", state: "ended", labels: { [INVESTIGATION_LABEL]: "b" } }, live("c", "t3")]; // b ended, d is gone from the core
-  assert.deepEqual(investigationsFor(saved, "/r1", terminals).map((e) => e.id), ["a"]);
+  const terminals = [live("a", "t1", { status: "working" }), { address: "t2", state: "ended", labels: { [INVESTIGATION_LABEL]: "b" } }, live("c", "t3")]; // b ended, d is gone from the core
+  const got = investigationsFor(saved, "/r1", terminals);
+  assert.deepEqual(got.map((e) => [e.id, e.live, e.status]), [["a", true, "working"], ["b", false, "finished"], ["d", false, "finished"]]);
   assert.deepEqual(investigationsFor(saved, "/r2", terminals).map((e) => e.id), ["c"]);
   assert.deepEqual(investigationsFor(saved, "/elsewhere", terminals), []);
 });
 
-test("a closed agent tab (its terminal gone) drops its row on the next look, a new one adds its row", () => {
-  const saved = [E("a", "/r", "t1"), E("b", "/r", "t2")];
-  assert.deepEqual(investigationsFor(saved, "/r", [live("a", "t1"), live("b", "t2")]).map((e) => e.id), ["a", "b"]);
-  assert.deepEqual(investigationsFor(saved, "/r", [live("a", "t1")]).map((e) => e.id), ["a"]);
-  assert.deepEqual(investigationsFor(saved, "/r", []).map((e) => e.id), []);
+test("a live agent with no status yet shows as running; an agent's own entry fields are kept", () => {
+  const got = investigationsFor([E("a", "/r", "t1")], "/r", [live("a", "t1")]);
+  assert.equal(got[0].status, "unknown");
+  assert.equal(got[0].label, "a");
+  assert.equal(got[0].workDir, "/wt/a");
+  assert.equal(investigationsFor([E("a", "/r", "t1")], "/r", [live("a", "t1", { status: { state: "blocked", msg: "?" } })])[0].status, "blocked");
 });
 
-test("a terminal that took over an address but isn't the investigation's agent doesn't keep its row", () => {
+test("only Done removes an entry: an agent that ended, was closed or is gone from the core keeps its row", () => {
+  const saved = [E("a", "/r", "t1"), E("b", "/r", "t2")];
+  assert.deepEqual(investigationsFor(saved, "/r", [live("a", "t1"), live("b", "t2")]).map((e) => e.live), [true, true]);
+  assert.deepEqual(investigationsFor(saved, "/r", [live("a", "t1")]).map((e) => [e.id, e.live]), [["a", true], ["b", false]]);
+  assert.deepEqual(investigationsFor(saved, "/r", []).map((e) => [e.id, e.live, e.status]), [["a", false, "finished"], ["b", false, "finished"]]);
+});
+
+test("a terminal that took over an address but isn't the investigation's agent counts as an ended agent, not as its status", () => {
   const saved = [E("a", "/r", "t1")];
-  assert.deepEqual(investigationsFor(saved, "/r", [{ address: "t1", state: "live", labels: { [INVESTIGATION_LABEL]: "other" } }]), []);
-  assert.deepEqual(investigationsFor(saved, "/r", [{ address: "t1", state: "live" }]), []);
+  assert.deepEqual(investigationsFor(saved, "/r", [{ address: "t1", state: "live", status: "working", labels: { [INVESTIGATION_LABEL]: "other" } }]).map((e) => [e.live, e.status]), [[false, "finished"]]);
+  assert.deepEqual(investigationsFor(saved, "/r", [{ address: "t1", state: "live", status: "working" }]).map((e) => [e.live, e.status]), [[false, "finished"]]);
+});
+
+test("a session shows in any space of its repo: found by the main checkout, or by the repo's name for a GitHub repo", () => {
+  const saved = [{ ...E("a", "/clone1", "t1"), repo: "o/app" }, { ...E("b", "/clone2", "t2"), repo: "o/other" }, { ...E("c", "/r3", "t3"), repo: "r3" }];
+  const ts = [live("a", "t1"), live("b", "t2"), live("c", "t3")];
+  assert.deepEqual(investigationsFor(saved, { repoRoot: "/clone1", repo: "o/app" }, ts).map((e) => e.id), ["a"]);
+  assert.deepEqual(investigationsFor(saved, { repoRoot: "/elsewhere", repo: "o/app" }, ts).map((e) => e.id), ["a"], "another clone of the same GitHub repo");
+  assert.deepEqual(investigationsFor(saved, { repoRoot: "/r3", repo: null }, ts).map((e) => e.id), ["c"], "local mode: by main checkout only");
+  assert.deepEqual(investigationsFor(saved, { repoRoot: null, repo: null }, ts), [], "no place: nothing");
+  assert.deepEqual(investigationsFor(saved, { repoRoot: "", repo: "" }, ts), []);
 });
 
 test("several sessions in one repo each keep their own entry, in the order they were saved", () => {
   const saved = [E("a", "/r", "t1"), E("b", "/r", "t2"), E("c", "/r", "t3")];
   const got = investigationsFor(saved, "/r", [live("c", "t3"), live("a", "t1"), live("b", "t2")]);
   assert.deepEqual(got.map((e) => e.id), ["a", "b", "c"]);
+});
+
+test("a row says the entry's first line, its status, whether it ended and what a click does", () => {
+  const [on, off] = investigationsFor([{ ...E("a", "/r", "t1"), label: "Fix the login redirect" }, { ...E("b", "/r", "t2"), label: "  \nSecond line first" }], "/r", [live("a", "t1", { status: "working" })]);
+  assert.deepEqual(investigationRow(on), { id: "a", text: "Fix the login redirect", status: "working", ended: false, tip: "Click to open this session." });
+  const ended = investigationRow(off);
+  assert.equal(ended.text, "Second line first");
+  assert.equal(ended.ended, true);
+  assert.equal(ended.status, "finished");
+  assert.match(ended.tip, /ended.*Done/);
+  assert.equal(investigationRow({ id: "x", label: "" }).text, "New task");
 });
 
 test("nothing saved, or something malformed saved, is no sessions", () => {
@@ -325,7 +355,7 @@ test("Done ends the agent, removes the worktree, deletes the branch, forgets the
   const got = await endInvestigation(f.deps, entryOf(s));
   assert.deepEqual(got, { done: true, error: null, closed: true });
   assert.deepEqual(f.log, [
-    "hc kill t1", "hc rm t1", "git worktree remove --force <wt>", "git branch -D investigate/fix-it-abc", "save", "clear slot",
+    "git worktree list --porcelain", "hc kill t1", "hc rm t1", "git worktree remove --force <wt>", "git branch -D investigate/fix-it-abc", "save", "clear slot",
     'space.close {"id":"s1","confirmed":true}',
   ]);
   assert.equal(existsSync(s.workDir), false, "the worktree is gone");
@@ -368,13 +398,36 @@ test("Done with no tab and no space found still finishes, and says nothing was c
   assert.ok(!f.log.some((l) => l.startsWith("tab.close") || l.startsWith("space.close")));
 });
 
+test("Done refuses an entry that isn't an investigation's: a branch outside investigate/, or the main checkout as the folder; nothing is touched", async () => {
+  const s = await scratch();
+  for (const bad of [{ branch: "main" }, { branch: "workflow/43-x" }, { branch: "" }, { branch: undefined }, { workDir: s.repo }, { workDir: `${s.repo}/` }, { workDir: "" }]) {
+    const f = fakeDone(s);
+    const got = await endInvestigation(f.deps, { ...entryOf(s), ...bad });
+    assert.equal(got.done, false, JSON.stringify(bad));
+    assert.match(got.error, /^Done refused: .*Nothing was ended or removed/, JSON.stringify(bad));
+    assert.deepEqual(f.log.filter((l) => !l.startsWith("git worktree list")), [], `nothing done for ${JSON.stringify(bad)}`);
+  }
+  assert.equal(existsSync(s.workDir), true, "the worktree is still there");
+  assert.notEqual(sh(s.repo, "branch", "--list", s.branch), "", "the branch is still there");
+});
+
+test("Done refuses a folder that git says is the main checkout even when the entry's repoRoot is another path to it", async () => {
+  const s = await scratch();
+  const f = fakeDone(s);
+  assert.match((await unsafeToRemove(f.deps.git, { repoRoot: s.workDir, workDir: s.repo, branch: s.branch })) ?? "", /main checkout/);
+  assert.equal(await unsafeToRemove(f.deps.git, entryOf(s)), null, "a real investigation's entry is fine");
+  const got = await endInvestigation(f.deps, { ...entryOf(s), repoRoot: s.workDir, workDir: s.repo });
+  assert.equal(got.done, false);
+  assert.equal(existsSync(s.repo), true);
+});
+
 test("Done stops when the agent can't be ended: nothing is removed", async () => {
   const s = await scratch();
   const f = fakeDone(s, { killed: { code: 1, stdout: "", stderr: "terminal busy" }, stillLive: true });
   const got = await endInvestigation(f.deps, entryOf(s));
   assert.equal(got.done, false);
   assert.match(got.error, /Couldn't end the agent t1: terminal busy/);
-  assert.deepEqual(f.log, ["hc kill t1"]);
+  assert.deepEqual(f.log, ["git worktree list --porcelain", "hc kill t1"], "the guard only reads");
   assert.equal(existsSync(s.workDir), true);
   assert.equal(f.saved().some((e) => e.id === "inv-1"), true, "still tracked");
 });

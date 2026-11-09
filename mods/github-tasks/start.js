@@ -27,13 +27,13 @@ export const runTabOf = (id, name, ticketSpace = null) => runTabParts({ slot: sh
 // The tab that connects to a run's orchestrator (placeholder on the left, the orchestrator shown over it, the run page on
 // the right). props: the run page's; space: the ticket's space to open it in, or null to make the ticket's space (named
 // title, at folder, the ticket's worktree); folder: where the placeholder starts; existing: a tab that is already there and
-// lacks a part (see connectRun); kind: "run", or "investigation" (investigate.js reuses this). Resolves with the slot (created: true when this made the space). Throws with the reason.
+// lacks a part (see connectRun); kind: "run", or "investigation" / "investigation-ended" (investigate.js reuses this). Resolves with the slot (created: true when this made the space). Throws with the reason.
 export function connect({ id, orchestrator, title, space, folder, props, existing = null, kind = "run" }, cx) {
   return connectRun({
     app, run, paneOf: (made) => paneOf(made, cx), sleep: (ms) => cx.sleep(ms),
     // The focused pane is the left one by now: the app says what it shows (an address). Not yet focused counts as not shown.
     isShown: (orchestrator, left) => { const f = focused(); return f?.pane === left && f.shown === orchestrator; },
-    warn: (body) => notify({ title: "The orchestrator may not be showing", body, level: "warning" }),
+    warn: (body) => notify({ title: kind.startsWith("investigation") ? "The agent may not be showing" : "The orchestrator may not be showing", body, level: "warning" }),
     setSlot: (runId, slot) => setShared(slotKey(runId), slot),
   }, { id, orchestrator, name: title, space, spaceName: title, folder, props, existing, kind });
 }

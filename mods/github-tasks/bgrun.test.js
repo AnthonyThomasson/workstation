@@ -440,6 +440,44 @@ test("a show that doesn't hold is reported through deps.warn", async () => {
   assert.match(warned[0], /View/);
 });
 
+test("a show that doesn't hold in an investigation's tab says agent, not orchestrator, and points at the sidebar row", async () => {
+  const f = fakeApp({ shownAfter: 99 });
+  const warned = [];
+  f.deps.warn = (m) => warned.push(m);
+  await connectRun(f.deps, { ...base, kind: "investigation" });
+  assert.equal(warned.length, 1);
+  assert.match(warned[0], /agent t7/);
+  assert.doesNotMatch(warned[0], /orchestrator/);
+  assert.doesNotMatch(warned[0], /View on the ticket/);
+});
+
+test("an investigation's agent that couldn't be shown says agent too", async () => {
+  const f = fakeApp({ fail: { "terminal.show": "no such terminal t7" } });
+  await assert.rejects(connectRun(f.deps, { ...base, kind: "investigation" }), /the agent t7 couldn't be shown/);
+});
+
+test("an investigation whose agent ended opens a tab with the page and a note that says so: no failure when it can't be shown, nothing to hold or warn about", async () => {
+  const f = fakeApp({ fail: { "terminal.show": "no such terminal t7" }, shownAfter: 99 });
+  const warned = [];
+  f.deps.warn = (m) => warned.push(m);
+  const got = await connectRun(f.deps, { ...base, kind: "investigation-ended" });
+  assert.deepEqual(got, { tab: "tNew", left: "pNew", space: "s2" });
+  assert.deepEqual(f.calls.map((c) => c[0]), ["tab.new", "terminal.show", "pane.split"], "tried to show it once, then opened the page");
+  assert.deepEqual(f.calls[0][1].argv, placeholderArgv("t7", "investigation-ended"));
+  assert.match(f.calls[0][1].argv[2], /ended/);
+  assert.match(f.calls[0][1].argv[2], /Done/);
+  assert.deepEqual(warned, []);
+  assert.deepEqual(f.slots.r1, { tab: "tNew", left: "pNew", space: "s2" });
+  assert.equal(f.runs.some((r) => r[0] === "tab.close"), false);
+});
+
+test("the ended note's placeholder still counts as the agent's own for finding its tab", () => {
+  const terminals = [{ address: "tp", argv: placeholderArgv("t7", "investigation-ended") }];
+  const spaces = [{ id: "s1", tabs: [{ id: "tA" }] }];
+  const panes = [{ pane: "pA", tab: "tA", terminal: "tp" }, { pane: "pP", tab: "tA", mod: "github-tasks" }];
+  assert.deepEqual(slotFromPage({ orchestrators: ["t7"], terminals, spaces, panes, slot: null }), { tab: "tA", left: "pA", space: "s1" });
+});
+
 test("no warning when the show holds", async () => {
   const f = fakeApp();
   const warned = [];

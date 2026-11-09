@@ -1,18 +1,18 @@
 // Tasks: the tickets on the GitHub Project linked to the selected space's repo, in the left menu under
-// Spaces: Up Next, Backlog (collapsed), In Progress and In Review. Clicking a ticket
+// Spaces: Up Next, Investigations, In Progress, In Review and Backlog (collapsed). Clicking a ticket
 // opens it in a large popup to edit (editor.js, popup.js), and saving pushes the change to GitHub. Each row links
 // out to GitHub and has Start, which becomes View while its workflow runs. With "taskSource": "local" in the repo's
 // .herdr/tasks/tasks.json the list is the YAML task files instead (local-tasks.js, local-ui.js), read again every 3 seconds.
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
 // workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket, in a popup (props.popup)
 // opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow in the center (workflow-editor.js); "run", a started
-// workflow's agents, beside its orchestrator (run-page.js); "investigation", a New Task session's Done button, beside its agent (investigation-page.js); "prompt", one read-only agent prompt (prompts-page.js).
+// workflow's agents, beside its orchestrator (run-page.js); "investigation", a New Task session's Done button, beside its agent (investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (new-task.js); "prompt", one read-only agent prompt (prompts-page.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, notify, shared, setShared, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
-import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, spelled, STATUSES, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, TASK_SOURCE } from "./model.js";
+import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, TASK_SOURCE } from "./model.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField } from "./loader.js";
-import { installedAgents, startNewTask, startLocalNewTask } from "./groom.js";
+import { installedAgents } from "./groom.js";
 import { setupProject, setupNote } from "./project-setup.js";
 import { S, icon, stop, note, iconButton, action, gh, later } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
@@ -30,8 +30,13 @@ import { PromptPage } from "./prompts-page.js";
 import { WorkflowList } from "./workflow-list.js";
 import { loadWorkflows } from "./workflow-env.js";
 import { startRun, liveRunFor, viewRun, reconnectRuns } from "./start.js";
-import { reconnectInvestigations } from "./investigate.js";
+import { investigationsHere, reconnectInvestigations, viewInvestigation } from "./investigate.js";
+import { investigationRow } from "./investigations.js";
+import { statusColor, statusLabel } from "./runview.js";
 import { InvestigationPage } from "./investigation-page.js";
+import { NewTaskPage } from "./new-task.js";
+import { AGENT_KEY, newTaskOverlay, newTaskProps, chooseAgent } from "./new-task-dialog.js";
+import { SECTIONS, initialOpen, sectionPlan } from "./sections.js";
 import { startDoctor } from "./doctor-env.js";
 import { DOCTOR_KEY, doctorFor } from "./doctor.js";
 import { SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload } from "./space-lists.js";
@@ -40,13 +45,6 @@ const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
 const LOCAL_POLL = 3000; // how often local task files, and tasks.json, are looked at again
 const COLUMN = "sidebar"; // the layout column the list lives in: its width says how much of a name fits
-const SECTIONS = [ // the list's sections, top to bottom; open: whether each starts expanded
-  { id: "next", label: "Up Next", open: true },
-  { id: "progress", label: "In Progress", open: true },
-  { id: "review", label: "In Review", open: true },
-  { id: "backlog", label: "Backlog", open: false },
-];
-const AGENT_KEY = "github-tasks.groomAgent"; // the agent saved before the settings page held it
 function find(node, id) {
   if (node?.id === id) return node;
   for (const child of node?.children ?? []) { const f = find(child, id); if (f) return f; }
@@ -90,6 +88,7 @@ export default class GitHubTasks extends View {
       cx.timer.every(3000, (cx) => cx.notify()); // the agent's status, and its end
       return;
     }
+    if (this.role === "new-task") { this.newTask = new NewTaskPage(blockProps(), cx); return; }
     if (this.role === "prompt") { this.promptPage = new PromptPage(blockProps()); return; }
     if (this.role === "settings") {
       this.settingsKey = null;
@@ -103,10 +102,9 @@ export default class GitHubTasks extends View {
     this.lastCwd = new Map();
     this.lists = new SpaceLists(); // each space's last list, shown at once when the space is selected again
     this.reset(null);
-    this.open = Object.fromEntries(SECTIONS.map((x) => [x.id, x.open])); // which sections are expanded
+    this.open = initialOpen(); // which sections are expanded
     this.starting = new Set(); // the tickets whose Start is working
     this.agents = []; // installed agents New Task can use
-    this.startingTask = false;
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
     this.doctor = startDoctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
     cx.timer.every(POLL, (cx) => this.refresh(cx));
@@ -265,6 +263,7 @@ export default class GitHubTasks extends View {
     if (this.role === "workflow-editor") return this.workflowEditor.render(cx);
     if (this.role === "run") return this.runPage.render(cx);
     if (this.role === "investigation") return this.investigationPage.render(cx);
+    if (this.role === "new-task") return this.newTask.render(cx);
     if (this.role === "prompt") return this.promptPage.render(cx);
     if (this.role === "settings") return this.renderSettings(cx);
     const t = theme();
@@ -346,19 +345,38 @@ export default class GitHubTasks extends View {
     return div().id("tickets").flex_1().min_h(0).overflow_y_scrollbar().child(v_flex().pb(12).children(rows));
   }
 
-  // The sections, top to bottom, each with its tickets: stages is groupByStage's answer.
+  // The sections, top to bottom, each with its tickets (and, under Investigations, the repo's New Task sessions, which aren't
+  // tickets): stages is groupByStage's answer. What shows is sections.js's plan.
   sectionRows(t, { inProgress, inReview, groomed, backlog }) {
-    const lists = { next: groomed, backlog, progress: inProgress, review: inReview };
     const colors = { next: t.ansi2, backlog: t.ansi4, progress: t.ansi3, review: t.ansi5 };
     const rows = [];
-    for (const { id, label } of SECTIONS) {
-      const list = lists[id], open = this.open[id];
-      rows.push(this.sectionTitle(t, id, label, list.length, open));
-      if (!open) continue;
-      if (list.length) rows.push(...list.map((ticket) => this.row(t, ticket, ticket.draft ? t.muted : colors[id])));
-      else rows.push(div().px(14).py(2).child(note(t, `Nothing in ${label}.`)));
+    for (const section of sectionPlan({ next: groomed, investigations: this.investigationList(), backlog, progress: inProgress, review: inReview }, this.open)) {
+      rows.push(this.sectionTitle(t, section));
+      if (!section.open) continue;
+      if (section.id === "investigations") rows.push(...section.items.map((entry) => this.investigationRowView(t, entry)));
+      else rows.push(...section.items.map((ticket) => this.row(t, ticket, ticket.draft ? t.muted : colors[section.id])));
+      if (section.empty) rows.push(div().px(14).py(2).child(note(t, section.empty)));
     }
     return rows;
+  }
+
+  // The New Task sessions of the repo shown: started from its main checkout (the place's, in either mode) or for its GitHub name, from
+  // any space. Read from shared state and the terminals on every draw, so the 3-second poll's redraw makes them come and go.
+  investigationList() {
+    return investigationsHere({ repoRoot: this.place?.remote ? null : this.place?.mainRoot ?? null, repo: this.source === "local" ? null : this.repo });
+  }
+
+  // One session on one line: a dot in its agent's status colour (grey once it has ended) and its first line, cut to fit. A click
+  // switches to its space and tab (viewInvestigation), reopening them if they were closed.
+  investigationRowView(t, entry) {
+    const view = investigationRow(entry);
+    const color = statusColor(view.status, t);
+    return h_flex().id(`investigation-${entry.id}`).flex_none().mx(8).mb(1).px(6).h(28).gap(8).items_center().rounded(6)
+      .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
+      .tooltip(`${view.text}: ${statusLabel(view.status)}. ${view.tip}`)
+      .on_click((_e, cx) => cx.spawn(async (cx) => { await viewInvestigation(entry, cx); }))
+      .child(div().w(8).h(8).flex_none().rounded_full().bg(color))
+      .child(div().flex_1().min_w(0).truncate().text_size(S().body).text_color(view.ended ? t.muted : t.foreground).child(view.text));
   }
 
   // Local mode: the tasks in the status folders, in the same sections. A space on another machine can't have them.
@@ -394,35 +412,15 @@ export default class GitHubTasks extends View {
 
   // The chosen agent: the saved one if it is installed, else Claude, else the first installed.
   agent() {
-    const saved = normalizeGroomer(shared(GROOMER_KEY)).agent ?? shared(AGENT_KEY);
-    return this.agents.find((a) => a.key === saved) ?? this.agents.find((a) => a.key === "claude") ?? this.agents[0] ?? null;
+    return chooseAgent(this.agents, normalizeGroomer(shared(GROOMER_KEY)).agent ?? shared(AGENT_KEY));
   }
 
-  // description: what the person wants the ticket to be about, if they said (the agent starts from it); none: it asks.
-  startTask(cx, description = "") {
-    const ctx = this.ctx, project = this.project, agent = this.agent(), local = this.source === "local";
-    if (!ctx || !agent || this.startingTask || (local ? !this.place?.mainRoot || this.place.remote : !project)) return;
-    this.startingTask = true;
-    cx.notify();
-    cx.spawn(async (cx) => {
-      try {
-        if (local) {
-          await startLocalNewTask({ agent, description, mainRoot: this.place.mainRoot, groomer: normalizeGroomer(shared(GROOMER_KEY)), where: { cwd: ctx.folder, on: ctx.on } }, cx);
-          this.localError = null;
-          return;
-        }
-        // The prompt names the statuses as the project spells them ("Todo", not the fixed "To Do").
-        const where = { cwd: ctx.folder, on: ctx.on };
-        const options = (await loadStatusField(gh, project.id, where).catch(() => null))?.options ?? [];
-        await startNewTask({ agent, description, repo: this.repo, project, settings: { backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) }, groomer: normalizeGroomer(shared(GROOMER_KEY)), where }, cx);
-        this.error = null;
-      } catch (e) {
-        this.error = { kind: "other", message: String(e?.message ?? e) };
-      } finally {
-        this.startingTask = false;
-        cx.notify();
-      }
-    });
+  // The + beside Backlog: opens the New task dialog (new-task.js), a small overlay that asks what the ticket should be about, then
+  // starts a New Task session (an Investigation) with that description. Nothing opens without a place to start from or an agent.
+  openNewTask() {
+    const ctx = this.ctx, project = this.project, local = this.source === "local";
+    if (!ctx || !this.agent() || (local ? !this.place?.mainRoot || this.place.remote : !project)) return;
+    openOverlay(newTaskOverlay(newTaskProps({ repo: this.repo, project, local, mainRoot: this.place?.mainRoot, where: { cwd: ctx.folder, on: ctx.on } })));
   }
 
   // The Create Project button, shown when the repo has no project: makes one linked to the repo, selects
@@ -456,19 +454,19 @@ export default class GitHubTasks extends View {
     });
   }
 
-  // The + beside Backlog: starts a session that helps write one new ticket.
+  // The + beside Backlog: opens the New task dialog.
   newTaskButton(t) {
     const agent = this.agent();
-    return iconButton("new-task", "plus", t, (_e, cx) => this.startTask(cx), false, this.startingTask ? "Starting…" : agent ? "Start a new task with an agent" : "No agent is installed to help with a task");
+    return iconButton("new-task", "plus", t, () => this.openNewTask(), false, agent ? "Start a new task with an agent" : "No agent is installed to help with a task");
   }
 
   // A section's header: pressing it expands or collapses the tickets under it.
-  sectionTitle(t, id, label, count, open) {
+  sectionTitle(t, { id, title, open }) {
     return h_flex().id(`section-${id}`).flex_none().min_h(26).mx(8).px(6).pt(6).pb(2).gap(4).items_center().cursor_pointer()
       .text_size(S().label).font_semibold().text_color(t.muted).hover((s) => s.text_color(t.foreground))
       .on_mouse_down("left", stop).on_click((_e, cx) => { this.open[id] = !this.open[id]; cx.notify(); })
       .child(icon(open ? "chevron-down" : "chevron-right", 12, t.muted))
-      .child(div().flex_1().child(`${label} · ${count}`))
+      .child(div().flex_1().child(title))
       .when(id === "backlog", (el) => el.child(this.newTaskButton(t)));
   }
 

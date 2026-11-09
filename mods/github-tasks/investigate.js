@@ -13,16 +13,17 @@ import { localNewTaskPrompt } from "./local-ui.js";
 import { newTaskPrompt } from "./model.js";
 import { worktreePath } from "./run.js";
 import {
-  INVESTIGATIONS_KEY, INVESTIGATION_ROLE, beginInvestigation, deleteBranch, investigationsFor, reapplyInvestigations, removeWorktree, tabNameFor,
+  INVESTIGATIONS_KEY, INVESTIGATION_ROLE, agentOf, beginInvestigation, deleteBranch, investigationsFor, reapplyInvestigations, removeWorktree, tabNameFor,
 } from "./investigations.js";
 
 export { investigationsFor };
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 
-// The sessions to list for a repo (its main checkout): the saved ones whose agent is still alive. Read from shared state and the
-// core's terminals, so it follows an agent tab being closed within a poll.
-export const investigationsHere = (repoRoot) => investigationsFor(shared(INVESTIGATIONS_KEY), repoRoot, terminals());
+// The sessions to list for a repo: the saved ones started from its main checkout (repoRoot) or for its GitHub name (repo), each with its
+// agent's status, an ended agent's too (only Done removes a session). Read from shared state and the core's terminals, so it follows
+// an agent coming and going within a poll. `where`: { repoRoot, repo }.
+export const investigationsHere = (where) => investigationsFor(shared(INVESTIGATIONS_KEY), where, terminals());
 
 // The first message of the agent: the New Task prompt for GitHub tickets, or for local tasks with the folders and the next id.
 async function promptFor({ description, repo, project, settings, local }) {
@@ -75,11 +76,14 @@ const tabParts = (id) => {
 // Brings a session's tab to the front, showing its agent again (switching to its space). When the tab was closed, opens a new one
 // connected to the same agent, in its space or a new one at the worktree; when it lost its left pane or its page, makes that good.
 // The agent itself isn't touched. A tab that can't be connected is said with the reason; this never throws.
+// An agent that ended on its own is handled too: its tab opens with the page (Done is there) and a note on the left saying it ended,
+// so the worktree isn't stranded.
 //   entry: one of investigationsFor's.
 export async function viewInvestigation(entry, cx) {
   const name = tabNameFor(entry.label);
   try {
     const props = { role: INVESTIGATION_ROLE, id: entry.id, orchestrator: entry.agent, title: entry.label, branch: entry.branch, folder: entry.workDir, repoRoot: entry.repoRoot };
+    const kind = agentOf(entry, terminals()).live ? "investigation" : "investigation-ended"; // read once: the same for the quick and slow path
     const view = () => ({ slot: shared(slotKey(entry.id)), spaces: spaces(), panes: panes(), name, folder: entry.workDir, repoRoot: entry.repoRoot, orchestrators: [entry.agent], terminals: terminals() });
     if (viewQuick({
       ...view(), setSlot: (slot) => setShared(slotKey(entry.id), slot), run,
@@ -88,7 +92,7 @@ export async function viewInvestigation(entry, cx) {
     const did = await guarded(connecting, entry.id, async () => {
       await viewConnect({
         ...view(), closeTab: (tab) => run("tab.close", { id: tab, confirmed: true }),
-        connect: (existing, space) => connect({ id: entry.id, orchestrator: entry.agent, title: name, space, folder: entry.workDir, props, existing, kind: "investigation" }, cx),
+        connect: (existing, space) => connect({ id: entry.id, orchestrator: entry.agent, title: name, space, folder: entry.workDir, props, existing, kind }, cx),
       });
       return true;
     });
