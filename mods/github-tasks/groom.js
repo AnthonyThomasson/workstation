@@ -1,35 +1,15 @@
-// New Task: opens an agent in a tab of its own, in the repo's folder, told what to do (the prompts are in model.js and,
-// for local tasks, local-ui.js).
-import { home, knownAgents, spaces } from "herdr";
-import { newTaskPrompt, groomArgv } from "./model.js";
-import { app } from "./ui.js";
-import { localTasks } from "./local-tasks-env.js";
-import { statusDir } from "./local-tasks.js";
-import { localNewTaskPrompt } from "./local-ui.js";
+// New Task: an Investigation (investigate.js): an agent working in a worktree and a space of its own, told what to do (the
+// prompts are in model.js and, for local tasks, local-ui.js). These are the two entry points the sidebar calls; the rest is investigate.js.
+import { knownAgents } from "herdr";
+import { startInvestigation } from "./investigate.js";
 
 export const installedAgents = () => knownAgents().then((list) => list.filter((a) => a.installed), () => []);
 
-// The agent in a tab of its own, in the folder the panel looks at, with the task as its first message.
-// agent: an entry of knownAgents(). groomer: { model, effort } from the settings page. Throws with a message for the person.
-async function openAgent({ agent, name, task, groomer, where }) {
-  if (where?.on) throw new Error(`This space is on ${where.on}. Tasks' agents only start on this computer for now.`);
-  if (!where?.cwd) throw new Error("This space has no folder to work in.");
-  if (!agent?.run?.length) throw new Error("Pick an agent that is installed on this computer.");
-  const space = spaces().find((s) => s.active)?.id;
-  await app("tab.new", {
-    name: name.slice(0, 40), folder: where.cwd, argv: groomArgv(agent.key, agent.run, groomer ?? {}), task,
-    ...(space ? { space } : {}),
-  });
-}
-
-export async function startNewTask({ agent, repo, project, settings, groomer, where }) {
-  const name = `New task ${String(repo).split("/").pop()}`;
-  await openAgent({ agent, name, task: newTaskPrompt({ repo, project, backlog: settings.backlog, groomed: settings.groomed }), groomer, where });
-}
+// agent: an entry of knownAgents(). groomer: { model, effort } from the settings page. description: what the person typed
+// (none: the agent asks what they want). cx: the spawned task's. Throws with a message for the person.
+export const startNewTask = ({ agent, description = "", repo, project, settings, groomer, where }, cx) =>
+  startInvestigation({ agent, description, repo, project, settings, groomer, where, local: null }, cx);
 
 // New Task in local mode: the agent is told the task folders, the next id and the file format, and writes one file.
-export async function startLocalNewTask({ agent, mainRoot, groomer, where }) {
-  const nextId = await localTasks(mainRoot).nextId();
-  const task = localNewTaskPrompt({ mainRoot, nextId, todoDir: statusDir(home(), mainRoot, "to-do"), upNextDir: statusDir(home(), mainRoot, "up-next") });
-  await openAgent({ agent, name: `New task ${mainRoot.split("/").filter(Boolean).pop() || ""}`.trim(), task, groomer, where });
-}
+export const startLocalNewTask = ({ agent, description = "", mainRoot, groomer, where }, cx) =>
+  startInvestigation({ agent, description, groomer, where, local: { mainRoot } }, cx);

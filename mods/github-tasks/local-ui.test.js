@@ -197,3 +197,26 @@ test("the local New Task prompt says to re-check the highest id before writing, 
   assert.match(prompt, /right before writing the file, look at the highest id across all the status folders again/);
   assert.match(prompt, /no letters or digits gets `5-task\.yml`/);
 });
+
+const LOCAL = { mainRoot: "/r/app", todoDir: "/t/to-do", upNextDir: "/t/up-next", nextId: 5 };
+const WAIT = "Don't do anything yet. Say you are ready and ask the person what they want to make, then wait for their answer.";
+
+test("the local New Task prompt with no description still waits for the person", () => {
+  assert.ok(localNewTaskPrompt(LOCAL).includes(WAIT));
+  assert.equal(localNewTaskPrompt({ ...LOCAL, description: "" }), localNewTaskPrompt(LOCAL));
+});
+
+test("the local New Task prompt with a description quotes it in place of the wait line and has the agent read the code first", () => {
+  const text = localNewTaskPrompt({ ...LOCAL, description: "Show the id in the title\nof the task editor" });
+  assert.ok(!text.includes(WAIT));
+  assert.ok(text.includes("> Show the id in the title\n> of the task editor"));
+  assert.match(text, /First read the code that is relevant to it/);
+  assert.match(text, /Then grill them until the task is well defined/);
+});
+
+test("the rest of the local New Task prompt is the same with a description", () => {
+  const rest = (text) => text.slice(text.indexOf("Then grill them until"));
+  assert.equal(rest(localNewTaskPrompt({ ...LOCAL, description: "x" })), rest(localNewTaskPrompt(LOCAL)));
+  const head = (text) => text.slice(0, text.indexOf("## What to do"));
+  assert.equal(head(localNewTaskPrompt({ ...LOCAL, description: "x" })), head(localNewTaskPrompt(LOCAL)));
+});

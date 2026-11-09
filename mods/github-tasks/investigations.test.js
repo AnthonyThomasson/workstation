@@ -1,0 +1,486 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  INVESTIGATION_LABEL, INVESTIGATIONS_KEY, beginInvestigation, checkStart, deleteBranch, endInvestigation, firstLine, investigationBranch,
+  investigationId, investigationLabel, investigationRow, investigationRunArgs, investigationsFor, liveInvestigations, reapplyInvestigations, removeWorktree,
+  savedList, tabNameFor, unsafeToRemove, withEntry, withoutEntry,
+} from "./investigations.js";
+import { placeholderArgv, slotKey } from "./bgrun.js";
+import { mainCheckout, prepareWorktree } from "./worktree.js";
+import { worktreePath } from "./run.js";
+import { slug } from "./workflow-model.js";
+
+// ---- Naming -------------------------------------------------------------------------------------------
+
+test("the label is the first line of the description with text in it", () => {
+  assert.equal(firstLine("\n  Fix the login redirect  \nIt lands on /404"), "Fix the login redirect");
+  assert.equal(investigationLabel("Fix the login redirect\nmore", "o/app"), "Fix the login redirect");
+  assert.equal(investigationLabel("  \n ", "o/app"), "New task app", "no description: named for the repo, as New Task always was");
+  assert.equal(investigationLabel("", ""), "New task");
+});
+
+test("the tab's name is the label cut at 40 characters", () => {
+  assert.equal(tabNameFor("short"), "short");
+  const long = "Investigate why the sidebar flickers when a run ends";
+  assert.equal(tabNameFor(long).length <= 40, true);
+  assert.equal(tabNameFor(long), long.slice(0, 40).trimEnd());
+});
+
+test("the branch is investigate/ plus the slug of the first line (40 at most) and the time in base 36", () => {
+  const now = Date.UTC(2026, 10, 9, 12, 0, 0);
+  const t = now.toString(36);
+  assert.equal(investigationBranch("Fix the login redirect!\nand more", now), `investigate/fix-the-login-redirect-${t}`);
+  const text = "A very long first line that goes on and on and on past forty characters";
+  assert.equal(investigationBranch(text, now), `investigate/${slug(text, 40)}-${t}`);
+  assert.ok(slug(text, 40).length <= 40 && !slug(text, 40).endsWith("-"));
+  assert.equal(investigationBranch("!!!", now), `investigate/investigation-${t}`, "a first line with no letters or digits");
+  assert.notEqual(investigationBranch("same", 1), investigationBranch("same", 2), "two on one subject never share a branch");
+});
+
+test("the id is short and made of the time", () => {
+  assert.equal(investigationId(36), "inv-10");
+});
+
+test("the agent runs in the background with no parent, labelled with its id, role and folder, and no pane labels", () => {
+  const args = investigationRunArgs({ id: "inv-x", key: "ignored", workDir: "/w", argv: ["claude", "--effort", "medium"] });
+  assert.deepEqual(args.slice(0, 6), ["run", "--bg", "--json", "--no-parent", "--cwd", "/w"]);
+  assert.deepEqual(args.slice(args.indexOf("--") + 1), ["claude", "--effort", "medium"]);
+  const labels = args.flatMap((a, i) => (args[i - 1] === "--label" ? [a] : []));
+  assert.deepEqual(labels.sort(), ["herdr.investigation=inv-x", "herdr.role=investigation", "herdr.workflow.folder=/w"]);
+  assert.ok(!labels.some((l) => l.startsWith("herdr.space") || l.startsWith("herdr.tab")), "those would adopt it into a pane");
+});
+
+test("the saved state has one shared key", () => {
+  assert.equal(INVESTIGATIONS_KEY, "github-tasks.investigations");
+});
+
+// ---- Which sessions to keep ---------------------------------------------------------------------------
+
+const E = (id, repoRoot, agent) => ({ id, label: id, repoRoot, repo: "app", branch: `investigate/${id}`, workDir: `/wt/${id}`, agent });
+const live = (id, address, extra = {}) => ({ address, state: "live", labels: { [INVESTIGATION_LABEL]: id }, ...extra });
+
+test("investigationsFor keeps this repo's sessions, ended ones too, with each agent's status", () => {
+  const saved = [E("a", "/r1", "t1"), E("b", "/r1", "t2"), E("c", "/r2", "t3"), E("d", "/r1", "t4")];
+  const terminals = [live("a", "t1", { status: "working" }), { address: "t2", state: "ended", labels: { [INVESTIGATION_LABEL]: "b" } }, live("c", "t3")]; // b ended, d is gone from the core
+  const got = investigationsFor(saved, "/r1", terminals);
+  assert.deepEqual(got.map((e) => [e.id, e.live, e.status]), [["a", true, "working"], ["b", false, "finished"], ["d", false, "finished"]]);
+  assert.deepEqual(investigationsFor(saved, "/r2", terminals).map((e) => e.id), ["c"]);
+  assert.deepEqual(investigationsFor(saved, "/elsewhere", terminals), []);
+});
+
+test("a live agent with no status yet shows as running; an agent's own entry fields are kept", () => {
+  const got = investigationsFor([E("a", "/r", "t1")], "/r", [live("a", "t1")]);
+  assert.equal(got[0].status, "unknown");
+  assert.equal(got[0].label, "a");
+  assert.equal(got[0].workDir, "/wt/a");
+  assert.equal(investigationsFor([E("a", "/r", "t1")], "/r", [live("a", "t1", { status: { state: "blocked", msg: "?" } })])[0].status, "blocked");
+});
+
+test("only Done removes an entry: an agent that ended, was closed or is gone from the core keeps its row", () => {
+  const saved = [E("a", "/r", "t1"), E("b", "/r", "t2")];
+  assert.deepEqual(investigationsFor(saved, "/r", [live("a", "t1"), live("b", "t2")]).map((e) => e.live), [true, true]);
+  assert.deepEqual(investigationsFor(saved, "/r", [live("a", "t1")]).map((e) => [e.id, e.live]), [["a", true], ["b", false]]);
+  assert.deepEqual(investigationsFor(saved, "/r", []).map((e) => [e.id, e.live, e.status]), [["a", false, "finished"], ["b", false, "finished"]]);
+});
+
+test("a terminal that took over an address but isn't the investigation's agent counts as an ended agent, not as its status", () => {
+  const saved = [E("a", "/r", "t1")];
+  assert.deepEqual(investigationsFor(saved, "/r", [{ address: "t1", state: "live", status: "working", labels: { [INVESTIGATION_LABEL]: "other" } }]).map((e) => [e.live, e.status]), [[false, "finished"]]);
+  assert.deepEqual(investigationsFor(saved, "/r", [{ address: "t1", state: "live", status: "working" }]).map((e) => [e.live, e.status]), [[false, "finished"]]);
+});
+
+test("a session shows in any space of its repo: found by the main checkout, or by the repo's name for a GitHub repo", () => {
+  const saved = [{ ...E("a", "/clone1", "t1"), repo: "o/app" }, { ...E("b", "/clone2", "t2"), repo: "o/other" }, { ...E("c", "/r3", "t3"), repo: "r3" }];
+  const ts = [live("a", "t1"), live("b", "t2"), live("c", "t3")];
+  assert.deepEqual(investigationsFor(saved, { repoRoot: "/clone1", repo: "o/app" }, ts).map((e) => e.id), ["a"]);
+  assert.deepEqual(investigationsFor(saved, { repoRoot: "/elsewhere", repo: "o/app" }, ts).map((e) => e.id), ["a"], "another clone of the same GitHub repo");
+  assert.deepEqual(investigationsFor(saved, { repoRoot: "/r3", repo: null }, ts).map((e) => e.id), ["c"], "local mode: by main checkout only");
+  assert.deepEqual(investigationsFor(saved, { repoRoot: null, repo: null }, ts), [], "no place: nothing");
+  assert.deepEqual(investigationsFor(saved, { repoRoot: "", repo: "" }, ts), []);
+});
+
+test("several sessions in one repo each keep their own entry, in the order they were saved", () => {
+  const saved = [E("a", "/r", "t1"), E("b", "/r", "t2"), E("c", "/r", "t3")];
+  const got = investigationsFor(saved, "/r", [live("c", "t3"), live("a", "t1"), live("b", "t2")]);
+  assert.deepEqual(got.map((e) => e.id), ["a", "b", "c"]);
+});
+
+test("a row says the entry's first line, its status, whether it ended and what a click does", () => {
+  const [on, off] = investigationsFor([{ ...E("a", "/r", "t1"), label: "Fix the login redirect" }, { ...E("b", "/r", "t2"), label: "  \nSecond line first" }], "/r", [live("a", "t1", { status: "working" })]);
+  assert.deepEqual(investigationRow(on), { id: "a", text: "Fix the login redirect", status: "working", ended: false, tip: "Click to open this session." });
+  const ended = investigationRow(off);
+  assert.equal(ended.text, "Second line first");
+  assert.equal(ended.ended, true);
+  assert.equal(ended.status, "finished");
+  assert.match(ended.tip, /ended.*Done/);
+  assert.equal(investigationRow({ id: "x", label: "" }).text, "New task");
+});
+
+test("nothing saved, or something malformed saved, is no sessions", () => {
+  assert.deepEqual(investigationsFor(undefined, "/r", []), []);
+  assert.deepEqual(investigationsFor("nope", "/r", []), []);
+  assert.deepEqual(savedList([null, 3, { id: "x" }, E("a", "/r", "t1")]).map((e) => e.id), ["a"]);
+});
+
+test("liveInvestigations is every repo's live sessions", () => {
+  const saved = [E("a", "/r1", "t1"), E("c", "/r2", "t3"), E("z", "/r2", "t9")];
+  assert.deepEqual(liveInvestigations(saved, [live("a", "t1"), live("c", "t3")]).map((e) => e.id), ["a", "c"]);
+});
+
+test("withEntry adds or replaces by id, withoutEntry removes", () => {
+  const a = E("a", "/r", "t1"), b = E("b", "/r", "t2");
+  assert.deepEqual(withEntry(undefined, a), [a]);
+  assert.deepEqual(withEntry([a], b), [a, b]);
+  assert.deepEqual(withEntry([a, b], { ...a, label: "renamed" }).map((e) => e.label), ["renamed", "b"]);
+  assert.deepEqual(withoutEntry([a, b], "a"), [b]);
+  assert.deepEqual(withoutEntry(undefined, "a"), []);
+});
+
+// ---- After an app restart -----------------------------------------------------------------------------
+
+const SPACES = [{ id: "s1", tabs: [{ id: "tA" }] }, { id: "s2", tabs: [{ id: "tB" }] }];
+const PANES = [{ pane: "pA", tab: "tA", terminal: "t8" }, { pane: "pP", tab: "tA", mod: "github-tasks" }, { pane: "pB", tab: "tB", terminal: "t9" }, { pane: "pQ", tab: "tB", mod: "github-tasks" }];
+
+test("after a restart each live agent is shown again over the left pane of its own tab; ended ones and tab-less ones are left", async () => {
+  const saved = [E("a", "/r", "t1"), E("b", "/r", "t2"), E("c", "/r", "t3")];
+  const terminals = [live("a", "t1"), live("c", "t3")]; // b's agent is gone
+  const slots = { a: { tab: "tA", left: "pA", space: "s1" }, b: { tab: "tB", left: "pB", space: "s2" }, c: null }; // c has no tab (it was closed)
+  const shown = [];
+  const n = await reapplyInvestigations({ saved, terminals, slot: (id) => slots[id], spaces: SPACES, panes: PANES, show: async (a) => { shown.push(a); } });
+  assert.equal(n, 1);
+  assert.deepEqual(shown, [{ terminal: "t1", pane: "pA" }]);
+});
+
+test("one agent that can't be shown doesn't stop the rest", async () => {
+  const saved = [E("a", "/r", "t1"), E("b", "/r", "t2")];
+  const slots = { a: { tab: "tA", left: "pA", space: "s1" }, b: { tab: "tB", left: "pB", space: "s2" } };
+  const n = await reapplyInvestigations({
+    saved, terminals: [live("a", "t1"), live("b", "t2")], slot: (id) => slots[id], spaces: SPACES, panes: PANES,
+    show: async (a) => { if (a.terminal === "t1") throw new Error("busy"); },
+  });
+  assert.equal(n, 1);
+});
+
+test("a run's tab finder and an investigation's placeholder agree: the placeholder says it is an investigation's", () => {
+  assert.match(placeholderArgv("t7", "investigation")[2], /agent t7 of an investigation/);
+  assert.match(placeholderArgv("t7")[2], /orchestrator t7 of the run/, "a run's note is unchanged");
+});
+
+// ---- Starting ------------------------------------------------------------------------------------------
+
+const AGENT = { key: "claude", run: ["claude"] };
+const WHERE = { cwd: "/repo/app" };
+
+test("a space on another machine, no folder, and no agent are refused, each with its message", () => {
+  assert.throws(() => checkStart({ agent: AGENT, where: { cwd: "/x", on: "box" } }), /This space is on box\. Tasks' agents only start on this computer for now\./);
+  assert.throws(() => checkStart({ agent: AGENT, where: {} }), /This space has no folder to work in\./);
+  assert.throws(() => checkStart({ agent: AGENT, where: null }), /no folder/);
+  assert.throws(() => checkStart({ agent: null, where: WHERE }), /Pick an agent that is installed on this computer\./);
+  assert.throws(() => checkStart({ agent: { key: "x", run: [] }, where: WHERE }), /Pick an agent/);
+  assert.doesNotThrow(() => checkStart({ agent: AGENT, where: WHERE }));
+  assert.throws(() => checkStart({ agent: null, where: { cwd: "/x", on: "box" } }), /This space is on box/, "the remote space is said first, as before");
+});
+
+// A fake core that records what is done, in order.
+function fakeStart({ run = { code: 0, stdout: '{"address":"t9"}', stderr: "" }, ready = { code: 0, stdout: '{"status":"idle"}', stderr: "" }, send = { code: 0, stdout: "", stderr: "" }, connect, task, mainCheckout } = {}) {
+  const log = [], hcCalls = [];
+  let saved = [];
+  const deps = {
+    now: () => 1_000_000, home: "/home/me",
+    mainCheckout: async (cwd) => { log.push(`mainCheckout ${cwd}`); if (mainCheckout) throw mainCheckout; return "/repo/app"; },
+    prepareWorktree: async (repoRoot, branch, target) => { log.push(`worktree ${repoRoot} ${branch} ${target}`); return target; },
+    worktreePath: (repoRoot, branch, home) => worktreePath(repoRoot, branch, home),
+    task: async () => { log.push("task"); if (task) throw task; return "THE PROMPT"; },
+    hc: async (a) => { hcCalls.push(a); log.push(`hc ${a[0]}`); return a[0] === "run" ? run : a[0] === "wait" ? ready : a[0] === "send" ? send : { code: 0, stdout: "", stderr: "" }; },
+    connect: async (props) => { log.push("connect"); return connect ? connect(props) : { tab: "tX", left: "pX", space: "s1" }; },
+    closeTab: () => log.push("close tab"),
+    load: () => saved, save: (list) => { saved = list; log.push(`save ${list.map((e) => e.id).join(",")}`); },
+    cleanup: async (repoRoot, branch, workDir) => { log.push(`cleanup ${repoRoot} ${branch} ${workDir}`); },
+  };
+  return { deps, log, hcCalls, saved: () => saved };
+}
+const ARGS = { agent: AGENT, description: "Fix the login redirect\nIt lands on /404", repo: "o/app", groomer: { effort: "high" }, where: WHERE };
+
+test("start: the worktree is made from the main checkout, the entry saved once the agent exists, then the tab, then the prompt sent", async () => {
+  const f = fakeStart();
+  const { entry, problems } = await beginInvestigation(f.deps, ARGS);
+  const t = (1_000_000).toString(36);
+  const workDir = `/home/me/.herdr/worktrees/app/investigate-fix-the-login-redirect-${t}`;
+  assert.deepEqual(f.log, [
+    "mainCheckout /repo/app", "task", `worktree /repo/app investigate/fix-the-login-redirect-${t} ${workDir}`,
+    "hc run", `save inv-${t}`, "connect", "hc wait", "hc send",
+  ]);
+  assert.deepEqual(problems, []);
+  assert.deepEqual(entry, { id: `inv-${t}`, label: "Fix the login redirect", repoRoot: "/repo/app", repo: "o/app", branch: `investigate/fix-the-login-redirect-${t}`, workDir, agent: "t9" });
+  assert.deepEqual(f.saved(), [entry]);
+  assert.deepEqual(f.hcCalls.at(-1), ["send", "t9", "THE PROMPT"], "its first message is the prompt");
+});
+
+test("start: the agent is the chosen one with the groomer's effort, in the worktree, labelled for the investigation", async () => {
+  const f = fakeStart();
+  await beginInvestigation(f.deps, ARGS);
+  const run = f.hcCalls[0];
+  assert.deepEqual(run.slice(run.indexOf("--") + 1), ["claude", "--effort", "high"]);
+  assert.equal(run[run.indexOf("--cwd") + 1].startsWith("/home/me/.herdr/worktrees/app/investigate-"), true);
+  assert.ok(run.includes(`${INVESTIGATION_LABEL}=inv-${(1_000_000).toString(36)}`));
+});
+
+test("start: the page and tab are told the label (its title), branch, folder and repo, and the agent's address", async () => {
+  let seen;
+  const f = fakeStart({ connect: async (p) => { seen = p; return { tab: "t", left: "l", space: "s" }; } });
+  await beginInvestigation(f.deps, ARGS);
+  assert.equal(seen.role, "investigation");
+  assert.equal(seen.orchestrator, "t9");
+  assert.equal(seen.title, "Fix the login redirect");
+  assert.equal(seen.repoRoot, "/repo/app");
+  assert.match(seen.branch, /^investigate\/fix-the-login-redirect-/);
+  assert.match(seen.folder, /\/investigate-fix-the-login-redirect-/);
+});
+
+test("start from a ticket's worktree: the branch is cut in the repo's main checkout, not in the worktree", async () => {
+  const f = fakeStart();
+  await beginInvestigation(f.deps, { ...ARGS, where: { cwd: "/home/me/.herdr/worktrees/app/workflow-12-x" } });
+  assert.equal(f.log[0], "mainCheckout /home/me/.herdr/worktrees/app/workflow-12-x");
+  assert.match(f.log[2], /^worktree \/repo\/app investigate\//);
+});
+
+test("start with no description: named for the repo, and the branch has a plain name", async () => {
+  const f = fakeStart();
+  const { entry } = await beginInvestigation(f.deps, { ...ARGS, description: "" });
+  assert.equal(entry.label, "New task app");
+  assert.match(entry.branch, /^investigate\/investigation-/);
+});
+
+test("start: the errors come before anything is made", async () => {
+  for (const [args, message] of [
+    [{ ...ARGS, where: { cwd: "/x", on: "box" } }, /This space is on box/],
+    [{ ...ARGS, where: {} }, /no folder/],
+    [{ ...ARGS, agent: null }, /Pick an agent/],
+  ]) {
+    const f = fakeStart();
+    await assert.rejects(beginInvestigation(f.deps, args), message);
+    assert.deepEqual(f.log, [], "no git, no agent, no tab");
+  }
+});
+
+test("start: a prompt that can't be made leaves nothing behind", async () => {
+  const f = fakeStart({ task: new Error("no tasks folder") });
+  await assert.rejects(beginInvestigation(f.deps, ARGS), /no tasks folder/);
+  assert.deepEqual(f.log, ["mainCheckout /repo/app", "task"]);
+});
+
+test("start: not in a git repo is said, with nothing made", async () => {
+  const f = fakeStart({ mainCheckout: new Error("/repo/app isn't in a git repo") });
+  await assert.rejects(beginInvestigation(f.deps, ARGS), /isn't in a git repo/);
+  assert.deepEqual(f.log, ["mainCheckout /repo/app"]);
+});
+
+test("start: an agent that doesn't start takes back the worktree and branch it made", async () => {
+  const f = fakeStart({ run: { code: 1, stdout: "", stderr: "no such program" } });
+  await assert.rejects(beginInvestigation(f.deps, ARGS), /The agent didn't start: no such program/);
+  assert.equal(f.log.at(-1).startsWith("cleanup /repo/app investigate/"), true);
+  assert.deepEqual(f.saved(), []);
+});
+
+test("start: an agent that ends while starting is killed, its tab closed, its entry forgotten and its worktree removed", async () => {
+  const f = fakeStart({ ready: { code: 0, stdout: '{"reason":"exit","exit_code":1}', stderr: "" } });
+  await assert.rejects(beginInvestigation(f.deps, ARGS), /The agent didn't start properly, so it was ended/);
+  assert.ok(f.log.includes("close tab"));
+  assert.ok(f.log.includes("hc kill"));
+  assert.equal(f.log.at(-1).startsWith("cleanup "), true);
+  assert.deepEqual(f.saved(), [], "the entry went with it");
+});
+
+test("start: a prompt the agent doesn't take ends it and undoes the lot", async () => {
+  const f = fakeStart({ send: { code: 1, stdout: "", stderr: "busy" } });
+  await assert.rejects(beginInvestigation(f.deps, ARGS), /didn't take its task.*busy/);
+  assert.ok(f.log.includes("close tab"));
+  assert.deepEqual(f.saved(), []);
+  assert.equal(f.log.at(-1).startsWith("cleanup "), true);
+});
+
+test("start: a tab that won't open is a problem to say, not a failure: the agent goes on and the entry stays", async () => {
+  const f = fakeStart({ connect: async () => { throw new Error("no room"); } });
+  const { entry, problems } = await beginInvestigation(f.deps, ARGS);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /Its tab didn't open: no room/);
+  assert.deepEqual(f.saved(), [entry]);
+  assert.ok(!f.log.some((l) => l.startsWith("cleanup")));
+});
+
+// ---- Done ----------------------------------------------------------------------------------------------
+
+// A real repo with the investigation's branch and worktree; the core's side is faked.
+const sh = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
+const ident = ["-c", "user.name=t", "-c", "user.email=t@t"];
+const git = async (cwd, ...args) => {
+  const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
+  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+};
+async function scratch() {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), "inv-")));
+  const repo = join(dir, "app");
+  mkdirSync(repo);
+  sh(repo, "init", "-q", "-b", "main");
+  sh(repo, ...ident, "commit", "-q", "--allow-empty", "-m", "first");
+  const branch = "investigate/fix-it-abc";
+  const workDir = await prepareWorktree(git, repo, branch, worktreePath(repo, branch, join(dir, "home")));
+  return { dir, repo, branch, workDir };
+}
+
+function fakeDone(s, { killed = { code: 0, stdout: "", stderr: "" }, stillLive = false, own = true, slot = { tab: "tA", left: "pA", space: "s1" } } = {}) {
+  const log = [];
+  let saved = [{ id: "inv-1", label: "Fix it", repoRoot: s.repo, repo: "app", branch: s.branch, workDir: s.workDir, agent: "t1" }, E("other", "/r", "t5")];
+  const spaces = own ? [{ id: "s1", tabs: [{ id: "tA" }] }, { id: "s0", tabs: [{ id: "tZ" }] }] : [{ id: "s0", tabs: [{ id: "tZ" }, { id: "tA" }] }];
+  const panes = [{ pane: "pA", tab: "tA", terminal: "t8", cwd: s.workDir }, { pane: "pP", tab: "tA", mod: "github-tasks" }, { pane: "pZ", tab: "tZ", terminal: "t3", cwd: s.repo }];
+  const deps = {
+    hc: async (a) => { log.push(`hc ${a.join(" ")}`); return a[0] === "kill" ? killed : { code: 0, stdout: "", stderr: "" }; },
+    terminals: () => (stillLive ? [{ address: "t1", state: "live" }] : []),
+    spaces: () => spaces, panes: () => panes, slot: () => slot,
+    git: async (cwd, ...args) => { log.push(`git ${args.join(" ")}`.replace(s.workDir, "<wt>")); return git(cwd, ...args); },
+    run: (name, args) => log.push(`${name} ${JSON.stringify(args)}`),
+    load: () => saved, save: (list) => { saved = list; log.push("save"); }, clearSlot: () => log.push("clear slot"),
+  };
+  return { deps, log, saved: () => saved };
+}
+const entryOf = (s) => ({ id: "inv-1", label: "Fix it", repoRoot: s.repo, repo: "app", branch: s.branch, workDir: s.workDir, agent: "t1" });
+
+test("Done ends the agent, removes the worktree, deletes the branch, forgets the entry and closes the space, in that order", async () => {
+  const s = await scratch();
+  const f = fakeDone(s);
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.deepEqual(got, { done: true, error: null, closed: true });
+  assert.deepEqual(f.log, [
+    "git worktree list --porcelain", "hc kill t1", "hc rm t1", "git worktree remove --force <wt>", "git branch -D investigate/fix-it-abc", "save", "clear slot",
+    'space.close {"id":"s1","confirmed":true}',
+  ]);
+  assert.equal(existsSync(s.workDir), false, "the worktree is gone");
+  assert.equal(sh(s.repo, "branch", "--list", s.branch), "", "the branch is gone");
+  assert.deepEqual(f.saved().map((e) => e.id), ["other"], "only its own entry was removed");
+  assert.equal(sh(s.repo, "worktree", "list", "--porcelain").includes(s.workDir), false);
+});
+
+test("Done removes the worktree even with uncommitted changes in it", async () => {
+  const s = await scratch();
+  execFileSync("sh", ["-c", `echo hi > "${s.workDir}/new.txt"`]);
+  sh(s.workDir, "add", "new.txt");
+  const f = fakeDone(s);
+  assert.equal((await endInvestigation(f.deps, entryOf(s))).done, true);
+  assert.equal(existsSync(s.workDir), false);
+});
+
+test("Done deletes the branch even when it has commits no other branch has", async () => {
+  const s = await scratch();
+  sh(s.workDir, ...ident, "commit", "-q", "--allow-empty", "-m", "an idea");
+  const f = fakeDone(s);
+  assert.equal((await endInvestigation(f.deps, entryOf(s))).done, true);
+  assert.equal(sh(s.repo, "branch", "--list", s.branch), "");
+});
+
+test("Done closes only the tab when the tab was moved to a space that isn't its own", async () => {
+  const s = await scratch();
+  const f = fakeDone(s, { own: false });
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.deepEqual(got, { done: true, error: null, closed: true });
+  assert.equal(f.log.at(-1), 'tab.close {"id":"tA"}');
+});
+
+test("Done with no tab and no space found still finishes, and says nothing was closed", async () => {
+  const s = await scratch();
+  const f = fakeDone(s, { own: false, slot: null });
+  f.deps.panes = () => [];
+  f.deps.spaces = () => [];
+  assert.deepEqual(await endInvestigation(f.deps, entryOf(s)), { done: true, error: null, closed: false });
+  assert.ok(!f.log.some((l) => l.startsWith("tab.close") || l.startsWith("space.close")));
+});
+
+test("Done refuses an entry that isn't an investigation's: a branch outside investigate/, or the main checkout as the folder; nothing is touched", async () => {
+  const s = await scratch();
+  for (const bad of [{ branch: "main" }, { branch: "workflow/43-x" }, { branch: "" }, { branch: undefined }, { workDir: s.repo }, { workDir: `${s.repo}/` }, { workDir: "" }]) {
+    const f = fakeDone(s);
+    const got = await endInvestigation(f.deps, { ...entryOf(s), ...bad });
+    assert.equal(got.done, false, JSON.stringify(bad));
+    assert.match(got.error, /^Done refused: .*Nothing was ended or removed/, JSON.stringify(bad));
+    assert.deepEqual(f.log.filter((l) => !l.startsWith("git worktree list")), [], `nothing done for ${JSON.stringify(bad)}`);
+  }
+  assert.equal(existsSync(s.workDir), true, "the worktree is still there");
+  assert.notEqual(sh(s.repo, "branch", "--list", s.branch), "", "the branch is still there");
+});
+
+test("Done refuses a folder that git says is the main checkout even when the entry's repoRoot is another path to it", async () => {
+  const s = await scratch();
+  const f = fakeDone(s);
+  assert.match((await unsafeToRemove(f.deps.git, { repoRoot: s.workDir, workDir: s.repo, branch: s.branch })) ?? "", /main checkout/);
+  assert.equal(await unsafeToRemove(f.deps.git, entryOf(s)), null, "a real investigation's entry is fine");
+  const got = await endInvestigation(f.deps, { ...entryOf(s), repoRoot: s.workDir, workDir: s.repo });
+  assert.equal(got.done, false);
+  assert.equal(existsSync(s.repo), true);
+});
+
+test("Done stops when the agent can't be ended: nothing is removed", async () => {
+  const s = await scratch();
+  const f = fakeDone(s, { killed: { code: 1, stdout: "", stderr: "terminal busy" }, stillLive: true });
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.equal(got.done, false);
+  assert.match(got.error, /Couldn't end the agent t1: terminal busy/);
+  assert.deepEqual(f.log, ["git worktree list --porcelain", "hc kill t1"], "the guard only reads");
+  assert.equal(existsSync(s.workDir), true);
+  assert.equal(f.saved().some((e) => e.id === "inv-1"), true, "still tracked");
+});
+
+test("Done on an agent that is already gone goes on: a failed kill of a terminal that isn't live is fine", async () => {
+  const s = await scratch();
+  const f = fakeDone(s, { killed: { code: 1, stdout: "", stderr: "no such terminal" } });
+  assert.equal((await endInvestigation(f.deps, entryOf(s))).done, true);
+});
+
+test("Done can be pressed again after the worktree went by hand: the branch is deleted and the rest finishes", async () => {
+  const s = await scratch();
+  execFileSync("rm", ["-rf", s.workDir]);
+  const f = fakeDone(s);
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.equal(got.done, true);
+  assert.equal(sh(s.repo, "branch", "--list", s.branch), "");
+});
+
+test("Done says why when the worktree can't be removed, and keeps the entry and the space for another try", async () => {
+  const s = await scratch();
+  const f = fakeDone(s);
+  f.deps.git = async (cwd, ...args) => (args[0] === "worktree" && args[1] === "remove" ? { code: 128, stdout: "", stderr: "fatal: locked" } : git(cwd, ...args));
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.equal(got.done, false);
+  assert.match(got.error, /Couldn't remove the worktree .*: fatal: locked/);
+  assert.equal(f.saved().some((e) => e.id === "inv-1"), true);
+  assert.ok(!f.log.some((l) => l.startsWith("space.close")));
+});
+
+test("Done says why when the branch can't be deleted", async () => {
+  const s = await scratch();
+  const f = fakeDone(s);
+  f.deps.git = async (cwd, ...args) => (args[0] === "branch" ? { code: 1, stdout: "", stderr: "error: cannot delete" } : git(cwd, ...args));
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.equal(got.done, false);
+  assert.match(got.error, /couldn't delete the branch investigate\/fix-it-abc: error: cannot delete/);
+  assert.equal(f.saved().some((e) => e.id === "inv-1"), true);
+});
+
+test("removeWorktree and deleteBranch treat what is already gone as done", async () => {
+  const s = await scratch();
+  assert.equal(await removeWorktree(git, s.repo, s.workDir), null);
+  assert.equal(await removeWorktree(git, s.repo, s.workDir), null, "again: it is gone");
+  assert.equal(await deleteBranch(git, s.repo, s.branch), null);
+  assert.equal(await deleteBranch(git, s.repo, s.branch), null, "again: it is gone");
+});
+
+test("the real helpers work on a worktree started from a ticket's worktree (the main checkout is found)", async () => {
+  const s = await scratch();
+  assert.equal(await mainCheckout(git, s.workDir), s.repo);
+});
+
+test("slots are kept per investigation id, like a run's", () => {
+  assert.equal(slotKey("inv-1"), "github-tasks.runtab.inv-1");
+});

@@ -50,11 +50,19 @@ export function parseStarted(stdout) {
 // The program the tab's own terminal runs: a note, then it waits for ever (a program that exits closes its pane).
 // The orchestrator is shown over it, so the note only reads when the connection is lost; it says nothing about the run's
 // state, which may well have ended by then.
-export const placeholderArgv = (orchestrator) => ["sh", "-c", `printf '%s\\n' ${shQuote(`This tab shows orchestrator ${orchestrator} of the run. When it is not showing, View reconnects it.`)}; exec tail -f /dev/null`];
+// kind: "run" (the default), "investigation" (investigate.js: the tab of a New Task agent, which works like a run's), or
+// "investigation-ended" (the same tab opened again after its agent ended on its own: it says so).
+const NOTES = {
+  run: (a) => `This tab shows orchestrator ${a} of the run. When it is not showing, View reconnects it.`,
+  investigation: (a) => `This tab shows agent ${a} of an investigation. When it is not showing, View reconnects it.`,
+  "investigation-ended": (a) => `Agent ${a} of this investigation has ended. Press Done to remove its worktree and branch.`,
+};
+export const placeholderArgv = (orchestrator, kind = "run") => ["sh", "-c", `printf '%s\\n' ${shQuote(NOTES[kind](orchestrator))}; exec tail -f /dev/null`];
 
 // Whether a terminal is the placeholder made for one of these orchestrators: its argv holds placeholderArgv's script (a login-shell wrapper around the argv is fine).
+// Both kinds count, so a run's and an investigation's tab are found the same way.
 const placeholderMatcher = (orchestrators) => {
-  const texts = (orchestrators ?? []).filter(Boolean).map((o) => placeholderArgv(o)[2]);
+  const texts = (orchestrators ?? []).filter(Boolean).flatMap((o) => Object.keys(NOTES).map((kind) => placeholderArgv(o, kind)[2]));
   return (t) => Array.isArray(t.argv) && t.argv.some((a) => texts.includes(a));
 };
 
@@ -254,16 +262,22 @@ const why = (e) => String(e?.message ?? e);
 // the slot returned then has created: true, and a failure closes that whole space.
 //   deps: { app(name, args) -> made, paneOf(made) -> pane id | null, run(name, args), setSlot(id, slot), sleep(ms),
 //           isShown?(orchestrator, left), warn?(message) }
-export async function connectRun(deps, { id, orchestrator, name, space, spaceName, folder, props, existing = null }) {
+//   kind: which placeholder note the left pane prints (placeholderArgv), and what the messages call the agent: "orchestrator", or "agent"
+//   for an investigation's.
+//   "investigation-ended" is an investigation's tab opened again after its agent ended on its own, so Done can be pressed: the
+//   agent's terminal is shown if the app still has it, and not being able to show it is no failure.
+export async function connectRun(deps, { id, orchestrator, name, space, spaceName, folder, props, existing = null, kind = "run" }) {
+  const ended = kind === "investigation-ended";
+  const who = kind.startsWith("investigation") ? "agent" : "orchestrator";
   let made = null, tab = existing?.tab, left = existing?.left ?? null, page = existing?.page ?? null, createdSpace = false;
   try {
     if (!existing) {
       createdSpace = !space && Boolean(spaceName);
       if (createdSpace) {
-        try { made = await deps.app("space.new", { name: spaceName, tab: name, ...(folder ? { folder } : {}), argv: placeholderArgv(orchestrator) }); }
+        try { made = await deps.app("space.new", { name: spaceName, tab: name, ...(folder ? { folder } : {}), argv: placeholderArgv(orchestrator, kind) }); }
         catch (e) { throw new Error(`the space couldn't be made (${why(e)})`); }
       } else {
-        try { made = await deps.app("tab.new", { name, ...(folder ? { folder } : {}), argv: placeholderArgv(orchestrator), ...(space ? { space } : {}) }); }
+        try { made = await deps.app("tab.new", { name, ...(folder ? { folder } : {}), argv: placeholderArgv(orchestrator, kind), ...(space ? { space } : {}) }); }
         catch (e) { throw new Error(`the tab couldn't be made (${why(e)})`); }
       }
       tab = made.tab;
@@ -272,7 +286,7 @@ export async function connectRun(deps, { id, orchestrator, name, space, spaceNam
     } else if (!left) {
       if (!page) throw new Error("the run's tab has nothing left to attach to");
       let fresh;
-      try { fresh = await deps.app("pane.split", { pane: page, direction: "right", argv: placeholderArgv(orchestrator) }); }
+      try { fresh = await deps.app("pane.split", { pane: page, direction: "right", argv: placeholderArgv(orchestrator, kind) }); }
       catch (e) { throw new Error(`the tab's left pane couldn't be made again (${why(e)})`); }
       left = await deps.paneOf({ ...fresh, tab });
       if (!left) throw new Error("the tab's new pane didn't appear");
@@ -283,9 +297,10 @@ export async function connectRun(deps, { id, orchestrator, name, space, spaceNam
     deps.run("tab.select", { id: tab });
     const show = async () => {
       try { await deps.app("terminal.show", { terminal: orchestrator, pane: left }); }
-      catch (e) { throw new Error(`the orchestrator ${orchestrator} couldn't be shown (${why(e)})`); }
+      catch (e) { throw new Error(`the ${who} ${orchestrator} couldn't be shown (${why(e)})`); }
     };
-    await show(); // fails here, before the page opens, when the orchestrator can't be shown at all
+    if (ended) await show().catch(() => {}); // nothing is going on in it: the note on the left says it has ended
+    else await show(); // fails here, before the page opens, when the orchestrator can't be shown at all
     if (!page) {
       try { await deps.app("pane.split", { pane: left, direction: "right", mod: "github-tasks", props }); }
       catch (e) { throw new Error(`the run page couldn't open (${why(e)})`); }
@@ -293,8 +308,10 @@ export async function connectRun(deps, { id, orchestrator, name, space, spaceNam
     const slot = { tab, left, space: where ?? null };
     deps.setSlot(id, slot);
     deps.run("pane.focus", { pane: left });
-    const held = await holdShown(deps, { orchestrator, left, show });
-    if (held === false) deps.warn?.(`The orchestrator ${orchestrator} may not be showing in its tab yet. Press View on the ticket to show it again; the run itself is going.`);
+    const held = ended ? null : await holdShown(deps, { orchestrator, left, show });
+    if (held === false) deps.warn?.(who === "agent"
+      ? `The agent ${orchestrator} may not be showing in its tab yet. Click its row under Investigations to show it again; the agent itself is going.`
+      : `The orchestrator ${orchestrator} may not be showing in its tab yet. Press View on the ticket to show it again; the run itself is going.`);
     return createdSpace ? { ...slot, created: true } : slot;
   } catch (e) {
     if (made) {
@@ -388,8 +405,10 @@ export async function endRun({ id, orchestrator, hc, terminals, run, slot, space
 //   deps: { hc(args), writePaneJson(props), connect(props) -> slot (throws), closeTab(), openHost?() -> host (throws), closeHost?(host) }
 //   The host (openHost, before anything else) is the orchestrator's parent so the Agents panel lists the run; one that won't open
 //   is only a problem to say and the run starts with no parent. A failure that ends the orchestrator ends the host too.
-//   Resolves with { orchestrator, problems, host }.
-export async function launchRun(deps, { id, key, workDir, argv, task, props }) {
+//   runArgs: the `hc run` arguments for { id, key, workDir, argv, parent } (orchestratorRunArgs; investigate.js has its own labels and
+//   no host: it passes no openHost, so its agent has no parent);
+//   who: what the messages call the agent. Resolves with { orchestrator, problems, host }.
+export async function launchRun(deps, { id, key, workDir, argv, task, props, runArgs = orchestratorRunArgs, who = "orchestrator" }) {
   const problems = [];
   let host = null;
   if (deps.openHost) {
@@ -397,9 +416,9 @@ export async function launchRun(deps, { id, key, workDir, argv, task, props }) {
     catch (e) { problems.push(`The Agents panel won't list this run's agents: its host tab didn't open (${why(e)}). The run itself is going.`); }
   }
   const endHostToo = async () => { if (host) await Promise.resolve(deps.closeHost?.(host)).catch(() => {}); };
-  const started = await deps.hc(orchestratorRunArgs({ id, key, workDir, argv, parent: host?.address })).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+  const started = await deps.hc(runArgs({ id, key, workDir, argv, parent: host?.address })).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
   const orchestrator = started.code === 0 ? parseStarted(started.stdout) : null;
-  if (!orchestrator) { await endHostToo(); throw new Error(`The orchestrator didn't start: ${String(started.stderr || started.stdout || "").trim() || "hc gave no address"}`); }
+  if (!orchestrator) { await endHostToo(); throw new Error(`The ${who} didn't start: ${String(started.stderr || started.stdout || "").trim() || "hc gave no address"}`); }
   const full = { ...props, orchestrator };
   await deps.writePaneJson(full).catch(() => {}); // View reconnects from this, so it is there before anything else can look
   try { await deps.connect(full); }
@@ -412,9 +431,9 @@ export async function launchRun(deps, { id, key, workDir, argv, task, props }) {
     throw new Error(message);
   };
   const ready = await waitReady({ hc: deps.hc, orchestrator });
-  if (!ready.ok) await abort(`The orchestrator didn't start properly, so it was ended: ${ready.why}`);
+  if (!ready.ok) await abort(`The ${who} didn't start properly, so it was ended: ${ready.why}`);
   const sent = await deps.hc(["send", orchestrator, task]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
-  if (sent.code !== 0) await abort(`The orchestrator didn't take its task, so it was ended: ${String(sent.stderr || sent.stdout || "").trim() || "hc send failed"}`);
+  if (sent.code !== 0) await abort(`The ${who} didn't take its task, so it was ended: ${String(sent.stderr || sent.stdout || "").trim() || "hc send failed"}`);
   return { orchestrator, problems, host };
 }
 
