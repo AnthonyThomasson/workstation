@@ -32,6 +32,7 @@ import { loadWorkflows } from "./workflow-env.js";
 import { startRun, liveRunFor, viewRun, reconnectRuns } from "./start.js";
 import { startDoctor } from "./doctor-env.js";
 import { DOCTOR_KEY, doctorFor } from "./doctor.js";
+import { SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload } from "./space-lists.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
@@ -93,6 +94,7 @@ export default class GitHubTasks extends View {
     this.auth = new Auth();
     this.changedAt = shared(CHANGED) ?? null; // a save in an editor refreshes the list
     this.lastCwd = new Map();
+    this.lists = new SpaceLists(); // each space's last list, shown at once when the space is selected again
     this.reset(null);
     this.open = Object.fromEntries(SECTIONS.map((x) => [x.id, x.open])); // which sections are expanded
     this.starting = new Set(); // the tickets whose Start is working
@@ -114,34 +116,11 @@ export default class GitHubTasks extends View {
   }
 
   // A new place starts over, and whatever is still loading for the old one is dropped.
-  reset(ctx) {
-    this.ctx = ctx;
-    this.token = (this.token ?? 0) + 1;
-    this.loading = false;
-    this.forgetRepo();
-    this.place = null; // readPlace's answer: { folder, on, mainRoot, remote, source }
-    this.placeCache = null;
-    this.source = "github"; // which source the list shows: "local" or "github"
-    this.localStages = null; // local mode's sections, null until loaded
-    this.localError = null;
-    this.error = null;
-    this.setupError = null;
-    this.startError = null;
-  }
+  reset(ctx) { resetList(this, ctx); }
 
-  forgetRepo() {
-    this.repo = null;
-    this.repoFolder = null;
-    this.projects = [];
-    this.project = null;
-    this.clearTickets();
-  }
+  forgetRepo() { forgetRepo(this); }
 
-  clearTickets() {
-    this.groups = { open: [], closed: [] };
-    this.truncated = false;
-    this.loaded = false;
-  }
+  clearTickets() { clearTickets(this); }
 
   // Where the panel looks: the selected space's focused terminal's folder, as Skills does, because
   // a space's own folder can be some other repo or just home. Focus moving to a panel has no folder,
@@ -171,15 +150,17 @@ export default class GitHubTasks extends View {
         if (!current()) return;
         this.applyPlace(place);
         if (place.source === "local") { if (!place.remote) await this.loadLocal(place, current); return; }
-        // The folder is asked about once. Another folder in the same repo keeps the list on screen.
-        const repo = this.repo && this.repoFolder === ctx.folder ? this.repo : await findRepo(gh, where);
+        // The folder is asked about once. Another folder in the same repo keeps the list on screen. A list kept from
+        // when the space was left asks again: its repo may be another one by now.
+        const repo = this.repo && this.repoFolder === ctx.folder && !this.restored ? this.repo : await findRepo(gh, where);
         if (!current()) return;
-        if (repo !== this.repo) { this.forgetRepo(); this.repo = repo; cx.notify(); }
+        if (applyRepo(this, repo)) cx.notify();
         this.repoFolder = ctx.folder;
         const projects = await findProjects(gh, repo, where);
         if (!current()) return;
         this.projects = projects;
         this.project = chooseProject(projects, shared(projectKey(repo)));
+        applyProject(this); // a kept list is dropped when the project is another one
         this.publish();
         if (!this.project) { this.clearTickets(); this.loaded = true; this.error = null; return; }
         const { nodes, truncated } = await loadItems(gh, this.project.id, where, current);
@@ -190,28 +171,20 @@ export default class GitHubTasks extends View {
         this.error = null;
       } catch (e) {
         if (current()) {
+          failReload(this); // a kept list is dropped, so only the error shows
           this.error = e instanceof GitHubError ? e : { kind: "other", message: String(e?.message ?? e) };
           if (this.error.kind === "not-a-repo") this.forgetRepo();
           this.publish(); // whatever failed, the settings show what the list knows now, never an earlier space's repo
         }
       } finally {
-        if (current()) { this.loading = false; this.quiet = false; cx.notify(); }
+        if (current()) { doneReload(this); this.loading = false; this.quiet = false; cx.notify(); }
       }
     });
   }
 
   // The place's source is known: a change of source (or of local repo) starts the list over, and the settings are told.
   applyPlace(place) {
-    const changed = place.source !== this.source || (place.source === "local" && place.mainRoot !== this.place?.mainRoot);
-    this.place = place;
-    this.placeCache = place.cache;
-    this.source = place.source;
-    if (changed) {
-      this.forgetRepo();
-      this.error = null;
-      this.localStages = null;
-      this.localError = null;
-    }
+    applyPlace(this, place);
     this.publish();
   }
 
@@ -223,7 +196,7 @@ export default class GitHubTasks extends View {
       this.localStages = localStages(tasks, place.mainRoot);
       this.localError = null;
     } catch (e) {
-      if (current()) this.localError = String(e?.message ?? e);
+      if (current()) { failReload(this); this.localError = String(e?.message ?? e); }
     }
   }
 
@@ -267,6 +240,7 @@ export default class GitHubTasks extends View {
     this.publish();
     this.token++;
     this.loading = false;
+    this.restored = null; // the person chose: nothing is waiting to be checked
     this.clearTickets();
     this.refresh(cx);
   }
@@ -291,11 +265,16 @@ export default class GitHubTasks extends View {
 
     // Follow the selected space. Another space starts over. Another folder in the same space keeps the
     // list until its repo is known, because most folder changes stay in one repo.
-    const ctx = this.context(), key = ctx ? `${ctx.space}|${ctx.on}` : null;
+    const ctx = this.context(), key = spaceKey(ctx);
     const newSpace = key !== this.ctxKey;
     const newFolder = !newSpace && ctx?.folder !== this.ctx?.folder;
-    if (newSpace) { this.ctxKey = key; this.reset(ctx); later(cx, () => this.publish()); } // the old space's repo is forgotten, so the settings forget it too
-    else if (newFolder) { this.ctx = ctx; this.token++; this.loading = false; later(cx, () => this.publish()); } // the settings follow the folder at once, not after the refresh
+    if (newSpace) { // the old space's list is kept, and the new space's, if it has one, shows at once while its reload runs
+      this.lists.save(this.ctxKey, this);
+      this.ctxKey = key;
+      this.reset(ctx);
+      this.lists.restore(key, this);
+      later(cx, () => this.publish()); // the settings follow: the old space's repo is forgotten, a kept one is shown
+    } else if (newFolder) { this.ctx = ctx; this.token++; this.loading = false; later(cx, () => this.publish()); } // the settings follow the folder at once, not after the refresh
     if (ctx && (newSpace || newFolder)) later(cx, (cx) => this.refresh(cx));
 
     const problems = doctorFor(shared(DOCTOR_KEY), shared(PLACE))?.issues?.length ?? 0; // only an answer for the place shown
