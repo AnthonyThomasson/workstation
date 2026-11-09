@@ -265,10 +265,7 @@ export class RunPage {
           message: squashMessage(title, this.ticket?.number), status: await this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
         }), exec);
         for (const body of warnings) notify({ title: "The task didn't move", body, level: "warning" });
-        if (!(await this.closeSession())) {
-          this.error = "Merged. This tab couldn't be closed for you: close it yourself.";
-          this.busy = null; cx.notify();
-        }
+        if (!(await this.closeSession())) { this.busy = null; cx.notify(); } // the page is still there: closeSession said what is left to do
       } catch (e) { this.error = String(e?.message ?? e); this.busy = null; cx.notify(); }
     });
   }
