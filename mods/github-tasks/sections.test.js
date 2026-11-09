@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { SECTIONS, emptyNote, initialOpen, sectionPlan, sectionText } from "./sections.js";
+import { SECTIONS, emptyNote, initialOpen, investigationsAlone, sectionPlan, sectionText } from "./sections.js";
 
 test("the sections are Up Next, Investigations, In Progress, In Review, Backlog, in that order", () => {
   assert.deepEqual(SECTIONS.map((s) => s.label), ["Up Next", "Investigations", "In Progress", "In Review", "Backlog"]);
@@ -40,4 +40,18 @@ test("the plan follows the order whatever order the lists are given in, in GitHu
   const plan = sectionPlan({ backlog: [1], review: [2], progress: [3], investigations: [4], next: [5] }, initialOpen());
   assert.deepEqual(plan.map((s) => s.id), ["next", "investigations", "progress", "review", "backlog"]);
   assert.deepEqual(plan.slice(0, 4).map((s) => s.items), [[5], [4], [3], [2]]);
+});
+
+test("Investigations show alone when the ticket lists can't be drawn, but only with a context and a repo known", () => {
+  const items = [{ id: "a" }, { id: "b" }];
+  const gh = { ctx: {}, local: false, remote: false, mainRoot: "/r", repo: "o/r", items };
+  const [inv, ...rest] = investigationsAlone(gh, initialOpen());
+  assert.deepEqual([inv.id, inv.title, inv.items, rest], ["investigations", "Investigations · 2", items, []]);
+  assert.equal(investigationsAlone({ ...gh, mainRoot: null }, initialOpen()).length, 1, "the GitHub name is enough in GitHub mode");
+  assert.equal(investigationsAlone({ ...gh, mainRoot: null, repo: null }, initialOpen()).length, 0, "no repo known");
+  assert.equal(investigationsAlone({ ...gh, ctx: null }, initialOpen()).length, 0, "no context");
+  assert.equal(investigationsAlone({ ...gh, local: true, mainRoot: null }, initialOpen()).length, 0, "local mode looks by checkout only");
+  assert.equal(investigationsAlone({ ...gh, local: true, remote: true }, initialOpen()).length, 0, "a remote space has no checkout here");
+  assert.equal(investigationsAlone({ ...gh, items: [] }, initialOpen())[0].empty, "Nothing in Investigations.");
+  assert.deepEqual(investigationsAlone(gh, { investigations: false })[0].items, [], "the same collapse state");
 });

@@ -36,7 +36,7 @@ import { statusColor, statusLabel } from "./runview.js";
 import { InvestigationPage } from "./investigation-page.js";
 import { NewTaskPage } from "./new-task.js";
 import { AGENT_KEY, newTaskOverlay, newTaskProps, chooseAgent } from "./new-task-dialog.js";
-import { SECTIONS, initialOpen, sectionPlan } from "./sections.js";
+import { initialOpen, investigationsAlone, sectionPlan } from "./sections.js";
 import { startDoctor } from "./doctor-env.js";
 import { DOCTOR_KEY, doctorFor } from "./doctor.js";
 import { SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload } from "./space-lists.js";
@@ -329,11 +329,11 @@ export default class GitHubTasks extends View {
   }
 
   renderBody(t, ctx) {
-    const message = (el) => v_flex().flex_1().min_h(0).p(16).gap(10).child(el);
+    const message = (...els) => this.withInvestigations(t, ctx, els);
     if (!ctx) return message(note(t, "Open a space to see its tickets."));
     if (this.source === "local") return this.renderLocal(t, ctx);
-    if (!this.loaded && this.error) return v_flex().flex_1().min_h(0).p(16).gap(10).child(this.renderProblem(t, ctx));
-    if (!this.loaded) return v_flex().flex_1().min_h(0).p(16).gap(10).children([0, 1, 2, 3, 4].map((i) => div().h(44).flex_none().rounded(8).bg(t.chrome).opacity(1 - i * 0.15)));
+    if (!this.loaded && this.error) return message(this.renderProblem(t, ctx));
+    if (!this.loaded) return message(...this.skeleton(t));
     if (!this.project) return message(this.renderNoProject(t, ctx));
 
     const rows = [];
@@ -344,6 +344,26 @@ export default class GitHubTasks extends View {
     rows.push(...this.sectionRows(t, groupByStage(this.groups.open)));
     return div().id("tickets").flex_1().min_h(0).overflow_y_scrollbar().child(v_flex().pb(12).children(rows));
   }
+
+  // A message in place of the ticket list (a problem, no project, the skeleton) with, under it, the Investigations section when a
+  // repo is known (sections.js's investigationsAlone): their rows are the way back to a session, so they stay while the list can't draw.
+  withInvestigations(t, ctx, els) {
+    const sections = investigationsAlone({
+      ctx, local: this.source === "local", remote: Boolean(this.place?.remote), mainRoot: this.place?.mainRoot, repo: this.repo,
+      items: ctx ? this.investigationList() : [],
+    }, this.open);
+    if (!sections.length) return v_flex().flex_1().min_h(0).p(16).gap(10).children(els);
+    const rows = [];
+    for (const section of sections) {
+      rows.push(this.sectionTitle(t, section));
+      if (section.open) rows.push(...section.items.map((entry) => this.investigationRowView(t, entry)));
+      if (section.empty) rows.push(div().px(14).py(2).child(note(t, section.empty)));
+    }
+    return div().id("tickets").flex_1().min_h(0).overflow_y_scrollbar()
+      .child(v_flex().pb(12).child(v_flex().flex_none().p(16).gap(10).children(els)).children(rows));
+  }
+
+  skeleton(t) { return [0, 1, 2, 3, 4].map((i) => div().h(44).flex_none().rounded(8).bg(t.chrome).opacity(1 - i * 0.15)); }
 
   // The sections, top to bottom, each with its tickets (and, under Investigations, the repo's New Task sessions, which aren't
   // tickets): stages is groupByStage's answer. What shows is sections.js's plan.
@@ -381,10 +401,10 @@ export default class GitHubTasks extends View {
 
   // Local mode: the tasks in the status folders, in the same sections. A space on another machine can't have them.
   renderLocal(t, ctx) {
-    const message = (el) => v_flex().flex_1().min_h(0).p(16).gap(10).child(el);
+    const message = (...els) => this.withInvestigations(t, ctx, els);
     if (this.place?.remote) return message(note(t, LOCAL_ONLY_HERE));
     if (!this.localStages && this.localError) return message(note(t, this.localError, t.blocked));
-    if (!this.localStages) return v_flex().flex_1().min_h(0).p(16).gap(10).children([0, 1, 2, 3, 4].map((i) => div().h(44).flex_none().rounded(8).bg(t.chrome).opacity(1 - i * 0.15)));
+    if (!this.localStages) return message(...this.skeleton(t));
     const rows = [];
     if (this.localError) rows.push(div().px(14).py(8).child(note(t, this.localError, t.blocked)));
     if (this.startError) rows.push(div().px(14).py(8).child(note(t, this.startError, t.blocked)));
