@@ -25,22 +25,86 @@ export function parseStarted(stdout) {
 // state, which may well have ended by then.
 export const placeholderArgv = (orchestrator) => ["sh", "-c", `printf '%s\\n' ${shQuote(`This tab shows orchestrator ${orchestrator} of the run. When it is not showing, View reconnects it.`)}; exec tail -f /dev/null`];
 
+// Whether a terminal is the placeholder made for one of these orchestrators: its argv holds placeholderArgv's script (a login-shell wrapper around the argv is fine).
+const placeholderMatcher = (orchestrators) => {
+  const texts = (orchestrators ?? []).filter(Boolean).map((o) => placeholderArgv(o)[2]);
+  return (t) => Array.isArray(t.argv) && t.argv.some((a) => texts.includes(a));
+};
+
 // What is left of the run's tab, from the saved slot: { tab, space, left, page } with left (the pane the orchestrator is
 // shown in) or page (the run page) null when closed, or null when the tab is gone or has neither.
-export function runTabParts({ slot, spaces, panes }) {
-  if (!slot?.tab) return null;
-  const space = (spaces ?? []).find((s) => (s.tabs ?? []).some((t) => t.id === slot.tab));
-  if (!space) return null;
-  const inTab = (panes ?? []).filter((p) => p.tab === slot.tab);
-  const left = inTab.some((p) => p.pane === slot.left) ? slot.left : null;
-  const page = inTab.find((p) => p.mod === "github-tasks")?.pane ?? null;
-  return left || page ? { tab: slot.tab, space: space.id, left, page } : null;
+// The slot can go stale (the ids change). With the tab's `name` (the ticket's name) a stale slot is made good: the tab that
+// has that name, a github-tasks pane and a terminal pane is the run's tab (the slot's own tab and space first); its left is
+// the slot's left if still there, else its one terminal pane. panes() can't tell the run page from a ticket editor (both are
+// the mod's pane, tab named the same), so a tab with no terminal pane is never taken by name, nor one with several (which
+// is the orchestrator's?). Only the slot's space and the ticket's own space (`ticketSpace`) are searched: a same-named tab
+// elsewhere is another repo's or an earlier run's.
+// A tab found by name must also be this run's: its one terminal pane is the placeholder of one of the run's orchestrators
+// (`orchestrators`, with the live `terminals`); with none given no tab is taken by name.
+export function runTabParts({ slot, spaces, panes, name, ticketSpace = null, orchestrators = [], terminals: live = [] }) {
+  const tabParts = (tab, space) => {
+    const inTab = (panes ?? []).filter((p) => p.tab === tab);
+    const left = inTab.some((p) => p.pane === slot?.left) ? slot.left : null;
+    const page = inTab.find((p) => p.mod === "github-tasks")?.pane ?? null;
+    return { tab, space, left, page, inTab };
+  };
+  const spaceOf = (tab) => (spaces ?? []).find((s) => (s.tabs ?? []).some((t) => t.id === tab))?.id;
+  const strip = ({ inTab, ...parts }) => parts;
+  const slotSpace = slot?.tab ? spaceOf(slot.tab) : undefined;
+  const own = slotSpace ? tabParts(slot.tab, slotSpace) : null;
+  if (own?.left && own.page) return strip(own);
+  if (name) {
+    const named = [];
+    const mine = new Set([slot?.space, ticketSpace].filter(Boolean));
+    for (const s of spaces ?? []) if (mine.has(s.id)) for (const t of s.tabs ?? []) if (t.name === name) named.push(tabParts(t.id, s.id));
+    const terminals = (c) => c.inTab.filter((p) => p.terminal && p.mod !== "github-tasks");
+    const placeholder = placeholderMatcher(orchestrators);
+    const isMine = (c) => live.some((t) => t.address === terminals(c)[0].terminal && placeholder(t));
+    const whole = named.filter((c) => c.page && terminals(c).length === 1 && isMine(c));
+    whole.sort((a, b) => (b.tab === slot?.tab) - (a.tab === slot?.tab) || (b.space === slot?.space) - (a.space === slot?.space));
+    const found = whole[0];
+    if (found) {
+      const left = found.left ?? terminals(found)[0].pane;
+      return { tab: found.tab, space: found.space, left, page: found.page };
+    }
+  }
+  return own && (own.left || own.page) ? strip(own) : null;
 }
 
 // The run's open tab, whole enough to show the orchestrator: the saved slot, while its tab and its left pane exist.
-export function findRunTab({ slot, spaces, panes }) {
-  const parts = runTabParts({ slot, spaces, panes });
+export function findRunTab({ slot, spaces, panes, name, ticketSpace = null, orchestrators, terminals }) {
+  const parts = runTabParts({ slot, spaces, panes, name, ticketSpace, orchestrators, terminals });
   return parts?.left ? { tab: parts.tab, left: parts.left, space: parts.space } : null;
+}
+
+// View's quick path: the run's tab is whole and the ticket's own space exists (ticketSpace; or no worktree is known), wherever the
+// tab is: the person may have put it in another space, and it is only rebuilt when the ticket's space is gone: its space and tab are selected, the orchestrator is shown over its left pane again and the slot is rewritten
+// with what was found (it may have been stale). True when that was done, false when the tab must be connected (viewConnect).
+// The ticket's space is found here (findTicketSpace) from the worktree (folder) and the main checkout (repoRoot, which GitHub
+// tickets don't carry: read it from pane.json), the same for both paths, so the repo's space is never taken for it.
+//   args: { slot, spaces, panes, name, folder, repoRoot, orchestrators, terminals, setSlot(slot), run(name, args), show(left) }
+export function viewQuick({ slot, spaces, panes, name, folder, repoRoot, orchestrators, terminals, setSlot, run, show }) {
+  const ticketSpace = findTicketSpace({ spaces, panes, folder, repoRoot });
+  const open = runTabParts({ slot, spaces, panes, name, ticketSpace, orchestrators, terminals });
+  if (!(open?.left && open.page && (ticketSpace || !folder))) return false;
+  setSlot({ tab: open.tab, left: open.left, space: open.space });
+  run("space.select", { id: open.space });
+  run("tab.select", { id: open.tab });
+  show(open.left);
+  return true;
+}
+
+// View's slow path: connects what is missing. The tab is read again (the person may have closed the rest meanwhile). A tab
+// that is whole but outside the ticket's own space, and that the slot itself points at (never one found only by name), is
+// made again in the ticket's space (connect(null)), and the old tab is closed only after that has worked; a connect that
+// throws leaves it. Any other tab found is repaired in place (connect(existing)).
+//   args: { slot, spaces, panes, name, folder, repoRoot, orchestrators, terminals, connect(existing, ticketSpace) -> Promise, closeTab(tab) }
+export async function viewConnect({ slot, spaces, panes, name, folder, repoRoot, orchestrators, terminals, connect, closeTab }) {
+  const ticketSpace = findTicketSpace({ spaces, panes, folder, repoRoot });
+  const part = runTabParts({ slot, spaces, panes, name, ticketSpace, orchestrators, terminals });
+  const moved = part?.left && part.page && !ticketSpace && Boolean(folder) && part.tab === slot?.tab ? part : null;
+  await connect(part && !moved ? { ...part } : null, ticketSpace);
+  if (moved) closeTab(moved.tab);
 }
 
 // Runs fn unless one for this id is going already (then false); the id is free again when it ends, or throws.
@@ -285,4 +349,23 @@ export function mergeOutcome(ended) {
   if (ended.closed) return { done: true, error: null, note: null };
   if (ended.error) return { done: false, error: `Merged, but ${ended.error}`, note: null };
   return { done: false, error: null, note: { text: "Merged. This run's space couldn't be found to close: close it yourself.", detail: "The run has ended; only its space is left." } };
+}
+
+// The run tab's slot found from the run's own placeholder terminal (placeholderArgv's script names the orchestrator it was made for; a login-shell wrapper around the argv is fine), so it
+// holds after ids changed (e.g. a Herdr restart). The tab is the one holding that terminal's pane, and only when it is the only such
+// tab and holds exactly one github-tasks pane (the run page); otherwise null, never a guess. left = the saved left while it is a pane
+// of that tab, else the placeholder's pane. The same slot object when nothing differs, so the caller can skip the write.
+export function slotFromPage({ orchestrators, terminals, spaces, panes, slot }) {
+  const mine = (terminals ?? []).filter(placeholderMatcher(orchestrators));
+  const found = (panes ?? []).filter((p) => p.terminal && mine.some((t) => t.address === p.terminal));
+  const tabs = [...new Set(found.map((p) => p.tab))];
+  if (tabs.length !== 1) return null;
+  const tab = tabs[0];
+  const inTab = (panes ?? []).filter((p) => p.tab === tab);
+  if (inTab.filter((p) => p.mod === "github-tasks").length !== 1) return null;
+  const space = (spaces ?? []).find((s) => (s.tabs ?? []).some((t) => t.id === tab));
+  if (!space) return null;
+  const left = inTab.some((p) => p.pane === slot?.left) ? slot.left : found[0].pane;
+  const next = { tab, left, space: space.id };
+  return slot && slot.tab === next.tab && slot.left === next.left && slot.space === next.space ? slot : next;
 }
