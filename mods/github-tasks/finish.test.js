@@ -668,7 +668,11 @@ test("fixingDone: an orchestrator that was busy at send time finishes that turn 
   assert.equal(fixingDone({ fixing: busy(), status: "idle", live: true, turn: 6 }), null, "the fix's own turn has ended");
   assert.equal(fixingDone({ fixing: busy(), status: "unknown", live: true, turn: 7 }), null);
   assert.deepEqual(fixingDone({ fixing: busy(), status: "working", live: true, turn: 6 }), busy({ seenWorking: true }), "still working: not yet");
-  assert.equal(fixingDone({ fixing: busy({ seenWorking: true }), status: "idle", live: true, turn: 5 }), null, "seen working, then idle: the status rule still ends it");
+  assert.deepEqual(fixingDone({ fixing: busy({ seenWorking: true }), status: "idle", live: true, turn: 5 }), busy({ seenWorking: true }), "seen working in the turn in progress, which then ends: still fixing");
+  assert.deepEqual(fixingDone({ fixing: busy({ seenWorking: true }), status: "done", live: true, turn: 4 }), busy({ seenWorking: true }));
+  assert.equal(fixingDone({ fixing: busy({ seenWorking: true }), status: "idle", live: true, turn: 6 }), null, "moved by two: the fix's turn ended");
+  assert.equal(fixingDone({ fixing: busy({ seenWorking: true, turn: null }), status: "idle", live: true, turn: 5 }), null, "no turn at send: the seen-working rule stays");
+  assert.deepEqual(fixingDone({ fixing: busy({ seenWorking: true }), status: "idle", live: true }), busy({ seenWorking: true }), "a counter missing from one look does not fall back to the status rule");
   assert.equal(fixingDone({ fixing: sent({ busy: false }), status: "idle", live: true, turn: 5 }), null, "not busy at send: one move is enough");
   assert.equal(fixingDone({ fixing: busy(), status: "idle", live: false, turn: 5 }), null, "gone still ends it");
   assert.deepEqual(fixingDone({ fixing: busy({ turn: null }), status: "idle", live: true, turn: 9 }), busy({ turn: null }), "no turn at send: the seen-working rule only");

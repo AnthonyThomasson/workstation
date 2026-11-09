@@ -20,7 +20,7 @@ const finalKey = (id) => `github-tasks.run.${id}.final`; // the final reviewer h
 const autoPrKey = (id) => `github-tasks.run.${id}.autopr`; // the page has tried to open the pull request by itself: it does that once per run
 const agentsKey = (id) => `github-tasks.run.${id}.agents`; // the workers and reviewers seen, so a reload still lists the finished ones
 const failureKey = (id) => `github-tasks.run.${id}.mergefailure`; // the red Merge button: { kind, label, error }
-const fixingKey = (id) => `github-tasks.run.${id}.fixing`; // the orchestrator is fixing it: { label, error, seenWorking, turn }
+const fixingKey = (id) => `github-tasks.run.${id}.fixing`; // the orchestrator is fixing it: { label, error, seenWorking, turn, busy }
 const leadKey = (id) => `github-tasks.run.${id}.orchestrator`; // the address of the orchestrator, when a new one was started for the run
 const POLL_MS = 30000;
 const GRACE_MS = 10000; // a just-started orchestrator may not be in the core's list yet: until then "not there" doesn't end the fixing state
@@ -52,7 +52,7 @@ export class RunPage {
     this.busy = null; // "pr" | "merge" | "fix" while one runs
     this.error = null;
     this.failure = restoreFailure(shared(failureKey(this.id))); // the red Merge button: { kind, label, error }
-    this.fixing = restoreFixing(shared(fixingKey(this.id))); // the orchestrator was asked to fix it: { label, error, seenWorking, turn }
+    this.fixing = restoreFixing(shared(fixingKey(this.id))); // the orchestrator was asked to fix it: { label, error, seenWorking, turn, busy }
     this.fixingAt = this.fixing ? Date.now() : 0; // when it was asked, in this page's life; a restored one counts from the load, as the core's list may still be empty
     this.note = null; // { text, detail }: Merged, but the run's space couldn't be closed (closeSession); not an error
     this.polling = false;

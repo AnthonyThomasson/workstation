@@ -232,15 +232,18 @@ export const fixingNote = (fixing) => `The orchestrator is fixing it (${fixing.l
 // ends: the orchestrator is gone, or its turn counter has moved past the one at send time and it is not working or blocked (which
 // catches a turn that began and ended between two looks, and an agent that reports "unknown"), or it is done or idle after being seen working.
 // "Moved past" is by one turn, or by two when it was busy at send time (fixing.busy): it finishes the turn in progress first
-// (turn N+1, done) and only then takes the queued message, so one move is not the fix. Working (and blocked, which waits for the person)
+// (turn N+1, done) and only then takes the queued message, so one move is not the fix, and while the record has a turn the
+// seen-working rule is skipped for it (it would have been seen working in that turn in progress). Working (and blocked, which waits for the person)
 // is still going; done or idle with neither sign means the message may not have landed yet. A send that was lost never ends by
 // itself: the page offers to dismiss it. Merge never retries by itself.
 export function fixingDone({ fixing, status, live, turn }) {
   if (!fixing || !live) return null;
   if (status === "working" || status === "blocked") return { ...fixing, seenWorking: true };
-  const advanced = Number.isFinite(turn) && Number.isFinite(fixing.turn) && turn - fixing.turn >= (fixing.busy ? 2 : 1);
+  const known = Number.isFinite(turn) && Number.isFinite(fixing.turn);
+  const advanced = known && turn - fixing.turn >= (fixing.busy ? 2 : 1);
   if (advanced) return null;
-  if ((status === "done" || status === "idle") && fixing.seenWorking) return null;
+  // A busy orchestrator seen working was seen in the turn in progress, whose end is not the fix's: only the counter ends it (while the record has a turn).
+  if ((status === "done" || status === "idle") && fixing.seenWorking && !(fixing.busy && Number.isFinite(fixing.turn))) return null;
   return fixing;
 }
 
