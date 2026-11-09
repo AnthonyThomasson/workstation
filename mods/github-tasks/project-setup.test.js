@@ -27,7 +27,7 @@ const created = (calls) => calls.filter((c) => c.args[0] === "label" && c.args[1
 const run = (fake, workflows = [wf("bug")], extra = {}) =>
   setupProject(fake.gh, { repo: "acme/app", project, loadWorkflows: async () => ({ items: workflows, errors: [] }), where: { cwd: "/x" }, ...extra });
 
-test("the Status field is replaced in one mutation with the five fixed statuses, in order", async () => {
+test("the Status field is replaced in one mutation with the six fixed statuses, in order, Won't Do last", async () => {
   const fake = fakeGh();
   const result = await run(fake);
   const mutation = fake.calls.filter((c) => c.args.join(" ").includes("updateProjectV2Field"));
@@ -35,7 +35,7 @@ test("the Status field is replaced in one mutation with the five fixed statuses,
   const query = mutation[0].args.find((a) => a.startsWith("query="));
   const names = [...query.matchAll(/name: "([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(names, Object.values(STATUSES));
-  assert.deepEqual(names, ["To Do", "Up Next", "In Progress", "In Review", "Done"]);
+  assert.deepEqual(names, ["To Do", "Up Next", "In Progress", "In Review", "Done", "Won't Do"]);
   assert.ok(mutation[0].args.includes("field=F1"));
   assert.deepEqual(result.problems, []);
   assert.equal(mutation[0].where.cwd, "/x");

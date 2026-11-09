@@ -152,10 +152,52 @@ test("a save needs a title and a status the project has", () => {
   assert.equal(checkTask({ title: "T", status: null }, options), null);
 });
 
-import { groupByStage, newTaskPrompt, groomArgv, normalizeGroomer, STATUSES, spelled, sameStatus, recentlyDone, middleEllipsis } from "./model.js";
+import { groupByStage, newTaskPrompt, groomArgv, normalizeGroomer, STATUSES, spelled, sameStatus, recentlyDone, middleEllipsis, pickableStatuses, wontDoOption, wontDoDisabledReason } from "./model.js";
 
 test("the statuses are fixed", () => {
-  assert.deepEqual(STATUSES, { backlog: "To Do", groomed: "Up Next", inProgress: "In Progress", inReview: "In Review", done: "Done" });
+  assert.deepEqual(STATUSES, { backlog: "To Do", groomed: "Up Next", inProgress: "In Progress", inReview: "In Review", done: "Done", wontDo: "Won't Do" });
+  assert.deepEqual(Object.values(STATUSES).at(-1), "Won't Do"); // after Done
+});
+
+test("Won't Do tickets are in no sidebar stage", () => {
+  const open = [{ number: 1, status: "Won't Do" }, { number: 2, status: "Up Next" }];
+  assert.deepEqual(Object.values(groupByStage(open)).flat().map((t) => t.number), [2]);
+});
+
+test("pickableStatuses hides Won't Do from a status picker, however it is spelled, and keeps the rest in order", () => {
+  const options = [{ id: "a", name: "Todo" }, { id: "b", name: "Won't Do" }, { id: "c", name: "Done" }, { id: "d", name: "Wont do" }];
+  assert.deepEqual(pickableStatuses(options), [{ id: "a", name: "Todo" }, { id: "c", name: "Done" }]);
+  assert.deepEqual(pickableStatuses(undefined), []);
+  assert.deepEqual(pickableStatuses(null), []);
+});
+
+test("wontDoOption finds the project's Won't Do option, exact spelling first", () => {
+  assert.deepEqual(wontDoOption([{ id: "a", name: "Wont Do" }, { id: "b", name: "Won't Do" }]), { id: "b", name: "Won't Do" });
+  assert.deepEqual(wontDoOption([{ id: "a", name: "Wont Do" }]), { id: "a", name: "Wont Do" });
+  assert.equal(wontDoOption([{ id: "a", name: "Done" }]), null);
+  assert.equal(wontDoOption(undefined), null);
+});
+
+test("the Won't Do button's disabled reason, or null", () => {
+  const github = { local: false, statusOptions: [{ id: "a", name: "Done" }, { id: "b", name: "Won't Do" }] };
+  assert.equal(wontDoDisabledReason(github), null);
+  assert.equal(wontDoDisabledReason({ ...github, draft: true }), "Create the ticket first");
+  assert.equal(wontDoDisabledReason({ ...github, saving: true }), "Saving…");
+  assert.equal(wontDoDisabledReason({ ...github, dirty: true }), "Save or revert first");
+  assert.equal(wontDoDisabledReason({ ...github, statusOptions: [{ id: "a", name: "Done" }] }), "Add a Won't Do status to the project; see Task settings");
+  assert.equal(wontDoDisabledReason({ ...github, statusOptions: [] }), "Add a Won't Do status to the project; see Task settings");
+  assert.equal(wontDoDisabledReason({ ...github, statusOptions: null }), "Add a Won't Do status to the project; see Task settings");
+  // the earliest reason wins: a draft is told to create it before anything else
+  assert.equal(wontDoDisabledReason({ ...github, draft: true, saving: true, dirty: true, statusOptions: [] }), "Create the ticket first");
+  assert.equal(wontDoDisabledReason({ ...github, saving: true, dirty: true, statusOptions: [] }), "Saving…");
+  assert.equal(wontDoDisabledReason({ ...github, dirty: true, statusOptions: [] }), "Save or revert first");
+});
+
+test("a local task never needs the project option", () => {
+  assert.equal(wontDoDisabledReason({ local: true, statusOptions: [] }), null);
+  assert.equal(wontDoDisabledReason({ local: true }), null);
+  assert.equal(wontDoDisabledReason({ local: true, saving: true }), "Saving…");
+  assert.equal(wontDoDisabledReason({ local: true, dirty: true }), "Save or revert first");
 });
 
 test("spelled gives a status as the project spells it, else the fixed name", () => {

@@ -20,9 +20,9 @@ test("tasks live in ~/.herdr/tasks/<key>/<status folder>", () => {
   assert.equal(statusDir(HOME, ROOT, "in-review"), `${BASE}/in-review`);
 });
 
-test("the five status folders map to the five statuses", () => {
-  assert.deepEqual(FOLDERS.map((f) => f.folder), ["to-do", "up-next", "in-progress", "in-review", "done"]);
-  assert.deepEqual(FOLDERS.map((f) => f.status), [STATUSES.backlog, STATUSES.groomed, STATUSES.inProgress, STATUSES.inReview, STATUSES.done]);
+test("the six status folders map to the six statuses", () => {
+  assert.deepEqual(FOLDERS.map((f) => f.folder), ["to-do", "up-next", "in-progress", "in-review", "done", "wont-do"]);
+  assert.deepEqual(FOLDERS.map((f) => f.status), [STATUSES.backlog, STATUSES.groomed, STATUSES.inProgress, STATUSES.inReview, STATUSES.done, STATUSES.wontDo]);
   assert.equal(folderOfStatus("To Do"), "to-do");
   assert.equal(folderOfStatus("Todo"), "to-do");
   assert.equal(folderOfStatus("Backlog"), "to-do");
@@ -30,11 +30,15 @@ test("the five status folders map to the five statuses", () => {
   assert.equal(folderOfStatus("in progress"), "in-progress");
   assert.equal(folderOfStatus("In Review"), "in-review");
   assert.equal(folderOfStatus("Done"), "done");
+  assert.equal(folderOfStatus("Won't Do"), "wont-do");
+  assert.equal(folderOfStatus("wont do"), "wont-do");
+  assert.equal(folderOfStatus("wont-do"), "wont-do");
   assert.equal(folderOfStatus("in-review"), "in-review"); // a folder name is accepted too
   assert.equal(folderOfStatus("Blocked"), null);
   assert.equal(folderOfStatus(null), null);
   assert.equal(statusOfFolder("up-next"), "Up Next");
   assert.equal(statusOfFolder("to-do"), "To Do");
+  assert.equal(statusOfFolder("wont-do"), "Won't Do");
   assert.equal(statusOfFolder("nope"), null);
 });
 
@@ -106,7 +110,7 @@ function disk(files = {}) {
 const file = (id, title, createdAt, extra = "") => `id: ${id}\ntitle: ${title}\ncreatedAt: ${createdAt}\n${extra}`;
 const setup = (files = {}) => { const d = disk(files); return { d, tasks: makeLocalTasks({ io: d.io, root: ROOT, home: HOME }) }; };
 
-test("next id is the highest across all five folders plus one, 1 when there are none", async () => {
+test("next id is the highest across all six folders plus one, 1 when there are none", async () => {
   assert.equal(await setup().tasks.nextId(), 1);
   const { tasks } = setup({
     [`${BASE}/to-do/2-b.yml`]: file(2, "B", "2026-01-01T00:00:00Z"),
@@ -141,6 +145,34 @@ test("list gives tasks from the folders newest first, with their status, and lea
   assert.deepEqual(open[1], { id: 2, title: "Mid", description: "", labels: ["bug"], createdAt: "2026-02-01T00:00:00Z", status: "Up Next", folder: "up-next", path: `${BASE}/up-next/2-mid.yml` });
   assert.deepEqual((await tasks.list({ includeDone: true })).map((t) => t.id), [3, 4, 2, 1]);
   assert.deepEqual((await tasks.list({ onlyDone: true })).map((t) => t.id), [3]);
+});
+
+test("list never gives Won't Do tasks, not even when done is asked for", async () => {
+  const { tasks } = setup({
+    [`${BASE}/to-do/1-open.yml`]: file(1, "Open", "2026-01-01T00:00:00Z"),
+    [`${BASE}/done/3-done.yml`]: file(3, "Done one", "2026-04-01T00:00:00Z"),
+    [`${BASE}/wont-do/5-no.yml`]: file(5, "No", "2026-05-01T00:00:00Z"),
+  });
+  assert.deepEqual((await tasks.list()).map((t) => t.id), [1]);
+  assert.deepEqual((await tasks.list({ includeDone: true })).map((t) => t.id), [3, 1]);
+  assert.deepEqual((await tasks.list({ onlyDone: true })).map((t) => t.id), [3]);
+  assert.deepEqual((await tasks.list({ includeDone: true, onlyDone: true })).map((t) => t.id), [3]);
+});
+
+test("a Won't Do task still counts for the next id and can still be read by id", async () => {
+  const { tasks } = setup({ [`${BASE}/wont-do/9-no.yml`]: file(9, "No", "2026-05-01T00:00:00Z") });
+  assert.equal(await tasks.nextId(), 10);
+  assert.equal((await tasks.get(9)).status, "Won't Do");
+});
+
+test("move to Won't Do puts the file in the wont-do folder", async () => {
+  const { d, tasks } = setup({ [`${BASE}/up-next/7-fix-login-redirect.yml`]: SAMPLE });
+  const moved = await tasks.move(7, "Won't Do");
+  assert.equal(moved.status, "Won't Do");
+  assert.equal(moved.folder, "wont-do");
+  assert.equal(moved.path, `${BASE}/wont-do/7-fix-login-redirect.yml`);
+  assert.deepEqual(d.calls, [["mkdir", `${BASE}/wont-do`], ["write", `${BASE}/wont-do/7-fix-login-redirect.yml`], ["remove", `${BASE}/up-next/7-fix-login-redirect.yml`]]);
+  assert.deepEqual((await tasks.list({ includeDone: true })).map((t) => t.id), []);
 });
 
 test("equal or missing createdAt sort by id, the higher first; files that are not tasks are skipped silently", async () => {

@@ -1,6 +1,6 @@
 // Asking GitHub, through a gh the caller hands in: gh(args, { cwd, on }) -> { code, stdout, stderr }.
 // A failure throws a GitHubError whose kind is one of model.js classifyError's.
-import { classifyError, changes, checkTask } from "./model.js";
+import { classifyError, changes, checkTask, wontDoOption, STATUSES } from "./model.js";
 
 export const PAGE_SIZE = 100;
 export const MAX_ITEMS = 1000;
@@ -223,4 +223,21 @@ export async function saveTask(gh, { repo, ticket, project, statusField, before,
     await mutate(gh, STATUS_MUTATION, { project: project.id, item: ticket.key, field: statusField.id, option: option.id }, where);
   }
   return keys;
+}
+
+// Marks an issue as not going to be done: sets the project Status to Won't Do, then closes the issue as "not planned".
+// The Status goes first, so a failure there leaves the issue open and nothing changed. If the Status was set but closing
+// failed, the error says so. Throws GitHubError (kind from the failing gh call).
+export async function markWontDo(gh, { repo, ticket, project, statusField }, where) {
+  if (ticket.draft) throw new GitHubError("A draft can't be closed: create the ticket first.");
+  const option = wontDoOption(statusField?.options);
+  if (!statusField || !option) throw new GitHubError(`The project has no "${STATUSES.wontDo}" status.`);
+  await mutate(gh, STATUS_MUTATION, { project: project.id, item: ticket.key, field: statusField.id, option: option.id }, where);
+  const r = await gh(["issue", "close", String(ticket.number), "-R", repo, "--reason", "not planned"], where);
+  if (r.code !== 0) {
+    const cause = new GitHubError(r.stderr || r.stdout);
+    const failure = new GitHubError(`The status was set to ${STATUSES.wontDo}, but closing the issue failed: ${cause.message}`);
+    failure.kind = cause.kind;
+    throw failure;
+  }
 }

@@ -16,18 +16,22 @@ export function panelSize(size) {
 }
 
 // What a request to close (Esc, the ✕, a press on the backdrop) does. "wait": a save is running, and is never cut off, so
-// the close follows it. "ignore": a run is being started, which can't be called back halfway.
-export function closeStep({ dirty, saving, starting }) {
-  if (starting) return "ignore";
+// the close follows it. "ignore": a run is being started or Won't Do is running, which can't be called back halfway (a
+// success of either closes the popup itself, and a failure must stay on screen).
+export function closeStep({ dirty, saving, starting, wontDoing = false }) {
+  if (starting || wontDoing) return "ignore";
   if (saving) return "wait";
   return dirty ? "prompt" : "close";
 }
 
-// What Esc does, innermost first. In an editor tab (not a popup) it never closes the editor.
-export function escStep({ prompt, start, picker, popup }) {
+// What Esc does, innermost first: the unsaved-changes card, the Start dialog, a picker, the Won't Do question in the
+// footer (confirm: it is up and its call is not running), and only then a close request. In an editor tab (not a popup)
+// it never closes the editor.
+export function escStep({ prompt, start, picker, confirm = false, popup }) {
   if (prompt) return "keep-editing";
   if (start) return "close-start";
   if (picker) return "close-picker";
+  if (confirm) return "cancel-confirm";
   return popup ? "request-close" : "none";
 }
 

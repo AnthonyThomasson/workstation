@@ -436,7 +436,7 @@ export default class GitHubTasks extends View {
   }
 
   // The Create Project button, shown when the repo has no project: makes one linked to the repo, selects
-  // it and lists its tickets, then sets it up without an agent (project-setup.js): the five statuses, and the
+  // it and lists its tickets, then sets it up without an agent (project-setup.js): the six statuses, and the
   // labels the saved workflows trigger on. The project stays linked even if a step fails; the sidebar says which.
   makeProject(cx) {
     const ctx = this.ctx, repo = this.repo;

@@ -9,16 +9,17 @@ import { parse, stringify } from "./yaml.js";
 import { slug, uniqueLabels } from "./workflow-model.js";
 import { STATUSES, sameStatus } from "./model.js";
 
-// The five status folders, in the order the board reads, each with the status (model.js STATUSES) it stands for.
+// The six status folders, in the order the board reads, each with the status (model.js STATUSES) it stands for.
 export const FOLDERS = [
   { key: "backlog", folder: "to-do", status: STATUSES.backlog },
   { key: "groomed", folder: "up-next", status: STATUSES.groomed },
   { key: "inProgress", folder: "in-progress", status: STATUSES.inProgress },
   { key: "inReview", folder: "in-review", status: STATUSES.inReview },
   { key: "done", folder: "done", status: STATUSES.done },
+  { key: "wontDo", folder: "wont-do", status: STATUSES.wontDo },
 ];
 
-// "To Do" (or "Todo", "Backlog", or the folder name "to-do") -> "to-do"; null when it is none of the five.
+// "To Do" (or "Todo", "Backlog", or the folder name "to-do") -> "to-do"; null when it is none of the six.
 export const folderOfStatus = (status) => {
   const found = FOLDERS.find((f) => f.folder === status || sameStatus(f.status, status) || (f.key === "backlog" && sameStatus("Backlog", status)));
   return found ? found.folder : null;
@@ -72,16 +73,16 @@ const created = (task) => {
 const newestFirst = (a, b) => created(b) - created(a) || b.id - a.id;
 
 // The store for one repo. root: the main checkout, home: the user's home folder.
-//   list({ includeDone, onlyDone }) -> tasks, newest createdAt first; done/ is left out unless asked for
-//   get(id) -> task | null          nextId() -> highest id in any of the five folders + 1 (1 when empty)
+//   list({ includeDone, onlyDone }) -> tasks, newest createdAt first; done/ is left out unless asked for; wont-do/ is never listed
+//   get(id) -> task | null          nextId() -> highest id in any of the six folders + 1 (1 when empty)
 //   save(id, { title, description, labels }) -> task (renames the file when the slug changes)
-//   move(id, status) -> task (status: "To Do" / "Up Next" / "In Progress" / "In Review" / "Done", or a folder name)
+//   move(id, status) -> task (status: "To Do" / "Up Next" / "In Progress" / "In Review" / "Done" / "Won't Do", or a folder name)
 // A task is { id, title, description, labels, createdAt, status, folder, path }. Rejects with an Error whose message
 // can be shown. Saves are last-write-wins: nothing checks what is in the file.
 export function makeLocalTasks({ io, root, home }) {
   const dir = (folder) => statusDir(home, root, folder);
 
-  // Every .yml file in the five folders: { folder, name, path, text }.
+  // Every .yml file in the six folders: { folder, name, path, text }.
   async function scan() {
     const perFolder = await Promise.all(FOLDERS.map(async ({ folder }) => {
       const names = (await io.list(dir(folder)).catch(() => [])).filter((n) => n.endsWith(".yml"));
@@ -106,7 +107,7 @@ export function makeLocalTasks({ io, root, home }) {
 
   return {
     async list({ includeDone = false, onlyDone = false } = {}) {
-      return (await scan()).filter((f) => (onlyDone ? f.folder === "done" : includeDone || f.folder !== "done"))
+      return (await scan()).filter((f) => f.folder !== "wont-do").filter((f) => (onlyDone ? f.folder === "done" : includeDone || f.folder !== "done"))
         .map(taskOf).filter(Boolean).sort(newestFirst);
     },
 

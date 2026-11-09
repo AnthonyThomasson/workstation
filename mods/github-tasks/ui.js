@@ -33,13 +33,15 @@ export function segmented(id, options, value, t, onPick) {
   }));
 }
 
-// A solid button, or a quiet outline one. disabled: dimmed and inert.
-export function action(id, label, t, onClick, quiet = false, disabled = false) {
+// A solid button, or a quiet outline one. disabled: dimmed and inert. danger: solid red instead of the theme's solid
+// (Won't Do). tip: a tooltip, which a disabled button keeps, to say why it is off.
+export function action(id, label, t, onClick, quiet = false, disabled = false, { danger = false, tip } = {}) {
   return h_flex().id(id).h(28).px(12).flex_none().items_center().rounded(6).text_size(S().secondary)
-    .when(!quiet, (el) => el.bg(t.solid).text_color(t.solid_foreground).font_semibold())
+    .when(!quiet, (el) => el.bg(danger ? t.ansi1 : t.solid).text_color(t.solid_foreground).font_semibold())
     .when(quiet, (el) => el.border_1().border_color(t.border).text_color(t.foreground))
     .when(disabled, (el) => el.opacity(0.4))
     .when(!disabled, (el) => el.cursor_pointer().hover((s) => s.opacity(0.88)).on_mouse_down("left", stop).on_click(onClick))
+    .when(Boolean(tip), (el) => el.tooltip(tip))
     .child(label);
 }
 

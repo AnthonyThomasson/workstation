@@ -49,14 +49,32 @@ test("a status with no option, even loosely, is missing", () => {
   assert.match(issues[0].message, /"Up Next"/);
 });
 
-test("a project with no Status field at all misses all five statuses", () => {
+test("a project with no Status field at all misses all six statuses", () => {
   const issues = diagnose(healthy({ statuses: [] }));
   assert.deepEqual(issues.map((i) => i.status), Object.values(STATUSES));
   assert.ok(issues.every((i) => i.kind === "status-missing"));
 });
 
+test("a project with no Won't Do status is flagged, and the existing options are fine", () => {
+  const issues = diagnose(healthy({ statuses: ALL.filter((o) => o.name !== "Won't Do") }));
+  assert.deepEqual(issues.map((i) => [i.kind, i.status]), [["status-missing", "Won't Do"]]);
+  assert.match(issues[0].message, /"Won't Do"/);
+});
+
+test("a Won't Do spelled loosely is misnamed", () => {
+  const issues = diagnose(healthy({ statuses: [...ALL.filter((o) => o.name !== "Won't Do"), { name: "Wont Do" }] }));
+  assert.deepEqual(issues.map((i) => [i.kind, i.status, i.found]), [["status-misnamed", "Won't Do", "Wont Do"]]);
+});
+
+test("the fix prompt adds a missing Won't Do without removing or reordering the other options", () => {
+  const prompt = fixPrompt(diagnose(healthy({ statuses: ALL.filter((o) => o.name !== "Won't Do") })), context);
+  assert.match(prompt, /Create the status "Won't Do" on the project's Status field/);
+  assert.match(prompt, /To Do, Up Next, In Progress, In Review, Done, Won't Do/);
+  assert.match(prompt, /Don't remove or reorder the other options/);
+});
+
 test("a status that matches only loosely is misnamed, with both spellings", () => {
-  const statuses = [{ name: "Todo" }, { name: "up next" }, { name: "In Progress" }, { name: "In-Review" }, { name: "Done" }];
+  const statuses = [{ name: "Todo" }, { name: "up next" }, { name: "In Progress" }, { name: "In-Review" }, { name: "Done" }, { name: "Won't Do" }];
   const issues = diagnose(healthy({ statuses }));
   assert.deepEqual(issues.map((i) => [i.kind, i.status, i.found]), [
     ["status-misnamed", "To Do", "Todo"], ["status-misnamed", "Up Next", "up next"], ["status-misnamed", "In Review", "In-Review"],
@@ -230,7 +248,7 @@ test("the prompt names the repo, the project and the exact status names to creat
   assert.match(prompt, /"app"/);
   assert.match(prompt, /https:\/\/github\.com\/users\/me\/projects\/3/);
   assert.match(prompt, /Create the status "Up Next"/);
-  assert.match(prompt, /To Do, Up Next, In Progress, In Review, Done/);
+  assert.match(prompt, /To Do, Up Next, In Progress, In Review, Done, Won't Do/);
 });
 
 test("the prompt tells how to rename a misnamed status without losing tickets", () => {
