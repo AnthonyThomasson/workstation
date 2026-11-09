@@ -605,11 +605,15 @@ test("restartTask is the first task of a new orchestrator: the rules, no plannin
 
 // --- when "the orchestrator is fixing it" ends -----------------------------------------------------------------------------
 
-const sent = (extra = {}) => ({ label: "Fix conflicts", error: "e", seenWorking: false, turn: 4, ...extra });
+const sent = (extra = {}) => ({ label: "Fix conflicts", error: "e", seenWorking: false, turn: 4, busy: false, ...extra });
 
 test("fixingStart records the label, the error, the turn at send time and whether it was working already", () => {
   const f = failure("conflicts", "boom");
-  assert.deepEqual(fixingStart({ failure: f, status: "idle", turn: 4 }), { label: "Fix conflicts", error: "boom", seenWorking: false, turn: 4 });
+  assert.deepEqual(fixingStart({ failure: f, status: "idle", turn: 4 }), { label: "Fix conflicts", error: "boom", seenWorking: false, turn: 4, busy: false });
+  assert.equal(fixingStart({ failure: f, status: "working", turn: 4 }).busy, true, "working at send time: the message queues behind the turn in progress");
+  assert.equal(fixingStart({ failure: f, status: "blocked", turn: 4 }).busy, true);
+  assert.equal(fixingStart({ failure: f, status: "done", turn: 4 }).busy, false);
+  assert.equal(fixingStart({ failure: f }).busy, false);
   assert.equal(fixingStart({ failure: f, status: "working", turn: 4 }).seenWorking, false, "a known turn: the end of the turn in progress is not the end of the fix");
   assert.equal(fixingStart({ failure: f, status: "working" }).seenWorking, true, "no turn known: seeded from the status at send time");
   assert.equal(fixingStart({ failure: f, status: "blocked", turn: null }).seenWorking, true);
@@ -656,6 +660,20 @@ test("fixingDone: an advanced turn ends it for any status but working and blocke
   assert.deepEqual(fixingDone({ fixing: sent(), status: "working", live: true, turn: 5 }), sent({ seenWorking: true }));
 });
 
+test("fixingDone: an orchestrator that was busy at send time finishes that turn first, so the counter must move by two", () => {
+  const busy = (extra = {}) => sent({ busy: true, ...extra });
+  assert.deepEqual(fixingDone({ fixing: busy(), status: "idle", live: true, turn: 5 }), busy(), "turn N+1 is the end of the turn in progress, not the fix");
+  assert.deepEqual(fixingDone({ fixing: busy(), status: "done", live: true, turn: 5 }), busy());
+  assert.deepEqual(fixingDone({ fixing: busy(), status: "unknown", live: true, turn: 5 }), busy());
+  assert.equal(fixingDone({ fixing: busy(), status: "idle", live: true, turn: 6 }), null, "the fix's own turn has ended");
+  assert.equal(fixingDone({ fixing: busy(), status: "unknown", live: true, turn: 7 }), null);
+  assert.deepEqual(fixingDone({ fixing: busy(), status: "working", live: true, turn: 6 }), busy({ seenWorking: true }), "still working: not yet");
+  assert.equal(fixingDone({ fixing: busy({ seenWorking: true }), status: "idle", live: true, turn: 5 }), null, "seen working, then idle: the status rule still ends it");
+  assert.equal(fixingDone({ fixing: sent({ busy: false }), status: "idle", live: true, turn: 5 }), null, "not busy at send: one move is enough");
+  assert.equal(fixingDone({ fixing: busy(), status: "idle", live: false, turn: 5 }), null, "gone still ends it");
+  assert.deepEqual(fixingDone({ fixing: busy({ turn: null }), status: "idle", live: true, turn: 9 }), busy({ turn: null }), "no turn at send: the seen-working rule only");
+});
+
 test("fixingDone: ends when the orchestrator is gone, and does nothing without a record", () => {
   assert.equal(fixingDone({ fixing: sent(), status: "idle", live: false }), null);
   assert.equal(fixingDone({ fixing: sent({ seenWorking: true }), status: "working", live: false }), null);
@@ -693,8 +711,9 @@ test("restoreFailure and restoreFixing read what shared state kept, and refuse a
   assert.equal(restoreFailure({ kind: "checks" }), null);
   assert.equal(restoreFailure(null), null);
   assert.equal(restoreFailure("checks"), null);
-  assert.deepEqual(restoreFixing({ label: "Fix checks", error: "e", seenWorking: 1, turn: 3 }), { label: "Fix checks", error: "e", seenWorking: true, turn: 3 });
-  assert.deepEqual(restoreFixing({ label: "Fix checks" }), { label: "Fix checks", error: "", seenWorking: false, turn: null });
+  assert.deepEqual(restoreFixing({ label: "Fix checks", error: "e", seenWorking: 1, turn: 3 }), { label: "Fix checks", error: "e", seenWorking: true, turn: 3, busy: false });
+  assert.equal(restoreFixing({ label: "Fix checks", busy: true }).busy, true);
+  assert.deepEqual(restoreFixing({ label: "Fix checks" }), { label: "Fix checks", error: "", seenWorking: false, turn: null, busy: false });
   assert.equal(restoreFixing({}), null);
   assert.equal(restoreFixing(null), null);
   assert.equal(restoreFixing([]), null);

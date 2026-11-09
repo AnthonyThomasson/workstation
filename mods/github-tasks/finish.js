@@ -213,13 +213,15 @@ export function restartTask({ runDir, failure, branch, workDir, noRemote }) {
   return `Read ${runDir}/orchestrator.md and follow its rules, but skip the planning and the questions: the ticket is already built and merged into the ticket branch ${branch}. ${failureLine({ failure, branch, workDir })} Fix only this: ${fixSteps({ kind: failure.kind, branch, workDir, noRemote })}. Any change still goes through a worker and a reviewer; then report.`;
 }
 
-// The "orchestrator is fixing it" record, made when the fix message is sent: { label, error, seenWorking, turn }. status: the
+// The "orchestrator is fixing it" record, made when the fix message is sent: { label, error, seenWorking, turn, busy }. status: the
 // orchestrator's status word then; turn: its turn counter then (hc reports one per terminal), or nothing when unknown.
 // seenWorking starts false when the turn is known (the turn counter tells when a turn has ended, and a turn already in progress
-// may be about to end), else from the status.
+// may be about to end), else from the status. busy: it was working or blocked at send time, so the message waits in its queue and
+// the turn in progress ends before the fix's own turn begins (fixingDone needs the counter to move by two then).
 export const fixingStart = ({ failure, status, turn }) => {
   const known = Number.isFinite(turn);
-  return { label: failure.label, error: failure.error, seenWorking: !known && (status === "working" || status === "blocked"), turn: known ? turn : null };
+  const busy = status === "working" || status === "blocked";
+  return { label: failure.label, error: failure.error, seenWorking: !known && busy, turn: known ? turn : null, busy };
 };
 
 // What the page says under the disabled Merge while the orchestrator is fixing it.
@@ -228,13 +230,15 @@ export const fixingNote = (fixing) => `The orchestrator is fixing it (${fixing.l
 // Whether the "orchestrator is fixing it" state is over. fixing: the record (fixingStart); status: the orchestrator's status
 // word; live: whether its terminal is still there; turn: its turn counter now. Returns the record to keep, or null when the state
 // ends: the orchestrator is gone, or its turn counter has moved past the one at send time and it is not working or blocked (which
-// catches a turn that began and ended between two looks, and an agent that reports "unknown"), or it is done or idle after being seen working. Working (and blocked, which waits for the person)
+// catches a turn that began and ended between two looks, and an agent that reports "unknown"), or it is done or idle after being seen working.
+// "Moved past" is by one turn, or by two when it was busy at send time (fixing.busy): it finishes the turn in progress first
+// (turn N+1, done) and only then takes the queued message, so one move is not the fix. Working (and blocked, which waits for the person)
 // is still going; done or idle with neither sign means the message may not have landed yet. A send that was lost never ends by
 // itself: the page offers to dismiss it. Merge never retries by itself.
 export function fixingDone({ fixing, status, live, turn }) {
   if (!fixing || !live) return null;
   if (status === "working" || status === "blocked") return { ...fixing, seenWorking: true };
-  const advanced = Number.isFinite(turn) && Number.isFinite(fixing.turn) && turn > fixing.turn;
+  const advanced = Number.isFinite(turn) && Number.isFinite(fixing.turn) && turn - fixing.turn >= (fixing.busy ? 2 : 1);
   if (advanced) return null;
   if ((status === "done" || status === "idle") && fixing.seenWorking) return null;
   return fixing;
@@ -257,7 +261,7 @@ export function restoreFailure(saved) {
 }
 export function restoreFixing(saved) {
   if (!saved || typeof saved !== "object" || Array.isArray(saved) || typeof saved.label !== "string") return null;
-  return { label: saved.label, error: typeof saved.error === "string" ? saved.error : "", seenWorking: Boolean(saved.seenWorking), turn: Number.isFinite(saved.turn) ? saved.turn : null };
+  return { label: saved.label, error: typeof saved.error === "string" ? saved.error : "", seenWorking: Boolean(saved.seenWorking), turn: Number.isFinite(saved.turn) ? saved.turn : null, busy: Boolean(saved.busy) };
 }
 
 // gh args for the pull request; the body links the ticket when it has a number. body: replaces that (a local task has no GitHub issue to close).
