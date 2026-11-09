@@ -1,10 +1,11 @@
 // Starts a workflow on a ticket: gets the ticket's worktree ready, writes what the agents read, starts the orchestrator in
-// the background (owned by no tab or pane: bgrun.js) and opens the ticket's own space, rooted at the worktree and named
+// the background (owned by no tab or pane: bgrun.js, under a small host terminal in the repo's space so the Agents panel lists
+// the run's agents) and opens the ticket's own space, rooted at the worktree and named
 // for the ticket (the Spaces sidebar nests it under the repo's space), whose first tab shows the orchestrator on the left, with
 // the run page (run-page.js), the list of its agents, on the right. Merge closes that space again. From there the
 // orchestrator runs the ticket itself (run.js says how).
 import { exec, focused, hc, home, knownAgents, notify, panes, readTextFile, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
-import { connectRun, guarded, launchRun, reapplyRuns, runTabParts, slotKey, undoRunTab, viewConnect, viewQuick, viewTarget } from "./bgrun.js";
+import { connectRun, endHost, findHost, guarded, hostKey, hostTabName, launchRun, openHost, reapplyRuns, runTabParts, slotKey, undoRunTab, viewConnect, viewQuick, viewTarget } from "./bgrun.js";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
 import { app } from "./ui.js";
 import { localTasks, repoHasGithubRemote, tasksConfig } from "./local-tasks-env.js";
@@ -190,6 +191,16 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
     hc, writePaneJson: (p) => writeTextFile(`${runDir}/pane.json`, JSON.stringify(p), null),
     connect: async (p) => { const slot = await connect({ id, orchestrator: p.orchestrator, title: p.title, space, folder: workDir, props: p }, cx); created = slot.created ? slot.space : null; return slot; },
     closeTab: () => { undoRunTab({ created, part: runTabOf(id), run: (n, a) => run(n, a) }); created = null; setShared(slotKey(id), null); },
+    // The run's host (bgrun.js): the orchestrator's parent, so the Agents panel lists the run's agents. Ended again when the start fails.
+    openHost: async () => {
+      const host = await openHost({ app, hc, run }, { id, name: hostTabName(ticket), repoRoot, spaces: spaces(), panes: panes() });
+      setShared(hostKey(id), { tab: host.tab, space: host.space, created: host.created });
+      return host;
+    },
+    closeHost: async (host) => {
+      await endHost({ id, hc, terminals, run, spaces: spaces(), panes: panes(), record: shared(hostKey(id)), also: [host?.address] });
+      setShared(hostKey(id), null);
+    },
   }, { id, key, workDir, argv: argv.orchestrator, task: `Read ${runDir}/orchestrator.md and follow it.`, props }));
   if (launched.problems.length) notify({ title: "The workflow started, with a problem", body: launched.problems.join(" "), level: "warning" });
   return { resumed: false };
