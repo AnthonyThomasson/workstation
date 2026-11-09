@@ -1,7 +1,8 @@
 // Tasks: the tickets on the GitHub Project linked to the selected space's repo, in the left menu under
 // Spaces: Up Next, Backlog (collapsed), In Progress and In Review. Clicking a ticket
 // opens it in a tab of its own to edit (editor.js), and saving pushes the change to GitHub. Each row links
-// out to GitHub and has Start, which becomes View while its workflow runs.
+// out to GitHub and has Start, which becomes View while its workflow runs. With "taskSource": "local" in the repo's
+// .herdr/tasks/tasks.json the list is the YAML task files instead (local-tasks.js, local-ui.js), read again every 3 seconds.
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
 // workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket in the center, opened
 // by a click on a row; "workflow-editor", one workflow in the center (workflow-editor.js); "run", a started
@@ -9,12 +10,16 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, panes, terminals, notify, openOverlay, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
-import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, spelled, STATUSES, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE } from "./model.js";
+import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, spelled, STATUSES, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, TASK_SOURCE } from "./model.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField } from "./loader.js";
-import { installedAgents, startNewTask, startProjectSetup } from "./groom.js";
+import { installedAgents, startNewTask, startLocalNewTask, startProjectSetup } from "./groom.js";
 import { S, icon, stop, note, iconButton, action, gh, later, app } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { TaskEditor, CHANGED } from "./editor.js";
+import { LocalTaskEditor } from "./local-editor.js";
+import { localTasks } from "./local-tasks-env.js";
+import { readPlace } from "./local-ui-env.js";
+import { localStages, rowLabel, LOCAL_ONLY_HERE } from "./local-ui.js";
 import { TaskSettings } from "./settings.js";
 import { matchWorkflows } from "./match.js";
 import { WorkflowEditor } from "./workflow-editor.js";
@@ -31,6 +36,7 @@ import { DOCTOR_KEY, doctorFor } from "./doctor.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
+const LOCAL_POLL = 3000; // how often local task files, and tasks.json, are looked at again
 const COLUMN = "sidebar"; // the layout column the list lives in: its width says how much of a name fits
 const SECTIONS = [ // the list's sections, top to bottom; open: whether each starts expanded
   { id: "next", label: "Up Next", open: true },
@@ -75,7 +81,7 @@ function explain(error, folder) {
 export default class GitHubTasks extends View {
   init(_props, cx) {
     this.role = blockProps()?.role ?? "sidebar";
-    if (this.role === "editor") { this.editor = new TaskEditor(blockProps(), cx); return; }
+    if (this.role === "editor") { this.editor = blockProps()?.local ? new LocalTaskEditor(blockProps(), cx) : new TaskEditor(blockProps(), cx); return; }
     if (this.role === "workflow-editor") { this.workflowEditor = new WorkflowEditor(blockProps(), cx); return; }
     if (this.role === "run") {
       this.runPage = new RunPage(blockProps());
@@ -103,7 +109,7 @@ export default class GitHubTasks extends View {
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
     this.doctor = startDoctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
     cx.timer.every(POLL, (cx) => this.refresh(cx));
-    cx.timer.every(3000, (cx) => cx.notify()); // a run starting or ending turns a row's Start into View and back
+    cx.timer.every(LOCAL_POLL, (cx) => { cx.notify(); this.tick(cx); }); // a run starting or ending turns a row's Start into View and back; local tasks and tasks.json are looked at again
     forgetAsking({ setShared }); // no close-tab dialog is open at startup, so a mark saved before a crash is stale
     cx.spawn(async (cx) => {
       for (;;) {
@@ -122,6 +128,11 @@ export default class GitHubTasks extends View {
     this.token = (this.token ?? 0) + 1;
     this.loading = false;
     this.forgetRepo();
+    this.place = null; // readPlace's answer: { folder, on, mainRoot, remote, source }
+    this.placeCache = null;
+    this.source = "github"; // which source the list shows: "local" or "github"
+    this.localStages = null; // local mode's sections, null until loaded
+    this.localError = null;
     this.error = null;
     this.setupError = null;
     this.startError = null;
@@ -152,14 +163,23 @@ export default class GitHubTasks extends View {
     return { space: space.id, on: space.machine ?? undefined, folder: this.lastCwd.get(space.id) ?? (space.folder || undefined) };
   }
 
-  refresh(cx) {
+  // quiet: a background look (the 3-second poll), which doesn't spin the Refresh button. fresh: the person pressed Refresh,
+  // so the place's repo is looked for again too.
+  refresh(cx, { quiet = false, fresh = false } = {}) {
     const ctx = this.ctx;
-    if (!ctx || this.loading) return;
+    if (!ctx || (this.loading && !(this.quiet && !quiet))) return;
+    if (this.loading) this.token++; // a person's refresh replaces a quiet one still going
+    if (fresh) this.placeCache = null;
     this.loading = true;
+    this.quiet = quiet;
     const token = this.token, where = { cwd: ctx.folder, on: ctx.on }, current = () => token === this.token;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
+        const place = await readPlace(ctx, this.placeCache);
+        if (!current()) return;
+        this.applyPlace(place);
+        if (place.source === "local") { if (!place.remote) await this.loadLocal(place, current); return; }
         // The folder is asked about once. Another folder in the same repo keeps the list on screen.
         const repo = this.repo && this.repoFolder === ctx.folder ? this.repo : await findRepo(gh, where);
         if (!current()) return;
@@ -184,16 +204,68 @@ export default class GitHubTasks extends View {
           this.publish(); // whatever failed, the settings show what the list knows now, never an earlier space's repo
         }
       } finally {
-        if (current()) { this.loading = false; cx.notify(); }
+        if (current()) { this.loading = false; this.quiet = false; cx.notify(); }
       }
     });
   }
+
+  // The place's source is known: a change of source (or of local repo) starts the list over, and the settings are told.
+  applyPlace(place) {
+    const changed = place.source !== this.source || (place.source === "local" && place.mainRoot !== this.place?.mainRoot);
+    this.place = place;
+    this.placeCache = place.cache;
+    this.source = place.source;
+    if (changed) {
+      this.forgetRepo();
+      this.error = null;
+      this.localStages = null;
+      this.localError = null;
+    }
+    this.publish();
+  }
+
+  // Local mode: the tasks in the status folders. A failure to read them is said in the list, not as a GitHub error.
+  async loadLocal(place, current) {
+    try {
+      const tasks = await localTasks(place.mainRoot).list();
+      if (!current()) return;
+      this.localStages = localStages(tasks, place.mainRoot);
+      this.localError = null;
+    } catch (e) {
+      if (current()) this.localError = String(e?.message ?? e);
+    }
+  }
+
+  // Every few seconds: local mode reads the files again; GitHub mode looks at tasks.json, which may have been edited by hand.
+  // A space on another machine is left to the slow poll.
+  tick(cx) {
+    const ctx = this.ctx;
+    if (!ctx || ctx.on || this.loading || this.ticking) return;
+    if (this.source === "local") { this.refresh(cx, { quiet: true }); return; }
+    this.ticking = true;
+    const token = this.token;
+    cx.spawn(async (cx) => {
+      try {
+        const place = await readPlace(ctx, this.placeCache);
+        if (token !== this.token || this.loading) return;
+        this.placeCache = place.cache;
+        if (place.source !== this.source) this.refresh(cx, { quiet: true });
+      } finally {
+        this.ticking = false;
+      }
+    });
+  }
+
+  // The repo's id for runs and tabs: its GitHub name, or in local mode its main checkout.
+  repoId() { return this.source === "local" ? this.place?.mainRoot ?? "" : this.repo; }
 
   // Tells the settings, which live in the side panel, which repo and project this list is for. Null when there is no repo.
   // The place goes out whether or not there is a repo: the workflows are kept per computer and per local repo.
   publish() {
     const ctx = this.ctx, project = this.project;
     setShared(PLACE, ctx ? { cwd: ctx.folder, on: ctx.on } : null);
+    const p = this.place, source = ctx && p ? { source: p.source, mainRoot: p.mainRoot, remote: p.remote, cwd: p.folder, on: p.on } : null;
+    if (JSON.stringify(source) !== this.publishedSource) { this.publishedSource = JSON.stringify(source); setShared(TASK_SOURCE, source); }
     setShared(CONTEXT, this.repo && ctx ? { repo: this.repo, project: project ? { id: project.id, title: project.title, url: project.url } : null, where: { cwd: ctx.folder, on: ctx.on } } : null);
   }
 
@@ -245,7 +317,7 @@ export default class GitHubTasks extends View {
       .child(h_flex().h(36).flex_none().pl(14).pr(8).gap(2).items_center()
         .child(div().flex_1().text_size(S().label).font_semibold().text_color(t.muted).child("Tasks"))
         .child(iconButton("settings", "settings", t, () => showSettings(), false, problems ? `Task settings (${problems} ${problems === 1 ? "problem" : "problems"} found)` : "Task settings", undefined, problems ? t.ansi1 : undefined))
-        .when(Boolean(ctx), (el) => el.child(iconButton("refresh", this.loading ? "ring" : "sync", t, (_e, cx) => this.refresh(cx), this.loading, "Refresh"))))
+        .when(Boolean(ctx), (el) => el.child(iconButton("refresh", this.loading && !this.quiet ? "ring" : "sync", t, (_e, cx) => this.refresh(cx, { fresh: true }), this.loading && !this.quiet, "Refresh"))))
       .when(this.projects.length > 1, (el) => el.child(this.renderContext(t)))
       .child(this.renderBody(t, ctx));
   }
@@ -284,18 +356,25 @@ export default class GitHubTasks extends View {
   renderBody(t, ctx) {
     const message = (el) => v_flex().flex_1().min_h(0).p(16).gap(10).child(el);
     if (!ctx) return message(note(t, "Open a space to see its tickets."));
+    if (this.source === "local") return this.renderLocal(t, ctx);
     if (!this.loaded && this.error) return v_flex().flex_1().min_h(0).p(16).gap(10).child(this.renderProblem(t, ctx));
     if (!this.loaded) return v_flex().flex_1().min_h(0).p(16).gap(10).children([0, 1, 2, 3, 4].map((i) => div().h(44).flex_none().rounded(8).bg(t.chrome).opacity(1 - i * 0.15)));
     if (!this.project) return message(this.renderNoProject(t, ctx));
 
-    const { inProgress, inReview, groomed, backlog } = groupByStage(this.groups.open);
-    const lists = { next: groomed, backlog, progress: inProgress, review: inReview };
-    const colors = { next: t.ansi2, backlog: t.ansi4, progress: t.ansi3, review: t.ansi5 };
     const rows = [];
     if (this.error) rows.push(div().px(14).py(8).child(this.renderProblem(t, ctx)));
     if (this.setupError) rows.push(div().px(14).py(8).child(note(t, this.setupError, t.blocked)));
     if (this.startError) rows.push(div().px(14).py(8).child(note(t, this.startError, t.blocked)));
     if (this.truncated) rows.push(div().px(14).pt(6).child(note(t, `Showing the first ${MAX_ITEMS.toLocaleString()} project items, so some tickets may be missing.`, t.blocked)));
+    rows.push(...this.sectionRows(t, groupByStage(this.groups.open)));
+    return div().id("tickets").flex_1().min_h(0).overflow_y_scrollbar().child(v_flex().pb(12).children(rows));
+  }
+
+  // The sections, top to bottom, each with its tickets: stages is groupByStage's answer.
+  sectionRows(t, { inProgress, inReview, groomed, backlog }) {
+    const lists = { next: groomed, backlog, progress: inProgress, review: inReview };
+    const colors = { next: t.ansi2, backlog: t.ansi4, progress: t.ansi3, review: t.ansi5 };
+    const rows = [];
     for (const { id, label } of SECTIONS) {
       const list = lists[id], open = this.open[id];
       rows.push(this.sectionTitle(t, id, label, list.length, open));
@@ -303,6 +382,19 @@ export default class GitHubTasks extends View {
       if (list.length) rows.push(...list.map((ticket) => this.row(t, ticket, ticket.draft ? t.muted : colors[id])));
       else rows.push(div().px(14).py(2).child(note(t, `Nothing in ${label}.`)));
     }
+    return rows;
+  }
+
+  // Local mode: the tasks in the status folders, in the same sections. A space on another machine can't have them.
+  renderLocal(t, ctx) {
+    const message = (el) => v_flex().flex_1().min_h(0).p(16).gap(10).child(el);
+    if (this.place?.remote) return message(note(t, LOCAL_ONLY_HERE));
+    if (!this.localStages && this.localError) return message(note(t, this.localError, t.blocked));
+    if (!this.localStages) return v_flex().flex_1().min_h(0).p(16).gap(10).children([0, 1, 2, 3, 4].map((i) => div().h(44).flex_none().rounded(8).bg(t.chrome).opacity(1 - i * 0.15)));
+    const rows = [];
+    if (this.localError) rows.push(div().px(14).py(8).child(note(t, this.localError, t.blocked)));
+    if (this.startError) rows.push(div().px(14).py(8).child(note(t, this.startError, t.blocked)));
+    rows.push(...this.sectionRows(t, this.localStages));
     return div().id("tickets").flex_1().min_h(0).overflow_y_scrollbar().child(v_flex().pb(12).children(rows));
   }
 
@@ -331,12 +423,17 @@ export default class GitHubTasks extends View {
   }
 
   startTask(cx) {
-    const ctx = this.ctx, project = this.project, agent = this.agent();
-    if (!ctx || !project || !agent || this.startingTask) return;
+    const ctx = this.ctx, project = this.project, agent = this.agent(), local = this.source === "local";
+    if (!ctx || !agent || this.startingTask || (local ? !this.place?.mainRoot || this.place.remote : !project)) return;
     this.startingTask = true;
     cx.notify();
     cx.spawn(async (cx) => {
       try {
+        if (local) {
+          await startLocalNewTask({ agent, mainRoot: this.place.mainRoot, groomer: normalizeGroomer(shared(GROOMER_KEY)), where: { cwd: ctx.folder, on: ctx.on } });
+          this.localError = null;
+          return;
+        }
         // The prompt names the statuses as the project spells them ("Todo", not the fixed "To Do").
         const where = { cwd: ctx.folder, on: ctx.on };
         const options = (await loadStatusField(gh, project.id, where).catch(() => null))?.options ?? [];
@@ -401,21 +498,24 @@ export default class GitHubTasks extends View {
   // A click opens the ticket in a tab to edit. Its folder and machine go along, so the editor asks
   // GitHub from the same place the panel does.
   openTicket(ticket, cx, extra = {}) {
-    const ctx = this.ctx, project = this.project;
-    if (!ctx || !project) return;
+    const ctx = this.ctx, project = this.project, local = Boolean(ticket.local);
+    if (!ctx || (!project && !local)) return;
     const name = ticket.draft ? ticket.title : `#${ticket.number} ${ticket.title}`;
-    openOnce(extra.autoStart ? null : ticketSubject(this.repo, ticket), {
+    openOnce(extra.autoStart ? null : ticketSubject(this.repoId(), ticket), {
       name,
       mod: "github-tasks",
-      props: { role: "editor", ticket, repo: this.repo, project: { id: project.id, title: project.title }, where: { cwd: ctx.folder, on: ctx.on }, ...extra },
+      props: {
+        role: "editor", ticket, repo: this.repoId(), project: local ? null : { id: project.id, title: project.title },
+        ...(local ? { local: { mainRoot: ticket.mainRoot } } : {}), where: { cwd: ctx.folder, on: ctx.on }, ...extra,
+      },
     }, cx);
   }
 
   // Start: the one workflow the ticket's labels trigger starts at once. With several, or none, the ticket opens in
   // the editor with its Start dialog showing, which lists them or says why there is nothing to start.
   startTicket(ticket, cx) {
-    const ctx = this.ctx, project = this.project, repo = this.repo;
-    if (!ctx || !project || this.starting.has(ticket.key)) return;
+    const ctx = this.ctx, local = Boolean(ticket.local), project = local ? null : this.project, repo = this.repoId();
+    if (!ctx || (!project && !local) || this.starting.has(ticket.key)) return;
     this.starting.add(ticket.key);
     this.startError = null;
     cx.notify();
@@ -425,7 +525,7 @@ export default class GitHubTasks extends View {
         const { items } = await loadWorkflows(where);
         const matches = matchWorkflows(items, ticket.labels ?? []);
         if (matches.length === 1) {
-          const statusField = await loadStatusField(gh, project.id, where).catch(() => null); // without it the ticket's status just isn't moved
+          const statusField = local ? null : await loadStatusField(gh, project.id, where).catch(() => null); // without it the ticket's status just isn't moved
           await startRun(matches[0], ticket, repo, where, cx, { project, statusField });
         } else {
           this.openTicket(ticket, cx, { autoStart: true });
@@ -442,16 +542,16 @@ export default class GitHubTasks extends View {
   // One ticket on one line: a dot for its stage, its name with the middle cut out to fit, a link to GitHub, and
   // Start (View while its workflow runs).
   row(t, ticket, color) {
-    const running = liveRunFor(this.repo, ticket), busy = this.starting.has(ticket.key);
+    const running = liveRunFor(this.repoId(), ticket), busy = this.starting.has(ticket.key);
     const width = find(layout(), COLUMN)?.size?.px ?? 268;
     const room = width - 16 - 12 - 8 - 16 - (ticket.url ? 28 : 0) - 28; // what the name has left, in px
     const max = Math.max(12, Math.floor(room / (S().body * 0.55)));
     return h_flex().id(`ticket-${ticket.key}`).flex_none().mx(8).mb(1).px(6).h(28).gap(8).items_center().rounded(6)
       .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => this.openTicket(ticket, cx))
       .child(div().w(8).h(8).flex_none().rounded_full().when(ticket.draft, (el) => el.border(1.5).border_color(color)).when(!ticket.draft, (el) => el.bg(color)))
-      .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(ticket.title, max)))
+      .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(rowLabel(ticket), max)))
       .when(Boolean(ticket.url), (el) => el.child(iconButton(`open-${ticket.key}`, "external", t, (_e, cx) => cx.open_url(ticket.url), false, "Open on GitHub")))
-      .when(Boolean(running), (el) => el.child(iconButton(`view-${ticket.key}`, "eye", t, (_e, cx) => viewRun(running, cx, { ticket, repo: this.repo, project: this.project }), false, "View the running agent")))
+      .when(Boolean(running), (el) => el.child(iconButton(`view-${ticket.key}`, "eye", t, (_e, cx) => viewRun(running, cx, { ticket, repo: this.repoId(), project: this.project }), false, "View the running agent")))
       .when(!running, (el) => el.child(iconButton(`start-${ticket.key}`, busy ? "ring" : "play", t, (_e, cx) => this.startTicket(ticket, cx), busy, "Start")));
   }
 }

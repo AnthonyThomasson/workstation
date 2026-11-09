@@ -4,13 +4,17 @@
 // main.js builds one and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Popover, TextView } from "gpui-base";
-import { run, shared, setShared, theme } from "herdr";
-import { normalizeGroomer, GROOMER_KEY, EFFORTS, PLACE } from "./model.js";
+import { home, run, shared, setShared, theme } from "herdr";
+import { normalizeGroomer, GROOMER_KEY, EFFORTS, PLACE, TASK_SOURCE } from "./model.js";
+import { CHANGED } from "./editor.js";
 import { CLAUDE_MODELS } from "./models.js";
 import { installedAgents } from "./groom.js";
 import { loadStatusField } from "./loader.js";
 import { normalizeSettingsSections, markdownLiteral } from "./settings-model.js";
 import { DOCTOR_KEY, fixPrompt, doctorFor } from "./doctor.js";
+import { statusDir } from "./local-tasks.js";
+import { tasksConfig } from "./local-tasks-env.js";
+import { sourceFor, sourceToggle } from "./local-ui.js";
 import { S, stop, note, icon, iconButton, action, gh } from "./ui.js";
 
 const SECTIONS_KEY = "github-tasks.settingsSections";
@@ -32,6 +36,8 @@ export class TaskSettings {
     this.agents = []; // installed agents New Task can use
     this.doctorOpen = false; // the doctor's popover
     this.copied = false; // the prompt was just copied
+    this.sourceBusy = false; // tasks.json is being written
+    this.sourceError = null;
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
     this.model = InputState.new({ value: this.groomer().model, placeholder: "Agent's default" });
     this.model.on("change", (_e, cx) => { this.saveGroomer({ model: this.model.value().trim() }); cx.notify(); });
@@ -56,8 +62,57 @@ export class TaskSettings {
     run("tab.new", {
       name: `${section.label} prompt`,
       mod: "github-tasks",
-      props: { role: "prompt", promptRole: role, repo: this.repo, project: this.project, options: this.options },
+      props: { role: "prompt", promptRole: role, repo: this.repo, project: this.project, options: this.options, local: this.localPrompt() },
     });
+  }
+
+  // What the source says about the place the sidebar shows (null while it is looking), and the checkbox that follows it.
+  source() { return sourceFor(shared(TASK_SOURCE), shared(PLACE)); }
+
+  // The folders and root the New Task prompt tab names when the repo's tasks are local files; null otherwise.
+  localPrompt() {
+    const info = this.source();
+    if (info?.source !== "local" || !info.mainRoot || info.remote) return null;
+    return { mainRoot: info.mainRoot, todoDir: statusDir(home(), info.mainRoot, "to-do"), upNextDir: statusDir(home(), info.mainRoot, "up-next") };
+  }
+
+  // Writes the other source to <main checkout>/.herdr/tasks/tasks.json (and never runs git on it). The sidebar sees the new
+  // value at once through the shared state, and again from the file on its next look, so a hand edit wins over this page.
+  toggleSource(cx) {
+    const info = this.source(), view = sourceToggle(info);
+    if (!view.enabled || this.sourceBusy) return;
+    this.sourceBusy = true;
+    this.sourceError = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        await tasksConfig.write(info.mainRoot, view.next);
+        setShared(TASK_SOURCE, { ...info, source: view.next });
+        setShared(CHANGED, Date.now()); // the sidebar switches now
+      } catch (e) {
+        this.sourceError = `Couldn't write tasks.json: ${e?.message ?? e}`;
+      } finally {
+        this.sourceBusy = false;
+        cx.notify();
+      }
+    });
+  }
+
+  // The Local tasks checkbox, at the top of the page. Disabled (dimmed, with the reason as its tooltip) outside a git repo
+  // and in a space on another machine.
+  renderSource(t) {
+    const view = sourceToggle(this.source());
+    const box = div().size(16).flex_none().flex().items_center().justify_center().rounded(4).border_1()
+      .border_color(view.checked ? t.solid : t.input).bg(view.checked ? t.solid : t.background)
+      .when(view.checked, (el) => el.child(icon("check", 12, t.solid_foreground)));
+    return v_flex().flex_none().gap(6)
+      .child(h_flex().id("local-tasks").h(30).gap(8).items_center().tooltip(view.tooltip)
+        .when(!view.enabled, (el) => el.opacity(0.5))
+        .when(view.enabled && !this.sourceBusy, (el) => el.cursor_pointer().on_mouse_down("left", stop).on_click((_e, cx) => this.toggleSource(cx)))
+        .child(box)
+        .child(div().text_size(S().title).font_semibold().child("Local tasks")))
+      .child(note(t, view.checked ? "This repo's tasks are YAML files on this computer." : "Off: this repo's tasks are on its GitHub Project."))
+      .when(Boolean(this.sourceError), (el) => el.child(note(t, this.sourceError, t.blocked)));
   }
 
   // The chosen agent: the saved one if it is installed, else Claude, else the first installed (as the panel picks it).
@@ -69,7 +124,8 @@ export class TaskSettings {
   render(cx) {
     const t = theme();
     if (!this.problems().length) this.doctorOpen = false; // a popover for nothing would reappear open with the next problem
-    const where = [this.repo, this.project?.title].filter(Boolean).join(" · ");
+    const local = this.source()?.source === "local" && !this.source().remote;
+    const where = local ? `Local tasks · ${String(this.source().mainRoot ?? "").split("/").filter(Boolean).pop() ?? ""}` : [this.repo, this.project?.title].filter(Boolean).join(" · ");
     return v_flex().id("task-settings").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
       .child(h_flex().flex_none().px(20).py(14).gap(8).items_start().border_b(1).border_color(t.border)
         .child(v_flex().flex_1().min_w(0).gap(4)
@@ -79,6 +135,7 @@ export class TaskSettings {
         .when(Boolean(this.onClose), (el) => el.child(iconButton("settings-close", "close", t, () => this.onClose(), false, "Close"))))
       .child(div().id("task-settings-body").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(20).py(16).gap(16)
+          .child(this.renderSource(t))
           .children(SECTIONS.map((section) => this.section(t, cx, section)))
           .when(Boolean(this.workflows), (el) => el.child(this.workflows.render(cx)))));
   }
@@ -90,7 +147,7 @@ export class TaskSettings {
   // The red doctor beside Close, shaking while there are problems. Pressing it opens what is wrong and a prompt for an agent.
   doctor(t) {
     const found = this.found(), issues = found?.issues ?? [];
-    const prompt = fixPrompt(issues, { repo: found?.repo ?? (this.repo || null), project: found?.project ?? this.project });
+    const prompt = fixPrompt(issues, { repo: found?.repo ?? (this.repo || null), project: found?.project ?? this.project, source: found?.source ?? this.source()?.source });
     const count = `${issues.length} ${issues.length === 1 ? "problem" : "problems"} found`;
     const shaking = h_flex().id("doctor").relative().size(24).flex_none().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(count)
       .child(icon("doctor", 14, t.ansi1).absolute().top(5).left(5).loop("left", { from: 3, to: 7, period: 160 }));
