@@ -1,4 +1,4 @@
-// One tab per ticket or workflow: the opener records the pane its tab.new made, and opening the same subject
+// One tab per workflow: the opener records the pane its tab.new made, and opening the same subject
 // again selects that tab instead.
 import { panes, run, shared, setShared } from "herdr";
 
@@ -28,5 +28,4 @@ export function openOnce(subject, args, cx) {
   });
 }
 
-export const ticketSubject = (repo, ticket) => (ticket?.key ? `ticket:${repo}:${ticket.key}` : null);
 export const workflowSubject = (scope, id) => (id ? `workflow:${scope}:${id}` : null);

@@ -86,7 +86,7 @@ export class LocalTaskEditor extends TaskEditor {
         this.notice = { kind: "saved", text: "Saved." };
         this.leaveBody();
         this.checkStartable(cx);
-        if (renamed) run("tab.rename", { name: tabName(ticket, after.title) });
+        if (renamed && !this.popup) run("tab.rename", { name: tabName(ticket, after.title) });
         setShared(CHANGED, Date.now());
       } catch (e) {
         this.notice = { kind: "error", text: String(e?.message ?? e), error: { kind: "other" } };
@@ -94,6 +94,7 @@ export class LocalTaskEditor extends TaskEditor {
       } finally {
         this.saving = false;
         cx.notify();
+        this.settleSave(cx); // last: it may close the popup
       }
     });
   }
