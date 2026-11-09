@@ -197,32 +197,44 @@ test("the snapshot changes when a file's content changes, not when it is only to
 test("the snapshot ignores git-ignored files and .git", async () => {
   const w = world("snapshot-ignored");
   try {
-    w.put(w.a, ".gitignore", "skillshare/skills/*\n!skillshare/skills/mine\nnode_modules/\n");
+    w.put(w.a, ".gitignore", "build/\n*.log\n");
     w.git(w.a, "add", "-A"); w.git(w.a, "commit", "-q", "-m", "ignore");
     const s0 = await snapshot(w.io, w.a);
-    w.put(w.a, "skillshare/skills/installed/SKILL.md", "installed\n");
-    w.put(w.a, "node_modules/x/index.js", "x\n");
+    w.put(w.a, "build/out.js", "x\n");
+    w.put(w.a, "debug.log", "x\n");
     w.git(w.a, "commit", "-q", "--allow-empty", "-m", "empty");
     assert.equal(await snapshot(w.io, w.a), s0);
-    w.put(w.a, "skillshare/skills/mine/new/SKILL.md", "mine\n");
-    assert.notEqual(await snapshot(w.io, w.a), s0, "a tracked-folder file counts");
+    w.put(w.a, "mods/demo/new.js", "mine\n");
+    assert.notEqual(await snapshot(w.io, w.a), s0, "a file git does not ignore counts");
   } finally { clean(w); }
 });
 
-test("the sync's own writes into the repo (normalising skillshare/config.yaml) are in the snapshot taken after it, so a second sync changes nothing", async () => {
+test("the snapshot leaves out skillshare/, the only place the sync script writes in the repo, so a sync never changes it", async () => {
   const w = world("self-write");
   try {
     w.put(w.a, "skillshare/config.yaml", `preserve_tilde_on_save: true\nsources:\n  skills: ${w.home}/.config/skillshare/skills\n`);
     w.git(w.a, "add", "-A"); w.git(w.a, "commit", "-q", "-m", "config");
     const before = await snapshot(w.io, w.a);
-    let out = await syncFolder(w.io, w.a);
+    const out = await syncFolder(w.io, w.a);
     assert.equal(out.result, "ok", out.message);
-    assert.match(readFileSync(join(w.a, "skillshare/config.yaml"), "utf8"), /skills: ~\/\.config/);
-    const after = await snapshot(w.io, w.a);
-    assert.notEqual(after, before, "the script did write into the repo");
-    out = await syncFolder(w.io, w.a);
-    assert.equal(out.result, "ok", out.message);
-    assert.equal(await snapshot(w.io, w.a), after, "and a second run writes nothing new");
+    assert.match(readFileSync(join(w.a, "skillshare/config.yaml"), "utf8"), /skills: ~\/\.config/, "the script did write into the repo");
+    assert.equal(await snapshot(w.io, w.a), before, "and the snapshot did not notice");
+    w.put(w.a, "skillshare/skills/mine/new/SKILL.md", "mine\n");
+    assert.equal(await snapshot(w.io, w.a), before, "skillshare/ edits are not content the sync copies");
+    w.put(w.a, "mods/demo/main.js", "two\n");
+    assert.notEqual(await snapshot(w.io, w.a), before);
+  } finally { clean(w); }
+});
+
+test("a snapshot taken before a sync differs from one taken after only if the folder changed meanwhile", async () => {
+  const w = world("pre-post");
+  try {
+    const pre = await snapshot(w.io, w.a);
+    await syncFolder(w.io, w.a);
+    assert.equal(await snapshot(w.io, w.a), pre);
+    const pre2 = await snapshot(w.io, w.a);
+    writeFileSync(join(w.a, "mods/demo/main.js"), "edited during the copy\n");
+    assert.notEqual(await snapshot(w.io, w.a), pre2);
   } finally { clean(w); }
 });
 

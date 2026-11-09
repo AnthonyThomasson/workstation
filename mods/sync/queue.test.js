@@ -7,13 +7,13 @@ import { createSyncQueue, isGitInternal, isOwnWrite, DEBOUNCE_MS } from "./queue
 function rig({ changed = () => true } = {}) {
   const clock = { t: 1_000_000, timers: [], id: 0 };
   const log = [];
-  const sync = { running: 0, finish: [] };
+  const sync = { running: 0, finish: [], checks: 0 };
   const q = createSyncQueue({
     now: () => clock.t,
     setTimer: (fn, ms) => { const id = ++clock.id; clock.timers.push({ id, at: clock.t + ms, fn }); return id; },
     clearTimer: (id) => { clock.timers = clock.timers.filter((x) => x.id !== id); },
-    sync: () => { log.push({ at: clock.t - clock.start }); sync.running++; return new Promise((resolve) => sync.finish.push(() => { sync.running--; resolve(); })); },
-    changed: () => Promise.resolve(changed()),
+    sync: () => { log.push({ at: clock.t - clock.start }); sync.running++; return new Promise((resolve) => sync.finish.push((dirty) => { sync.running--; resolve(dirty); })); },
+    changed: () => { sync.checks++; return Promise.resolve(changed()); },
   });
   clock.start = clock.t;
   const flush = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
@@ -30,7 +30,8 @@ function rig({ changed = () => true } = {}) {
     clock.t = end;
     await flush();
   };
-  const done = async () => { sync.finish.shift()(); await flush(); };
+  // done(dirty): the sync ends; dirty = the folder's content changed while it ran (what main.js reports).
+  const done = async (dirty) => { sync.finish.shift()(dirty); await flush(); };
   return { q, clock, log, sync, advance, done, flush };
 }
 
@@ -240,4 +241,77 @@ test("stop() cancels everything pending", async () => {
   r.q.stop();
   await r.advance(60000);
   assert.equal(r.log.length, 0);
+});
+
+// ---- the review findings: a sync reports whether the content changed while it ran ----
+
+test("a change event during a sync that left the content as it was (a branch switch) costs no second sync", async () => {
+  const r = rig({ changed: () => false });
+  r.q.force();
+  await r.flush();
+  await r.advance(500); r.q.change(["src/a.txt"]); // the switch's files, reported after the sync began
+  await r.done(false);
+  await r.advance(60000);
+  assert.equal(r.log.length, 1);
+  assert.equal(r.sync.checks, 1, "asked once, and the answer was no");
+});
+
+test("a root or overflow event during a sync is checked, not synced blindly", async () => {
+  const r = rig({ changed: () => false });
+  r.q.force();
+  await r.flush();
+  r.q.change([""]);
+  await r.done(false);
+  await r.advance(60000);
+  assert.equal(r.log.length, 1);
+  assert.equal(r.sync.checks, 1);
+});
+
+test("an edit made during the sync (the sync says so) is synced even when another change comes in before the follow-up", async () => {
+  const r = rig({ changed: () => false }); // the content check would say 'same': the sync's own report decides
+  r.q.force();
+  await r.flush();
+  await r.advance(500); r.q.change(["a.txt"]);
+  await r.done(true);
+  await r.advance(100); r.q.change(["b.txt"]); // idle again: this must not drop the follow-up's reason
+  await r.advance(2999);
+  assert.equal(r.log.length, 1);
+  await r.advance(1);
+  assert.equal(r.log.length, 2, "a.txt is not lost");
+  assert.equal(r.sync.checks, 0, "no check can talk it out of it");
+});
+
+test("a sync that reports a change waits for a quiet period even when no event has arrived yet", async () => {
+  const r = rig();
+  r.q.force();
+  await r.flush();
+  await r.advance(5000);
+  await r.done(true);
+  assert.equal(r.log.length, 1);
+  await r.advance(2999);
+  assert.equal(r.log.length, 1);
+  await r.advance(1);
+  assert.equal(r.log.length, 2);
+});
+
+test("the follow-up's reason is used up by the follow-up: a clean second sync ends it", async () => {
+  const r = rig({ changed: () => false });
+  r.q.force();
+  await r.flush();
+  await r.done(true);
+  await r.advance(3000);
+  assert.equal(r.log.length, 2);
+  await r.done(false);
+  await r.advance(60000);
+  assert.equal(r.log.length, 2);
+});
+
+test("an event that arrives a moment after the sync's last snapshot is still checked afterwards", async () => {
+  const r = rig({ changed: () => true });
+  r.q.force();
+  await r.flush();
+  await r.advance(200); r.q.change(["late.txt"]);
+  await r.done(false); // the sync did not see the edit
+  await r.advance(3000);
+  assert.equal(r.log.length, 2);
 });

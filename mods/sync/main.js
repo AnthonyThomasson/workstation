@@ -124,7 +124,8 @@ export default class Sync extends View {
     if (!dir) { setRun({ watching: false, watchError: "" }); return; }
     setRun({ watching: true, watchError: "" });
     this.cx.spawn(async (cx) => {
-      this.baseline = await snapshot(shortIO, dir).catch(() => null) || null;
+      const first = await snapshot(shortIO, dir).catch(() => "");
+      if (gen === this.watchGen && this.baseline === null) this.baseline = first || null; // a sync that already started has its own
       while (gen === this.watchGen) {
         try {
           const batch = await watchFolder(dir);
@@ -155,23 +156,30 @@ export default class Sync extends View {
     } finally { this.draining = false; }
   }
 
-  // One sync of the picked folder, run by the queue (never two at once). The folder's content right afterwards is the
-  // baseline the next quiet-period check compares with, so the script's own writes into the repo are not changes.
+  // One sync of the picked folder, run by the queue (never two at once). The folder's content is fingerprinted just
+  // BEFORE the script runs and that becomes the baseline the next quiet-period check compares with: whatever changes
+  // after it is news (a branch switch's files were already there; an edit made during the copy was not necessarily
+  // copied). A second fingerprint right after the script tells the queue whether the content changed while it ran; the
+  // script's own writes (skillshare/) are not in either. Resolves to that: true = sync once more.
   syncNow() {
     return new Promise((resolve) => this.cx.spawn(async (cx) => {
       const dir = this.dir, forced = this.forced; this.forced = false;
+      let changedDuring = false;
       try {
         if (!dir) return;
         setRun({ syncing: true });
+        const before = await snapshot(shortIO, dir).catch(() => "");
+        if (dir === this.dir) this.baseline = before || null;
         let out;
         try { out = await syncFolder(jobIO(cx), dir); }
         catch (e) { out = { result: "error", message: String(e?.message ?? e) }; }
-        this.baseline = dir === this.dir ? await snapshot(shortIO, dir).catch(() => null) || null : null;
+        const after = await snapshot(shortIO, dir).catch(() => "");
+        changedDuring = Boolean(before && after && before !== after);
         const ok = out.result === "ok", prev = obj(shared(RUN));
         setRun({ syncing: false, ok, message: ok ? "" : out.message || "The sync script stopped.", at: ok ? Date.now() : prev.at ?? null });
         if (!ok) notify({ title: "Sync failed", body: out.message || "The script stopped.", level: "error" });
         else if (forced) notify({ title: "Sync done", body: out.message || "Done", level: "success" });
-      } finally { setRun({ syncing: false }); cx.notify(); resolve(); }
+      } finally { setRun({ syncing: false }); cx.notify(); resolve(dir === this.dir && changedDuring); }
     }));
   }
 

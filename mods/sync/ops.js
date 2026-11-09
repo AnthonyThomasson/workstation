@@ -69,10 +69,12 @@ fi
 `;
 
 // A fingerprint of the folder's content: every file git would not ignore (tracked or new), by content and size, not by
-// time. Equal fingerprints mean nothing changed, whatever touched the files in between. Prints one line; fails outside a repo.
+// time. Equal fingerprints mean nothing changed, whatever touched the files in between. skillshare/ is left out: the
+// sync script writes there (it rewrites config.yaml, and Skillshare reinstalls into it) and never copies it to Herdr,
+// so nothing in it is content to sync. Prints one line; fails outside a repo.
 export const SNAPSHOT = `${PATHS}
 cd "$1" 2>/dev/null && git rev-parse --git-dir >/dev/null 2>&1 || exit 1
-git ls-files -z -co --exclude-standard 2>/dev/null | xargs -0 cksum -- 2>/dev/null | cksum
+git ls-files -z -co --exclude-standard -- . ':(exclude)skillshare' 2>/dev/null | xargs -0 cksum -- 2>/dev/null | cksum
 `;
 
 // Which of the paths ($2…, relative to the folder $1) git does not ignore. Prints "@keep<TAB>path".

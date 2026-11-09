@@ -1,5 +1,5 @@
-// Runs long work on a machine: Herdr stops an exec after 30 s, so a slow git fetch, pull or push, or
-// a skillshare sync, runs as a detached job that is polled until it writes its exit code. Copied from
+// Runs long work on a machine: Herdr stops an exec after 30 s, so the sync script (it may reinstall
+// skills over the network) runs as a detached job that is polled until it writes its exit code. Copied from
 // the skills mod's job runner (not imported: mods do not import each other). No Herdr imports: main.js
 // passes Herdr's exec and file reads in, and the tests (jobs.test.js) pass real sh and fs.
 
