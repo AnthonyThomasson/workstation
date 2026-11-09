@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { localTicket, localStages, rowLabel, sourceFor, sourceToggle, LOCAL_STATUS_OPTIONS, LOCAL_ONLY_HERE, typedLabels, localNewTaskPrompt } from "./local-ui.js";
+import { ASK_WITH_TOOL } from "./model.js";
 import { makeLocalTasks } from "./local-tasks.js";
 import { matchWorkflows } from "./match.js";
 
@@ -105,6 +106,11 @@ test("typed labels split on commas and keep what was typed", () => {
   assert.deepEqual(typedLabels("bug"), ["bug"]);
   assert.deepEqual(typedLabels(" bug , Needs Work,, "), ["bug", "Needs Work"]);
   assert.deepEqual(typedLabels("  "), []);
+});
+
+test("the local New Task prompt asks questions with the built-in question tool, right after waiting for each answer", () => {
+  const prompt = localNewTaskPrompt({ mainRoot: "/Users/me/app", todoDir: "/t", upNextDir: "/u", nextId: 1 });
+  assert.ok(prompt.includes("wait for the answer before the next question. " + ASK_WITH_TOOL + " Read the code yourself"));
 });
 
 test("the local New Task prompt names the folders, the next id, the file name and the format, and says no gh", () => {

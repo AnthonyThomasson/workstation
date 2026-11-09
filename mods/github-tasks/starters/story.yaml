@@ -13,7 +13,7 @@ orchestrator:
   effort: high
   prompt: ""
   planning: "Explore the code the ticket touches and the repo's AGENTS.md / CLAUDE.md, question the user until nothing material is open (showing a mock-up for any visual part), then present the plan for acceptance."
-  retro: "Look back on what slowed the run and what to write down for next time."
+  retro: "Look back on what slowed the run and what to write down for next time, then propose follow-up tickets with the question tool and add the ones the person picks to To Do."
 
 worker:
   agent: claude
