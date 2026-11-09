@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { wontDoFooter, wontDoPrompt, escapeAction, recordedTab } from "./wontdo.js";
+import { wontDoFooter, wontDoPrompt, escapeAction, recordedTab, windowSubject, retryAfterSignIn } from "./wontdo.js";
 import { WONT_DO_NEEDS_OPTION } from "./model.js";
 
 const OPTIONS = [{ name: "To Do" }, { name: "Won't Do" }];
@@ -77,4 +77,24 @@ test("the editor's own tab is the one recorded for its ticket, while that pane i
   assert.equal(recordedTab({ pane: "p9", tab: "t9" }, panes), null);
   assert.equal(recordedTab({ pane: "p2", tab: "t1" }, panes), null);
   assert.equal(recordedTab(undefined, panes), null);
+});
+
+test("an edit that makes the button unavailable withdraws the question, so Revert does not bring it back", () => {
+  assert.equal(footer({ confirming: true, dirty: true }).dropConfirm, true);
+  assert.equal(footer({ confirming: true, draft: true }).dropConfirm, true);
+  assert.equal(footer({ confirming: true }).dropConfirm, false);
+  assert.equal(footer({ confirming: true, dirty: true, busy: true }).dropConfirm, false); // never mid-call
+  assert.equal(footer({ confirming: false, dirty: true }).dropConfirm, false);
+});
+
+test("a window opened without a ticket slot closes by its own slot, else by the ticket's", () => {
+  assert.equal(windowSubject({ windowSlot: "window:1-1" }, "ticket:me/app:7"), "window:1-1");
+  assert.equal(windowSubject({}, "ticket:me/app:7"), "ticket:me/app:7");
+  assert.equal(windowSubject(undefined, null), null);
+});
+
+test("after signing in again, a failed Won't Do is run again, anything else is a save", () => {
+  assert.equal(retryAfterSignIn("wontdo"), "wontdo");
+  assert.equal(retryAfterSignIn(null), "save");
+  assert.equal(retryAfterSignIn(undefined), "save");
 });

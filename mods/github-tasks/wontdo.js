@@ -10,6 +10,7 @@ export function wontDoFooter({ draft = false, saving = false, dirty = false, loc
   const off = (disabled) => ({ disabled: Boolean(disabled) });
   return {
     confirm: confirming && (busy || !reason),
+    dropConfirm: confirming && !busy && Boolean(reason), // an edit made the button unavailable: the question is withdrawn, not just hidden
     wontDo: { disabled: busy || Boolean(reason), tip: busy ? null : reason },
     start: off(busy || saving || dirty || !startable),
     revert: off(busy || saving || !dirty),
@@ -33,3 +34,10 @@ export function escapeAction({ start = false, picker = false, confirming = false
 // The tab the opener recorded for this window ({ pane, tab }), when that pane is still open; else null. Closing by this id
 // never closes whichever tab the person has moved to meanwhile.
 export const recordedTab = (at, modPanes) => (at && (modPanes ?? []).some((p) => p.pane === at.pane && p.tab === at.tab) ? at.tab : null);
+
+// The subject a window's tab was recorded under: its own slot when it was opened without one for the ticket (Start's
+// dialog windows), else the ticket's.
+export const windowSubject = (props, ticketSubject) => props?.windowSlot ?? ticketSubject;
+
+// What the sign-in's "done" re-runs: the Won't Do that failed, else a save.
+export const retryAfterSignIn = (retry) => (retry === "wontdo" ? "wontdo" : "save");

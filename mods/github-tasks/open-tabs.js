@@ -24,15 +24,17 @@ export function closeOpen(subject) {
 }
 
 // Opens the tab, or selects the one already open for the subject. A subject of null always opens a new tab.
-export function openOnce(subject, args, cx) {
+// recordAs: the subject the new tab is recorded under (default the same), so a window that is never reused (reuse null)
+// can still be found again, to be closed.
+export function openOnce(subject, args, cx, recordAs = subject) {
   if (focusOpen(subject)) return;
   const before = new Set(modPanes().map((p) => p.pane));
   run("tab.new", args);
-  if (!subject) return;
+  if (!recordAs) return;
   cx.spawn(async (cx) => {
     for (let i = 0; i < 30; i++) {
       const made = modPanes().find((p) => !before.has(p.pane));
-      if (made) { setShared(slot(subject), { pane: made.pane, tab: made.tab }); return; }
+      if (made) { setShared(slot(recordAs), { pane: made.pane, tab: made.tab }); return; }
       await cx.sleep(100);
     }
   });

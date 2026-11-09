@@ -17,7 +17,7 @@ import { loadWorkflows } from "./workflow-env.js";
 import { startRun } from "./start.js";
 import { markdownLiteral } from "./settings-model.js";
 import { panelSize, panelAppeared, closeStep, escStep, afterSave, PRESS_BUTTONS } from "./popup.js";
-import { wontDoFooter, wontDoPrompt } from "./wontdo.js";
+import { wontDoFooter, wontDoPrompt, windowSubject, retryAfterSignIn } from "./wontdo.js";
 import { closeOpen, ticketSubject } from "./open-tabs.js";
 
 // Set to the time of each save, so the panel's list refreshes.
@@ -70,6 +70,7 @@ export class TaskEditor {
     this.loadError = null;
     this.saving = false;
     this.confirming = false; // the footer asks "Close #n as not planned…?" in place of its buttons
+    this.retry = null; // what the sign-in button re-runs after an auth error: "wontdo", else a save
     this.wontDoing = false; // the Won't Do call is running: the footer's buttons are inert
     this.notice = null; // { kind: "saved" | "error" | "conflict", text, error? }
     this.size = null;
@@ -158,6 +159,7 @@ export class TaskEditor {
     const after = this.current();
     this.saving = true;
     this.notice = null;
+    this.retry = null;
     cx.notify();
     cx.spawn(async (cx) => {
       const { ticket, repo, project, where } = this;
@@ -235,10 +237,20 @@ export class TaskEditor {
 
   // The footer, as wontdo.js decides it: which buttons are on, and whether the confirm strip is up.
   footerState() {
-    return wontDoFooter({
+    const f = wontDoFooter({
       draft: this.draft, saving: this.saving, dirty: this.dirty(), local: this.isLocal(), statusOptions: this.statusField?.options,
       startable: this.startable, confirming: this.confirming, busy: this.wontDoing,
     });
+    if (f.dropConfirm) this.confirming = false; // reverting must not bring the question back
+    return f;
+  }
+
+  // Gh has signed in again: the notice goes and what failed is run again (Won't Do is safe to repeat).
+  afterSignIn(cx) {
+    const again = retryAfterSignIn(this.retry);
+    this.notice = null;
+    this.retry = null;
+    if (again === "wontdo") { this.confirming = true; this.wontDo(cx); } else this.save(cx);
   }
 
   // Won't Do asks first, in the footer. Cancel (or Escape) puts the buttons back and changes nothing.
@@ -268,6 +280,7 @@ export class TaskEditor {
     if (this.wontDoing || !this.confirming) return;
     this.wontDoing = true;
     this.notice = null;
+    this.retry = null;
     cx.notify();
     cx.spawn(async (cx) => {
       let inert = false; // a success that left the window open: its buttons stay off
@@ -275,16 +288,23 @@ export class TaskEditor {
         await this.sendWontDo();
         this.confirming = false;
         setShared(CHANGED, Date.now());
-        // Opened without a recorded tab: closing blind could close another, so the window stays, inert, and says so.
-        if (!closeOpen(ticketSubject(this.repo, this.ticket))) {
-          inert = true;
-          this.notice = { kind: "saved", text: "Marked Won't Do. You can close this tab." };
-        }
       } catch (e) {
         const error = e instanceof GitHubError ? e : { kind: "other", message: String(e?.message ?? e) };
         this.confirming = false;
+        this.retry = "wontdo";
         this.notice = { kind: "error", text: error.message, error };
         setShared(CHANGED, Date.now()); // the status may have been set even though closing failed
+        this.wontDoing = false;
+        cx.notify();
+        return;
+      }
+      // It is done. Closing the tab is a courtesy: if it can't, the window stays, inert, and says so. Closing blind (no
+      // recorded tab) could close another tab, so that is never tried.
+      try {
+        if (!closeOpen(windowSubject(this.props, ticketSubject(this.repo, this.ticket)))) throw new Error("no recorded tab");
+      } catch {
+        inert = true;
+        this.notice = { kind: "saved", text: "Marked Won't Do. You can close this tab." };
       } finally {
         this.wontDoing = inert;
         cx.notify();
@@ -614,8 +634,8 @@ export class TaskEditor {
         .child(action("task-overwrite", "Overwrite", t, (_e, cx) => this.save(cx, true)))
         .child(action("task-reload-remote", "Reload from GitHub", t, (_e, cx) => this.load(cx), true))))
       .when(Boolean(signIn) && !this.auth.state, (el) => el.child(action("task-sign-in", "Sign in to GitHub", t,
-        (_e, cx) => this.auth.start(cx, signIn, this.where.on, (cx) => this.save(cx)))))
-      .when(Boolean(signIn) && Boolean(this.auth.state), (el) => el.child(this.auth.render(t, (_e, cx) => this.auth.start(cx, signIn, this.where.on, (cx) => this.save(cx)))))
+        (_e, cx) => this.auth.start(cx, signIn, this.where.on, (cx) => this.afterSignIn(cx)))))
+      .when(Boolean(signIn) && Boolean(this.auth.state), (el) => el.child(this.auth.render(t, (_e, cx) => this.auth.start(cx, signIn, this.where.on, (cx) => this.afterSignIn(cx)))))
       .child(f.confirm
         ? h_flex().gap(8).items_center()
           .child(this.wontDoing ? icon("ring", 14, t.muted).spin(900) : icon("alert", 14, t.ansi1))
