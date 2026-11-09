@@ -1,7 +1,7 @@
 // Local tasks in the panel, with no Herdr in it: the task source the sidebar and the settings share, a local task as the
 // ticket the rest of Tasks knows, the sidebar's sections, the settings checkbox's state and the New Task prompt.
 // local-tasks.js has the files, tasks-config.js the config; local-ui-env.js is Herdr's side.
-import { groupByStage, ASK_WITH_TOOL } from "./model.js";
+import { groupByStage, ASK_WITH_TOOL, pickableStatuses } from "./model.js";
 import { FOLDERS } from "./local-tasks.js";
 import { mainCheckout } from "./worktree.js";
 
@@ -42,8 +42,8 @@ export function sourceToggle(info) {
   };
 }
 
-// The editor's Status picker in local mode: all five, Done too.
-export const LOCAL_STATUS_OPTIONS = FOLDERS.map((f) => ({ name: f.status }));
+// The editor's Status picker in local mode: the five a person picks, Done too. Won't Do is left out: its button is the only way.
+export const LOCAL_STATUS_OPTIONS = pickableStatuses(FOLDERS.map((f) => ({ name: f.status })));
 
 // Labels typed into the editor: "a, b" or one name. Empty pieces go; the rest is kept as typed.
 export const typedLabels = (text) => String(text ?? "").split(",").map((l) => l.trim()).filter(Boolean);

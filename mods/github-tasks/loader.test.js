@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findRepo, findProjects, createProject, loadItems, loadTask, loadStatusField, saveTask, GitHubError, PAGE_SIZE, MAX_ITEMS } from "./loader.js";
+import { findRepo, findProjects, createProject, loadItems, loadTask, loadStatusField, saveTask, markWontDo, GitHubError, PAGE_SIZE, MAX_ITEMS } from "./loader.js";
 
 const ok = (data) => ({ code: 0, stdout: JSON.stringify({ data }), stderr: "" });
 const page = (count, endCursor, hasNextPage) => ok({
@@ -203,4 +203,60 @@ test("a repo GitHub doesn't know makes no project", async () => {
   const { gh, calls } = recorder(ok({ repository: null }));
   await assert.rejects(createProject(gh, "me/app"), /no repo called me\/app/);
   assert.equal(calls.length, 1);
+});
+
+// ---- Won't Do ----
+
+const wontField = { id: "F1", options: [{ id: "o1", name: "Todo" }, { id: "o2", name: "Done" }, { id: "o3", name: "Won't Do" }] };
+const wontArgs = { repo: "me/app", ticket: issue, project, statusField: wontField };
+
+test("Won't Do sets the project Status first, then closes the issue as not planned", async () => {
+  const { gh, calls } = recorder();
+  await markWontDo(gh, wontArgs, { cwd: "/x", on: "box" });
+  assert.equal(calls.length, 2);
+  assert.ok(calls[0].args.find((a) => a.startsWith("query=")).includes("updateProjectV2ItemFieldValue"));
+  assert.deepEqual(input(calls, 0), { project: "P1", item: "ITEM_7", field: "F1", option: "o3" });
+  assert.deepEqual(calls[1].args, ["issue", "close", "7", "-R", "me/app", "--reason", "not planned"]);
+  assert.deepEqual(calls.map((c) => c.where), [{ cwd: "/x", on: "box" }, { cwd: "/x", on: "box" }]);
+});
+
+test("Won't Do finds a loosely spelled option, preferring the exact one", async () => {
+  const loose = { id: "F1", options: [{ id: "a", name: "Wont Do" }] };
+  const { gh, calls } = recorder();
+  await markWontDo(gh, { ...wontArgs, statusField: loose });
+  assert.equal(input(calls, 0).option, "a");
+});
+
+test("Won't Do sends nothing when the project has no such option, no Status field, or the ticket is a draft", async () => {
+  const { gh, calls } = recorder();
+  await assert.rejects(markWontDo(gh, { ...wontArgs, statusField: field }), (e) => e instanceof GitHubError && /Won't Do/.test(e.message));
+  await assert.rejects(markWontDo(gh, { ...wontArgs, statusField: null }), /Won't Do/);
+  await assert.rejects(markWontDo(gh, { ...wontArgs, ticket: draft }), (e) => e instanceof GitHubError && /draft/i.test(e.message));
+  assert.equal(calls.length, 0);
+});
+
+test("when setting the Status fails, the issue is not closed and the error has its kind", async () => {
+  const { gh, calls } = recorder({ code: 1, stdout: "", stderr: "The 'updateProjectV2ItemFieldValue' field requires one of the following scopes: ['project']" });
+  await assert.rejects(markWontDo(gh, wontArgs), (e) => e instanceof GitHubError && e.kind === "no-write-scope" && !/status was set/i.test(e.message));
+  assert.equal(calls.length, 1);
+});
+
+test("when the Status was set but closing failed, the message says so and keeps GitHub's reason", async () => {
+  const { gh, calls } = recorder((args) => (args[0] === "issue" ? { code: 1, stdout: "", stderr: "HTTP 403: Resource not accessible by integration\nmore" } : { code: 0, stdout: "", stderr: "" }));
+  await assert.rejects(markWontDo(gh, wontArgs), (e) => {
+    assert.ok(e instanceof GitHubError);
+    assert.equal(e.message, "The status was set to Won't Do, but closing the issue failed: HTTP 403: Resource not accessible by integration");
+    return true;
+  });
+  assert.equal(calls.length, 2);
+});
+
+test("a close that fails with no words still says the Status was set", async () => {
+  const { gh } = recorder((args) => (args[0] === "issue" ? { code: 1, stdout: "", stderr: "" } : { code: 0, stdout: "", stderr: "" }));
+  await assert.rejects(markWontDo(gh, wontArgs), /^Error: The status was set to Won't Do, but closing the issue failed: GitHub didn't answer\.$/);
+});
+
+test("a close that fails keeps the failure's kind, so a missing sign-in is still named", async () => {
+  const { gh } = recorder((args) => (args[0] === "issue" ? { code: 1, stdout: "", stderr: "gh auth login required" } : { code: 0, stdout: "", stderr: "" }));
+  await assert.rejects(markWontDo(gh, wontArgs), (e) => e.kind === "no-auth");
 });

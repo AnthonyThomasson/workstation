@@ -98,7 +98,7 @@ test("a hand edit that made the file say local shows as checked even where it ca
   assert.equal(sourceToggle({ source: "local", mainRoot: "/r", remote: true }).checked, true);
 });
 
-test("the editor's Status picker offers all five statuses, Done too", () => {
+test("the editor's Status picker offers the five statuses, Done too, but not Won't Do (the button is the only way)", () => {
   assert.deepEqual(LOCAL_STATUS_OPTIONS.map((o) => o.name), ["To Do", "Up Next", "In Progress", "In Review", "Done"]);
 });
 

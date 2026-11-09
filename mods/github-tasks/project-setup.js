@@ -1,5 +1,5 @@
 // What Create Project does after it has made the project, with no agent: the Status field gets exactly the
-// five fixed statuses, and every label a saved workflow triggers on exists in the repo. Pure: gh comes in as
+// six fixed statuses, and every label a saved workflow triggers on exists in the repo. Pure: gh comes in as
 // gh(args, { cwd, on }) -> { code, stdout, stderr } (like loader.js and labels.js), so node --test runs it.
 import { GitHubError, loadStatusField } from "./loader.js";
 import { loadLabels, hasLabel, LABEL_LIMIT } from "./labels.js";
@@ -13,7 +13,7 @@ export const statusOptionsMutation = (names) => `mutation($field: ID!) {
   ${STATUS_FIELD_MUTATION}(input: { fieldId: $field, singleSelectOptions: [${names.map((n) => `{ name: ${JSON.stringify(n)}, color: GRAY, description: "" }`).join(", ")}] }) { projectV2Field { ... on ProjectV2SingleSelectField { id } } }
 }`;
 
-// Replaces the new project's Status options with the five statuses. The project is brand new, so replacing is safe.
+// Replaces the new project's Status options with the six statuses (Won't Do last). The project is brand new, so replacing is safe.
 async function setStatuses(gh, project, where) {
   const field = await loadStatusField(gh, project.id, where);
   if (!field) throw new GitHubError("The project has no Status field.");
