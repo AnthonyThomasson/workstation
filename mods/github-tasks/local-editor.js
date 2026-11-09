@@ -26,6 +26,12 @@ export class LocalTaskEditor extends TaskEditor {
     return super.dirty() || typedLabels(this.labelInput?.value()).some((l) => !this.labels.has(l));
   }
 
+  // Revert also drops label text that was typed but not confirmed.
+  revert(cx) {
+    this.labelInput?.set_value("");
+    super.revert(cx);
+  }
+
   tasks() { return localTasks(this.props.local?.mainRoot ?? ""); }
 
   // Reads the task's file and puts it on screen.
