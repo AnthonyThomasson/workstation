@@ -151,6 +151,23 @@ test("labels are read even when the project read fails, and a failed label read 
   assert.deepEqual((await check(place, renamed, first)).issues, [], "a label no workflow triggers on any more is not carried");
 });
 
+test("a full page of labels may be cut short, so the labels are unknown and nothing is reported", async () => {
+  const many = JSON.stringify(Array.from({ length: 200 }, (_, i) => ({ name: `l${i}`, color: "" })));
+  const deps = fakes({ labels: { code: 0, stdout: many, stderr: "" }, deps: { loadWorkflows: async () => story("bug") } });
+  assert.equal((await gather({ cwd: "/repo" }, deps)).labels, undefined);
+  assert.deepEqual((await check(place, deps)).issues, []);
+  const fewer = fakes({ labels: { code: 0, stdout: JSON.stringify(Array.from({ length: 199 }, (_, i) => ({ name: `l${i}` }))), stderr: "" }, deps: { loadWorkflows: async () => story("bug") } });
+  assert.deepEqual(kinds(await check(place, fewer)), ["label-missing"]);
+});
+
+test("a failed repo view keeps the last label issues for the same place", async () => {
+  const wf = { loadWorkflows: async () => story("feature") };
+  const first = await check(place, fakes({ deps: wf }));
+  assert.deepEqual(kinds(first), ["label-missing"]);
+  const flaky = fakes({ repo: { code: 1, stdout: "", stderr: "error connecting to api.github.com" }, deps: wf });
+  assert.deepEqual((await check(place, flaky, first)).issues, first.issues);
+});
+
 // ---- The watcher -------------------------------------------------------------------------------------
 
 function watcher(deps) {

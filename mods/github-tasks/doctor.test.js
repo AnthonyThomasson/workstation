@@ -303,3 +303,17 @@ test("fixPrompt tells how to create a missing label", () => {
   assert.match(prompt, /`gh label create bug -R me\/app`/);
   assert.match(prompt, /`gh label create 'good first' -R me\/app`/);
 });
+
+test("with the repo unknown the carried label issues are kept; with no repo at all they are not", () => {
+  const workflows = { items: [workflow("Story", {}, ["bug"])], errors: [] };
+  const carried = [{ kind: "label-missing", label: "bug", usedBy: ["Story"], message: "x" }, { kind: "label-missing", label: "gone", usedBy: ["Old"], message: "y" }];
+  assert.deepEqual(diagnose(healthy({ workflows, repo: undefined, project: undefined, statuses: undefined, carried })), [carried[0]]);
+  assert.deepEqual(diagnose(healthy({ workflows, repo: null, carried })), []);
+});
+
+test("a label starting with a dash is created after --, so gh does not read it as a flag", () => {
+  const workflows = { items: [workflow("Story", {}, ["-wip", "a-b"])], errors: [] };
+  const prompt = fixPrompt(diagnose(healthy({ workflows, labels: [] })), { repo: "me/app", project: PROJECT });
+  assert.match(prompt, /`gh label create -R me\/app -- -wip`/);
+  assert.match(prompt, /`gh label create a-b -R me\/app`/);
+});

@@ -6,7 +6,7 @@
 //   deps.repoRootOf(where)  deps.groomerAgent()  deps.chosenProject(repo)
 import { chooseProject, WORKFLOWS_CHANGED, PLACE } from "./model.js";
 import { findRepo, findProjects, loadStatusField } from "./loader.js";
-import { loadLabels } from "./labels.js";
+import { loadLabels, LABEL_LIMIT } from "./labels.js";
 import { diagnose, parseAuthStatus, doctorSignature, doctorFor, DOCTOR_KEY } from "./doctor.js";
 
 const WATCH = 2000; // how often the shared state is looked at; a check runs only when it changed
@@ -45,7 +45,8 @@ export async function gather(place, deps) {
     attempt(findProjects(deps.gh, inputs.repo, where)),
     triggers ? attempt(loadLabels(deps.gh, inputs.repo, where)) : { error: null },
   ]);
-  if (!labels.error && triggers) inputs.labels = labels.value;
+  // loadLabels reads the first LABEL_LIMIT labels: a full page may be cut short, so a label not in it is not known to be missing.
+  if (!labels.error && triggers && labels.value.length < LABEL_LIMIT) inputs.labels = labels.value;
   if (projects.error) return inputs;
   const project = chooseProject(projects.value, deps.chosenProject(inputs.repo));
   inputs.project = project ? { id: project.id, title: project.title, url: project.url } : null;

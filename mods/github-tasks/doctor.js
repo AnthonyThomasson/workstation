@@ -74,9 +74,9 @@ function triggerLabels(items) {
   return [...found.values()];
 }
 function checkLabels({ repo, labels, carried }, items) {
-  if (typeof repo !== "string") return [];
+  if (repo === null) return [];
   const wanted = triggerLabels(items);
-  if (!Array.isArray(labels)) {
+  if (typeof repo !== "string" || !Array.isArray(labels)) {
     return (carried ?? []).filter((i) => i.kind === "label-missing" && wanted.some((w) => hasLabel([{ name: w.label }], i.label)));
   }
   return wanted.filter((w) => !hasLabel(labels, w.label)).map(({ label, usedBy }) => ({
@@ -167,7 +167,9 @@ export function fixPrompt(issues, { repo = null, project = null } = {}) {
   }
   for (const i of by("label-missing")) {
     const name = /^[\w.:-]+$/.test(i.label) ? i.label : `'${i.label.replace(/'/g, `'\\''`)}'`;
-    steps.push(`Label: ${i.message} Create it with \`gh label create ${name} -R ${repo ?? "<owner/repo>"}\`, so the workflow starts for tickets that have it.`);
+    // A name starting with "-" would be read as a flag, even quoted, so it goes after "--".
+    const into = repo ?? "<owner/repo>", create = i.label.startsWith("-") ? `-R ${into} -- ${name}` : `${name} -R ${into}`;
+    steps.push(`Label: ${i.message} Create it with \`gh label create ${create}\`, so the workflow starts for tickets that have it.`);
   }
   for (const i of by("agent-missing")) steps.push(`Agent: ${i.message} Install it, or open the Tasks settings and the workflows that use it and choose an installed agent instead.`);
   for (const i of by("workflow-invalid")) {
