@@ -1,9 +1,12 @@
-// One ticket, in the center: a tab the Tasks panel opens when a row is clicked (props.role "editor").
+// One ticket, in a large popup over the app (props.role "editor", props.popup): the Tasks panel opens it when a row is
+// clicked. A popup is a full-window overlay this file draws itself: a dimmed backdrop and a panel in the middle, because
+// Herdr would close a dialog on Esc or a click beside it before we could ask about unsaved edits (popup.js). An editor
+// tab opened before that (no props.popup) still renders as before.
 // The title, body, status and labels are editable; Save sends only what changed to GitHub.
 // Not a View of its own: main.js builds one in init and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, TextView } from "gpui-base";
-import { run, setShared, theme } from "herdr";
+import { run, setShared, theme, closeOverlay } from "herdr";
 import { snapshot, isDirty, changes } from "./model.js";
 import { GitHubError, loadTask, loadStatusField, saveTask } from "./loader.js";
 import { loadLabels } from "./labels.js";
@@ -13,6 +16,7 @@ import { matchWorkflows } from "./match.js";
 import { loadWorkflows } from "./workflow-env.js";
 import { startRun } from "./start.js";
 import { markdownLiteral } from "./settings-model.js";
+import { panelSize, closeStep, escStep, afterSave } from "./popup.js";
 
 // Set to the time of each save, so the panel's list refreshes.
 export const CHANGED = "github-tasks.changed";
@@ -28,6 +32,7 @@ export class TaskEditor {
     this.project = props?.project ?? null;
     this.where = props?.where ?? {};
     this.draft = Boolean(this.ticket.draft);
+    this.popup = Boolean(props?.popup); // in the popup (see the top), not in a tab
     this.autoStart = Boolean(props?.autoStart); // the sidebar's Start asked for several workflows or none: show the dialog once loaded
 
     this.handle = cx.focus_handle(); // the editor's root takes the keyboard when the textarea goes, so Cmd-S still reaches it
@@ -62,6 +67,13 @@ export class TaskEditor {
     this.saving = false;
     this.notice = null; // { kind: "saved" | "error" | "conflict", text, error? }
     this.size = null;
+
+    // The popup's own state: the window's size, the "Unsaved changes" card, and what waits for a save to end ("card": Save
+    // on that card; "close": a close request made while it ran).
+    this.window = null;
+    this.prompt = false;
+    this.pending = null;
+    if (this.popup) cx.timer.after(50, () => this.handle.focus()); // a window doesn't take the keyboard when it opens
     this.load(cx);
   }
 
@@ -155,16 +167,61 @@ export class TaskEditor {
         this.notice = { kind: "saved", text: "Saved to GitHub." };
         this.leaveBody();
         this.checkStartable(cx);
-        if (renamed) run("tab.rename", { name: tabName(ticket, after.title) });
+        if (renamed && !this.popup) run("tab.rename", { name: tabName(ticket, after.title) });
         setShared(CHANGED, Date.now());
       } catch (e) {
         const error = e instanceof GitHubError ? e : { kind: "other", message: String(e?.message ?? e) };
         this.notice = { kind: "error", text: error.message, error };
       } finally {
         this.saving = false;
+        this.settleSave(cx);
         cx.notify();
       }
     });
+  }
+
+  // Closing the popup. A request (Esc, the ✕, a press on the backdrop) closes it when nothing is unsaved, asks first when
+  // something is, and waits for a save that is running: overlay tasks end with the popup, so a save is never cut off.
+  requestClose(cx) {
+    if (!this.popup) return;
+    const step = closeStep({ dirty: this.dirty(), saving: this.saving, starting: this.start?.phase === "starting" });
+    if (step === "close") this.closeNow();
+    else if (step === "prompt") this.showPrompt(cx);
+    else if (step === "wait") this.pending = this.pending ?? "close";
+    cx.notify();
+  }
+
+  closeNow() {
+    if (this.props.overlay) closeOverlay(this.props.overlay);
+  }
+
+  showPrompt(cx) {
+    this.prompt = true;
+    this.handle.focus(); // Enter and Esc go to the card, not to a field behind it
+    cx.notify();
+  }
+
+  keepEditing(cx) {
+    this.prompt = false;
+    this.pending = null;
+    this.handle.focus();
+    cx.notify();
+  }
+
+  // Save on the card: saves, then closes. A save that fails leaves the popup open with the error showing.
+  saveAndClose(cx) {
+    if (!this.saving && !this.dirty()) { this.closeNow(); return; }
+    this.pending = "card";
+    this.save(cx);
+  }
+
+  // A save has ended: whatever waited for it goes on.
+  settleSave(cx) {
+    const next = afterSave({ pending: this.pending, dirty: this.dirty() });
+    this.pending = null;
+    if (next === "close") this.closeNow();
+    else if (next === "prompt") this.showPrompt(cx);
+    else if (next === "stay") this.prompt = false;
   }
 
   // Start: the workflow this ticket's labels trigger starts at once; when several do, the dialog lists them to
@@ -198,6 +255,7 @@ export class TaskEditor {
         const statusField = this.project ? await loadStatusField(gh, this.project.id, this.where).catch(() => null) : null; // without it the ticket's status just isn't moved
         await startRun(workflow, ticket, this.repo, this.where, cx, { project: this.project, statusField });
         this.start = null;
+        if (this.popup) { this.closeNow(); return; } // the run's tab is open: the popup has done its job
       } catch (e) {
         this.start = { ...this.start, phase: "error", error: String(e?.message ?? e) };
       }
@@ -255,6 +313,18 @@ export class TaskEditor {
   }
 
   render(cx) {
+    if (!this.popup) return this.renderEditor(cx);
+    const t = theme(), panel = panelSize(this.window);
+    // The backdrop covers the window; a press on it asks to close, and the panel stops presses so they don't. The
+    // stops also keep the window from being dragged.
+    return div().id("editor-popup").size_full().flex().items_center().justify_center().bg("#000000a6")
+      .on_size_change((win, cx) => { this.window = win; cx.notify(); })
+      .on_mouse_down("left", (_e, cx) => { this.requestClose(cx); cx.stop_propagation(); })
+      .when(Boolean(panel), (el) => el.child(div().id("editor-panel").w(panel.width).h(panel.height).flex_none().rounded(12).border_1().border_color(t.border)
+        .overflow_hidden().shadow_lg().on_mouse_down("left", stop).child(this.renderEditor(cx))));
+  }
+
+  renderEditor(cx) {
     const t = theme();
     const body = this.loadError ? this.renderLoadError(t)
       : !this.loaded ? v_flex().flex_1().min_h(0).p(20).gap(10)
@@ -267,15 +337,49 @@ export class TaskEditor {
     return v_flex().id("task-editor").track_focus(this.handle).size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
       .on_size_change((size, cx) => { this.size = size; this.bodyInput.set_rows(this.rows()); cx.notify(); })
       .on_key_down((e, cx) => {
-        if (e.key === "escape" && this.start) { this.closeStart(cx); cx.stop_propagation(); }
-        else if (e.key === "escape" && this.picker) { this.closePicker(cx); cx.stop_propagation(); }
-        else if (e.keystroke === "cmd-s") { this.save(cx); cx.stop_propagation(); }
+        if (this.prompt && (e.keystroke === "enter" || e.keystroke === "cmd-s")) { this.saveAndClose(cx); cx.stop_propagation(); return; }
+        if (e.key === "escape") {
+          const step = escStep({ prompt: this.prompt, start: Boolean(this.start), picker: Boolean(this.picker), popup: this.popup });
+          if (step === "none") return;
+          if (step === "keep-editing") this.keepEditing(cx);
+          else if (step === "close-start") this.closeStart(cx);
+          else if (step === "close-picker") this.closePicker(cx);
+          else this.requestClose(cx);
+          cx.stop_propagation();
+        } else if (e.keystroke === "cmd-s") { this.save(cx); cx.stop_propagation(); }
       })
+      .when(this.popup, (el) => el.child(this.renderPopupBar(t)))
       .child(this.renderHeader(t))
       .child(body)
       .when(this.loaded, (el) => el.child(this.renderFooter(t, cx)))
       .when(Boolean(this.picker), (el) => el.child(this.renderPicker(t)))
-      .when(Boolean(this.start), (el) => el.child(this.renderStart(t)));
+      .when(Boolean(this.start), (el) => el.child(this.renderStart(t)))
+      .when(this.prompt, (el) => el.child(this.renderUnsaved(t)));
+  }
+
+  // The popup's top bar: the ticket's name, and the ✕.
+  renderPopupBar(t) {
+    const title = this.base.title ?? this.ticket.title ?? "", { ticket } = this;
+    return h_flex().h(48).flex_none().pl(20).pr(12).gap(8).items_center().border_b(1).border_color(t.border)
+      .child(div().flex_1().min_w(0).truncate().text_size(S().title).font_semibold().child(ticket.draft ? title : `#${ticket.number} ${title}`))
+      .child(div().flex_none().text_size(S().label).text_color(t.muted).child("Esc"))
+      .child(iconButton("popup-close", "close", t, (_e, cx) => this.requestClose(cx), false, "Close"));
+  }
+
+  // The card a close with unsaved edits shows over the dimmed editor.
+  renderUnsaved(t) {
+    const card = v_flex().id("task-unsaved").w(400).flex_none().p(16).gap(12).rounded(12).border_1().border_color(t.border)
+      .bg(t.popover).shadow_lg().text_color(t.foreground).text_size(S().body)
+      .on_mouse_down("left", stop)
+      .child(div().text_size(S().title).font_semibold().child("Unsaved changes"))
+      .child(note(t, "Save your edits before closing?"))
+      .child(h_flex().gap(8).justify_end()
+        .child(action("unsaved-keep", "Keep editing", t, (_e, cx) => this.keepEditing(cx), true))
+        .child(action("unsaved-discard", "Discard", t, () => this.closeNow(), true, this.saving))
+        .child(action("unsaved-save", this.saving ? "Saving…" : "Save", t, (_e, cx) => this.saveAndClose(cx), false, this.saving)));
+    return div().id("task-unsaved-backdrop").absolute().inset_0().flex().items_center().justify_center().bg(scrim(t))
+      .on_mouse_down("left", stop)
+      .child(card);
   }
 
   // Rows the body field gets: what the window leaves after the fields around it.

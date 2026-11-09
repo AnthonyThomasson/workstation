@@ -1,15 +1,15 @@
 // Tasks: the tickets on the GitHub Project linked to the selected space's repo, in the left menu under
 // Spaces: Up Next, Backlog (collapsed), In Progress and In Review. Clicking a ticket
-// opens it in a tab of its own to edit (editor.js), and saving pushes the change to GitHub. Each row links
+// opens it in a large popup to edit (editor.js, popup.js), and saving pushes the change to GitHub. Each row links
 // out to GitHub and has Start, which becomes View while its workflow runs. With "taskSource": "local" in the repo's
 // .herdr/tasks/tasks.json the list is the YAML task files instead (local-tasks.js, local-ui.js), read again every 3 seconds.
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
-// workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket in the center, opened
-// by a click on a row; "workflow-editor", one workflow in the center (workflow-editor.js); "run", a started
+// workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket, in a popup (props.popup)
+// opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow in the center (workflow-editor.js); "run", a started
 // workflow's agents, beside its orchestrator (run-page.js); "prompt", one read-only agent prompt (prompts-page.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, spaces, focused, notify, shared, setShared, theme, layout, nextCommand, props as blockProps } from "herdr";
+import { run, spaces, focused, notify, shared, setShared, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
 import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, spelled, STATUSES, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, TASK_SOURCE } from "./model.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField } from "./loader.js";
 import { installedAgents, startNewTask, startLocalNewTask } from "./groom.js";
@@ -24,7 +24,7 @@ import { localStages, rowLabel, LOCAL_ONLY_HERE } from "./local-ui.js";
 import { TaskSettings } from "./settings.js";
 import { matchWorkflows } from "./match.js";
 import { WorkflowEditor } from "./workflow-editor.js";
-import { openOnce, ticketSubject } from "./open-tabs.js";
+import { editorOverlay } from "./popup.js";
 import { RunPage } from "./run-page.js";
 import { PromptPage } from "./prompts-page.js";
 import { WorkflowList } from "./workflow-list.js";
@@ -91,7 +91,7 @@ export default class GitHubTasks extends View {
     }
     this.handle = cx.focus_handle();
     this.auth = new Auth();
-    this.changedAt = shared(CHANGED) ?? null; // a save in an editor tab refreshes the list
+    this.changedAt = shared(CHANGED) ?? null; // a save in an editor refreshes the list
     this.lastCwd = new Map();
     this.reset(null);
     this.open = Object.fromEntries(SECTIONS.map((x) => [x.id, x.open])); // which sections are expanded
@@ -285,7 +285,7 @@ export default class GitHubTasks extends View {
     if (this.role === "settings") return this.renderSettings(cx);
     const t = theme();
 
-    // An editor tab saved something: the list is stale.
+    // An editor saved something: the list is stale.
     const changed = shared(CHANGED) ?? null;
     if (changed !== this.changedAt) { this.changedAt = changed; later(cx, (cx) => this.refresh(cx)); }
 
@@ -482,20 +482,15 @@ export default class GitHubTasks extends View {
       .when(id === "backlog", (el) => el.child(this.newTaskButton(t)));
   }
 
-  // A click opens the ticket in a tab to edit. Its folder and machine go along, so the editor asks
-  // GitHub from the same place the panel does.
-  openTicket(ticket, cx, extra = {}) {
+  // A click opens the ticket in a large popup over the app to edit (editor.js, popup.js). Its folder and machine go
+  // along, so the editor asks GitHub from the same place the panel does.
+  openTicket(ticket, _cx, extra = {}) {
     const ctx = this.ctx, project = this.project, local = Boolean(ticket.local);
     if (!ctx || (!project && !local)) return;
-    const name = ticket.draft ? ticket.title : `#${ticket.number} ${ticket.title}`;
-    openOnce(extra.autoStart ? null : ticketSubject(this.repoId(), ticket), {
-      name,
-      mod: "github-tasks",
-      props: {
-        role: "editor", ticket, repo: this.repoId(), project: local ? null : { id: project.id, title: project.title },
-        ...(local ? { local: { mainRoot: ticket.mainRoot } } : {}), where: { cwd: ctx.folder, on: ctx.on }, ...extra,
-      },
-    }, cx);
+    openOverlay(editorOverlay({
+      role: "editor", ticket, repo: this.repoId(), project: local ? null : { id: project.id, title: project.title },
+      ...(local ? { local: { mainRoot: ticket.mainRoot } } : {}), where: { cwd: ctx.folder, on: ctx.on }, ...extra,
+    }));
   }
 
   // Start: the one workflow the ticket's labels trigger starts at once. With several, or none, the ticket opens in

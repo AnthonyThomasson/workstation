@@ -86,13 +86,14 @@ export class LocalTaskEditor extends TaskEditor {
         this.notice = { kind: "saved", text: "Saved." };
         this.leaveBody();
         this.checkStartable(cx);
-        if (renamed) run("tab.rename", { name: tabName(ticket, after.title) });
+        if (renamed && !this.popup) run("tab.rename", { name: tabName(ticket, after.title) });
         setShared(CHANGED, Date.now());
       } catch (e) {
         this.notice = { kind: "error", text: String(e?.message ?? e), error: { kind: "other" } };
         setShared(CHANGED, Date.now()); // part of it may have been written
       } finally {
         this.saving = false;
+        this.settleSave(cx);
         cx.notify();
       }
     });
