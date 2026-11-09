@@ -7,8 +7,8 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, TextView } from "gpui-base";
 import { run, setShared, theme, closeOverlay } from "herdr";
-import { snapshot, isDirty, changes } from "./model.js";
-import { GitHubError, loadTask, loadStatusField, saveTask } from "./loader.js";
+import { snapshot, isDirty, changes, pickableStatuses } from "./model.js";
+import { GitHubError, loadTask, loadStatusField, saveTask, markWontDo } from "./loader.js";
 import { loadLabels } from "./labels.js";
 import { S, icon, stop, note, iconButton, action, gh, scrim } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
@@ -17,6 +17,8 @@ import { loadWorkflows } from "./workflow-env.js";
 import { startRun } from "./start.js";
 import { markdownLiteral } from "./settings-model.js";
 import { panelSize, panelAppeared, closeStep, escStep, afterSave, PRESS_BUTTONS } from "./popup.js";
+import { wontDoFooter, wontDoPrompt } from "./wontdo.js";
+import { closeOpen, ticketSubject } from "./open-tabs.js";
 
 // Set to the time of each save, so the panel's list refreshes.
 export const CHANGED = "github-tasks.changed";
@@ -67,6 +69,8 @@ export class TaskEditor {
     this.loaded = false;
     this.loadError = null;
     this.saving = false;
+    this.confirming = false; // the footer asks "Close #n as not planned…?" in place of its buttons
+    this.wontDoing = false; // the Won't Do call is running: the footer's buttons are inert
     this.notice = null; // { kind: "saved" | "error" | "conflict", text, error? }
     this.size = null;
 
@@ -82,6 +86,9 @@ export class TaskEditor {
   current() {
     return snapshot({ title: this.titleInput.value(), body: this.bodyInput.value(), labels: [...this.labels], status: this.status });
   }
+
+  // Whether this is a local task (local-editor.js): it has no project, so no Status option to be missing.
+  isLocal() { return false; }
 
   dirty() {
     return this.loaded && isDirty(this.base, this.current(), { draft: this.draft });
@@ -147,7 +154,7 @@ export class TaskEditor {
   // Sends the changes. Unless force, first checks that nobody changed the ticket on GitHub since it
   // was read, and asks instead of overwriting.
   save(cx, force = false) {
-    if (this.saving || !this.dirty()) return;
+    if (this.saving || this.wontDoing || !this.dirty()) return;
     const after = this.current();
     this.saving = true;
     this.notice = null;
@@ -226,6 +233,65 @@ export class TaskEditor {
     else if (next === "stay") this.prompt = false;
   }
 
+  // The footer, as wontdo.js decides it: which buttons are on, and whether the confirm strip is up.
+  footerState() {
+    return wontDoFooter({
+      draft: this.draft, saving: this.saving, dirty: this.dirty(), local: this.isLocal(), statusOptions: this.statusField?.options,
+      startable: this.startable, confirming: this.confirming, busy: this.wontDoing,
+    });
+  }
+
+  // Won't Do asks first, in the footer. Cancel (or Escape) puts the buttons back and changes nothing.
+  askWontDo(cx) {
+    if (this.footerState().wontDo.disabled) return;
+    this.confirming = true;
+    this.notice = null;
+    this.handle.focus(); // so Escape reaches the window even if a field had the keyboard
+    cx.notify();
+  }
+
+  cancelWontDo(cx) {
+    if (this.wontDoing) return;
+    this.confirming = false;
+    cx.notify();
+  }
+
+  // What marking the ticket Won't Do does at its source; local-editor.js moves the task's file instead. Throws on failure.
+  async sendWontDo() {
+    const { repo, ticket, project, statusField, where } = this;
+    await markWontDo(gh, { repo, ticket, project, statusField }, where);
+  }
+
+  // Confirmed. On success the sidebar drops the ticket and this window closes; on failure the error shows in the footer
+  // like Save's and the window stays.
+  wontDo(cx) {
+    if (this.wontDoing || !this.confirming) return;
+    this.wontDoing = true;
+    this.notice = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      let inert = false; // a success that left the window open: its buttons stay off
+      try {
+        await this.sendWontDo();
+        this.confirming = false;
+        setShared(CHANGED, Date.now());
+        // Opened without a recorded tab: closing blind could close another, so the window stays, inert, and says so.
+        if (!closeOpen(ticketSubject(this.repo, this.ticket))) {
+          inert = true;
+          this.notice = { kind: "saved", text: "Marked Won't Do. You can close this tab." };
+        }
+      } catch (e) {
+        const error = e instanceof GitHubError ? e : { kind: "other", message: String(e?.message ?? e) };
+        this.confirming = false;
+        this.notice = { kind: "error", text: error.message, error };
+        setShared(CHANGED, Date.now()); // the status may have been set even though closing failed
+      } finally {
+        this.wontDoing = inert;
+        cx.notify();
+      }
+    });
+  }
+
   // Start: the workflow this ticket's labels trigger starts at once; when several do, the dialog lists them to
   // choose from. A ticket as GitHub holds it is what starts, so the saved labels are matched, not unsaved edits.
   openStart(cx) {
@@ -300,7 +366,7 @@ export class TaskEditor {
 
   // The picker's options that match the search: [{ name, color? }].
   options() {
-    const all = this.picker === "status" ? (this.statusField?.options ?? []) : this.labelChoices;
+    const all = this.picker === "status" ? pickableStatuses(this.statusField?.options) : this.labelChoices; // Won't Do is the button's, not the picker's
     const q = this.search.value().trim().toLowerCase();
     return q ? all.filter((o) => o.name.toLowerCase().includes(q)) : all;
   }
@@ -347,11 +413,12 @@ export class TaskEditor {
       .on_key_down((e, cx) => {
         if (this.prompt && (e.keystroke === "enter" || e.keystroke === "cmd-s")) { this.saveAndClose(cx); cx.stop_propagation(); return; }
         if (e.key === "escape") {
-          const step = escStep({ prompt: this.prompt, start: Boolean(this.start), picker: Boolean(this.picker), popup: this.popup });
+          const step = escStep({ prompt: this.prompt, start: Boolean(this.start), picker: Boolean(this.picker), confirm: this.confirming, popup: this.popup });
           if (step === "none") return;
           if (step === "keep-editing") this.keepEditing(cx);
           else if (step === "close-start") this.closeStart(cx);
           else if (step === "close-picker") this.closePicker(cx);
+          else if (step === "cancel-confirm") this.cancelWontDo(cx);
           else this.requestClose(cx);
           cx.stop_propagation();
         } else if (e.keystroke === "cmd-s") { this.save(cx); cx.stop_propagation(); }
@@ -437,7 +504,7 @@ export class TaskEditor {
   }
 
   renderStatus(t) {
-    const options = this.statusField?.options ?? [];
+    const options = pickableStatuses(this.statusField?.options);
     if (!options.length && !this.status) return div();
     return this.section(t, "Status", h_flex().flex_wrap().gap(6)
       .child(this.status ? this.pill(t, "status-current", this.status) : note(t, "None")),
@@ -538,6 +605,8 @@ export class TaskEditor {
     const dirty = this.dirty(), n = this.notice;
     const signIn = n?.kind === "error" ? SIGN_IN_KINDS[n.error?.kind] : null;
     const diff = changes(this.base, this.current(), { draft: this.draft });
+    const f = this.footerState(), working = this.isLocal() ? "Moving…" : "Closing…";
+    const wontDoButton = (id, label, onClick, disabled, tip) => action(id, label, t, onClick, false, disabled, { danger: true, tip });
     return v_flex().flex_none().px(20).py(12).gap(10).border_t(1).border_color(t.border)
       .when(Boolean(n) && n.kind !== "saved", (el) => el.child(h_flex().gap(7).items_start().text_size(S().secondary).text_color(t.ansi1)
         .child(icon("alert", 14, t.ansi1)).child(div().flex_1().min_w(0).child(n.text))))
@@ -547,11 +616,19 @@ export class TaskEditor {
       .when(Boolean(signIn) && !this.auth.state, (el) => el.child(action("task-sign-in", "Sign in to GitHub", t,
         (_e, cx) => this.auth.start(cx, signIn, this.where.on, (cx) => this.save(cx)))))
       .when(Boolean(signIn) && Boolean(this.auth.state), (el) => el.child(this.auth.render(t, (_e, cx) => this.auth.start(cx, signIn, this.where.on, (cx) => this.save(cx)))))
-      .child(h_flex().gap(8).items_center()
-        .child(div().flex_1().min_w(0).truncate().text_size(S().secondary).text_color(n?.kind === "saved" ? t.ansi2 : t.muted)
-          .child(this.saving ? "Saving…" : n?.kind === "saved" ? n.text : dirty ? `Unsaved: ${Object.keys(diff).join(", ")}` : "No changes"))
-        .child(action("task-start", "Start", t, (_e, cx) => this.openStart(cx), true, this.saving || dirty || !this.startable))
-        .child(action("task-revert", "Revert", t, (_e, cx) => this.revert(cx), true, !dirty || this.saving))
-        .child(action("task-save", this.saving ? "Saving…" : "Save", t, (_e, cx) => this.save(cx), false, !dirty || this.saving)));
+      .child(f.confirm
+        ? h_flex().gap(8).items_center()
+          .child(this.wontDoing ? icon("ring", 14, t.muted).spin(900) : icon("alert", 14, t.ansi1))
+          .child(div().flex_1().min_w(0).truncate().text_size(S().secondary).text_color(t.foreground)
+            .child(this.wontDoing ? working : wontDoPrompt({ number: this.ticket.number, local: this.isLocal() })))
+          .child(action("wontdo-cancel", "Cancel", t, (_e, cx) => this.cancelWontDo(cx), true, f.cancel.disabled))
+          .child(wontDoButton("wontdo-confirm", "Won't Do", (_e, cx) => this.wontDo(cx), f.ok.disabled))
+        : h_flex().gap(8).items_center()
+          .child(div().flex_1().min_w(0).truncate().text_size(S().secondary).text_color(n?.kind === "saved" ? t.ansi2 : t.muted)
+            .child(this.saving ? "Saving…" : n?.kind === "saved" ? n.text : dirty ? `Unsaved: ${Object.keys(diff).join(", ")}` : "No changes"))
+          .child(wontDoButton("task-wontdo", "Won't Do", (_e, cx) => this.askWontDo(cx), f.wontDo.disabled, f.wontDo.tip))
+          .child(action("task-start", "Start", t, (_e, cx) => this.openStart(cx), true, f.start.disabled))
+          .child(action("task-revert", "Revert", t, (_e, cx) => this.revert(cx), true, f.revert.disabled))
+          .child(action("task-save", this.saving ? "Saving…" : "Save", t, (_e, cx) => this.save(cx), false, f.save.disabled)));
   }
 }

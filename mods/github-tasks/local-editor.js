@@ -5,7 +5,7 @@
 import { div } from "gpui-kit";
 import { h_flex, InputState, Input } from "gpui-base";
 import { run, setShared } from "herdr";
-import { snapshot } from "./model.js";
+import { snapshot, STATUSES } from "./model.js";
 import { TaskEditor, CHANGED } from "./editor.js";
 import { localTasks } from "./local-tasks-env.js";
 import { LOCAL_STATUS_OPTIONS, typedLabels } from "./local-ui.js";
@@ -31,6 +31,11 @@ export class LocalTaskEditor extends TaskEditor {
     this.labelInput?.set_value("");
     super.revert(cx);
   }
+
+  isLocal() { return true; }
+
+  // Won't Do for a local task moves its file to the wont-do folder (the sidebar's list never shows it again).
+  async sendWontDo() { await this.tasks().move(this.ticket.number, STATUSES.wontDo); }
 
   tasks() { return localTasks(this.props.local?.mainRoot ?? ""); }
 
@@ -64,7 +69,7 @@ export class LocalTaskEditor extends TaskEditor {
 
   // Writes the changes to the file, and moves it when the status changed. Nobody is asked first.
   save(cx) {
-    if (this.saving) return;
+    if (this.saving || this.wontDoing) return;
     this.addLabels(cx, false); // text typed in the label field but not confirmed with Enter still counts
     if (!this.dirty()) return;
     const typed = this.current(), after = snapshot({ ...typed, title: typed.title.trim() });
