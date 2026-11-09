@@ -340,3 +340,19 @@ export function mergeOutcome(ended) {
   if (ended.error) return { done: false, error: `Merged, but ${ended.error}`, note: null };
   return { done: false, error: null, note: { text: "Merged. This run's space couldn't be found to close: close it yourself.", detail: "The run has ended; only its space is left." } };
 }
+
+// The run tab's slot as the run page sees it from its own pane (the page is in the run's tab, so this heals a slot whose tab or pane
+// ids changed, e.g. after a restart): the tab and space holding the page, and left = the saved left while it is a pane of that tab,
+// else the tab's one terminal pane, else null (none is invented). null when the page's pane is unknown; the same slot object when
+// nothing differs, so the caller can skip the write.
+export function slotFromPage({ page, spaces, panes, slot }) {
+  const own = (panes ?? []).find((p) => p.pane === page);
+  if (!page || !own) return null;
+  const space = (spaces ?? []).find((s) => (s.tabs ?? []).some((t) => t.id === own.tab));
+  if (!space) return null;
+  const inTab = (panes ?? []).filter((p) => p.tab === own.tab);
+  const terminals = inTab.filter((p) => p.terminal);
+  const left = inTab.some((p) => p.pane === slot?.left) ? slot.left : terminals.length === 1 ? terminals[0].pane : null;
+  const next = { tab: own.tab, left, space: space.id };
+  return slot && slot.tab === next.tab && slot.left === next.left && slot.space === next.space ? slot : next;
+}

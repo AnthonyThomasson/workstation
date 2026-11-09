@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { viewQuick, viewConnect, connectRun, endRun, guarded, mergeOutcome, launchRun, holdShown, findRunTab, runTabParts, waitReady, orchestratorRunArgs, parseStarted, placeholderArgv, reapplyRuns, slotKey, viewTarget, findTicketSpace, peekSpace, undoRunTab, restartOrchestrator } from "./bgrun.js";
+import { viewQuick, viewConnect, connectRun, endRun, guarded, mergeOutcome, launchRun, holdShown, findRunTab, runTabParts, waitReady, orchestratorRunArgs, parseStarted, placeholderArgv, reapplyRuns, slotKey, viewTarget, findTicketSpace, peekSpace, undoRunTab, restartOrchestrator, slotFromPage } from "./bgrun.js";
 import { ticketName } from "./run.js";
 
 const SPACES = [{ id: "s1", tabs: [{ id: "tA" }, { id: "tB" }] }, { id: "s2", tabs: [{ id: "tC" }] }];
@@ -791,4 +791,38 @@ test("#35 a tab found only by name is never closed by a rebuild, and a partial t
   const partial = viewFixture({ panes: viewFixture().args.panes.filter((p) => p.pane !== "pP") });
   await viewConnect(partial.args);
   assert.deepEqual(partial.log, [["connect", { tab: "tX", space: "s1", left: "pX", page: null }]]);
+
+// slotFromPage: the run tab's slot, healed from the pane the run page itself is in.
+const HEAL_SPACES = [{ id: "s1", tabs: [{ id: "tA" }, { id: "tB" }] }, { id: "s2", tabs: [{ id: "tC" }] }];
+const HEAL_PANES = [{ pane: "pA", tab: "tA", terminal: "t9" }, { pane: "pB", tab: "tB", terminal: "t8" }, { pane: "pM", tab: "tB", mod: "github-tasks", terminal: null }];
+
+test("slotFromPage: a stale tab id is replaced by the tab holding the page, with its space", () => {
+  const slot = { tab: "gone", left: "pB", space: "s9" };
+  assert.deepEqual(slotFromPage({ page: "pM", spaces: HEAL_SPACES, panes: HEAL_PANES, slot }), { tab: "tB", left: "pB", space: "s1" });
+});
+
+test("slotFromPage: a stale left id becomes the tab's one terminal pane", () => {
+  const slot = { tab: "tB", left: "gone", space: "s1" };
+  assert.deepEqual(slotFromPage({ page: "pM", spaces: HEAL_SPACES, panes: HEAL_PANES, slot }), { tab: "tB", left: "pB", space: "s1" });
+  assert.deepEqual(slotFromPage({ page: "pM", spaces: HEAL_SPACES, panes: HEAL_PANES, slot: null }), { tab: "tB", left: "pB", space: "s1" });
+});
+
+test("slotFromPage: no terminal pane in the tab leaves left null rather than inventing one", () => {
+  const panes = [{ pane: "pM", tab: "tC", mod: "github-tasks", terminal: null }];
+  assert.deepEqual(slotFromPage({ page: "pM", spaces: HEAL_SPACES, panes, slot: { tab: "gone", left: "pB", space: "s1" } }), { tab: "tC", left: null, space: "s2" });
+});
+
+test("slotFromPage: two terminal panes are ambiguous, so left stays null", () => {
+  const panes = [...HEAL_PANES, { pane: "pX", tab: "tB", terminal: "t7" }];
+  assert.equal(slotFromPage({ page: "pM", spaces: HEAL_SPACES, panes, slot: { tab: "tB", left: "gone", space: "s1" } }).left, null);
+});
+
+test("slotFromPage: an already-correct slot comes back as the same object", () => {
+  const slot = { tab: "tB", left: "pB", space: "s1" };
+  assert.equal(slotFromPage({ page: "pM", spaces: HEAL_SPACES, panes: HEAL_PANES, slot }), slot);
+});
+
+test("slotFromPage: an unknown page pane gives null", () => {
+  assert.equal(slotFromPage({ page: "nope", spaces: HEAL_SPACES, panes: HEAL_PANES, slot: { tab: "tB", left: "pB", space: "s1" } }), null);
+  assert.equal(slotFromPage({ page: undefined, spaces: HEAL_SPACES, panes: HEAL_PANES, slot: null }), null);
 });

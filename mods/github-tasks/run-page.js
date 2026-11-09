@@ -6,7 +6,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, notify, panes, run, setShared, shared, spaces, terminals, readTextFile, theme, writeTextFile } from "herdr";
-import { endRun, findTicketSpace, mergeOutcome, peekSpace, restartOrchestrator, runTabParts, slotKey } from "./bgrun.js";
+import { endRun, findTicketSpace, mergeOutcome, peekSpace, restartOrchestrator, runTabParts, slotFromPage, slotKey } from "./bgrun.js";
 import { S, app, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
 import { agentsFor, liveOrchestratorFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
@@ -85,11 +85,21 @@ export class RunPage {
     return found;
   }
 
+  // The run tab's saved slot follows this page's own pane, so ids that changed (a Herdr restart) heal as the page renders. Written only when it differs.
+  healSlot() {
+    try {
+      const saved = shared(slotKey(this.id));
+      const next = slotFromPage({ page: this.props.pane, spaces: spaces(), panes: panes(), slot: saved ?? null });
+      if (next && next !== saved) setShared(slotKey(this.id), next);
+    } catch { /* healing is best effort */ }
+  }
+
   render(cx) {
     const t = theme(), all = terminals();
     const { workers, reviewers, needsYou } = this.agents(all);
     const lead = orchestratorOf(all, this.orchestrator);
     this.noteFinal(reviewers);
+    this.healSlot();
     this.checkFixing(lead);
     if (cx) { this.advance(cx, workers, reviewers); this.autoPr(cx, workers, reviewers); this.startPolling(cx); }
     return v_flex().id("workflow-run").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
