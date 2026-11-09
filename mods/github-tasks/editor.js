@@ -247,10 +247,11 @@ export class TaskEditor {
 
   // Gh has signed in again: the notice goes and what failed is run again (Won't Do is safe to repeat).
   afterSignIn(cx) {
-    const again = retryAfterSignIn(this.retry);
+    const again = retryAfterSignIn(this.retry, { wontDoDisabled: this.footerState().wontDo.disabled });
     this.notice = null;
     this.retry = null;
-    if (again === "wontdo") { this.confirming = true; this.wontDo(cx); } else this.save(cx);
+    if (again === "none") cx.notify();
+    else if (again === "wontdo") { this.confirming = true; this.wontDo(cx); } else this.save(cx);
   }
 
   // Won't Do asks first, in the footer. Cancel (or Escape) puts the buttons back and changes nothing.

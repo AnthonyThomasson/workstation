@@ -97,4 +97,13 @@ test("after signing in again, a failed Won't Do is run again, anything else is a
   assert.equal(retryAfterSignIn("wontdo"), "wontdo");
   assert.equal(retryAfterSignIn(null), "save");
   assert.equal(retryAfterSignIn(undefined), "save");
+  assert.equal(retryAfterSignIn(null, { wontDoDisabled: true }), "save");
+});
+
+test("a failed Won't Do is not re-run after sign-in if the button is unavailable by then (edits would be lost)", () => {
+  assert.equal(retryAfterSignIn("wontdo", { wontDoDisabled: true }), "none");
+  assert.equal(retryAfterSignIn("wontdo", { wontDoDisabled: false }), "wontdo");
+  // the flag comes from the footer: edits typed during sign-in turn it on
+  assert.equal(retryAfterSignIn("wontdo", { wontDoDisabled: footer({ dirty: true }).wontDo.disabled }), "none");
+  assert.equal(retryAfterSignIn("wontdo", { wontDoDisabled: footer({}).wontDo.disabled }), "wontdo");
 });

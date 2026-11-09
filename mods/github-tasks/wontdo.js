@@ -39,5 +39,6 @@ export const recordedTab = (at, modPanes) => (at && (modPanes ?? []).some((p) =>
 // dialog windows), else the ticket's.
 export const windowSubject = (props, ticketSubject) => props?.windowSlot ?? ticketSubject;
 
-// What the sign-in's "done" re-runs: the Won't Do that failed, else a save.
-export const retryAfterSignIn = (retry) => (retry === "wontdo" ? "wontdo" : "save");
+// What the sign-in's "done" re-runs: the Won't Do that failed, else a save. Won't Do is not re-run when the button has
+// become unavailable meanwhile (edits typed during sign-in): a success closes the window and would drop them. Then "none".
+export const retryAfterSignIn = (retry, { wontDoDisabled = false } = {}) => (retry !== "wontdo" ? "save" : wontDoDisabled ? "none" : "wontdo");
