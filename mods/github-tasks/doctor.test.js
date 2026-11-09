@@ -269,3 +269,37 @@ test("the prompt works without a repo or project, and is empty with no issues", 
   const prompt = fixPrompt(issues, { repo: null, project: null });
   assert.doesNotMatch(prompt, /null|undefined/);
 });
+
+// ---- Trigger labels -----------------------------------------------------------------------------------
+
+test("a label a workflow triggers on and the repo lacks is one issue, listing the workflows; case is ignored", () => {
+  const workflows = { items: [workflow("Story", {}, ["bug", "Feature"]), workflow("Fix", {}, ["BUG"]), workflow("Fallback")], errors: [] };
+  const issues = diagnose(healthy({ workflows, labels: [{ name: "Bug" }, { name: "other" }] }));
+  assert.deepEqual(issues.map((i) => [i.kind, i.label, i.usedBy]), [["label-missing", "Feature", ["Story"]]]);
+  assert.match(issues[0].message, /"Feature".*me\/app.*Story/);
+  const two = diagnose(healthy({ workflows, labels: [] }));
+  assert.deepEqual(two.map((i) => [i.label, i.usedBy]), [["bug", ["Story", "Fix"]], ["Feature", ["Story"]]]);
+});
+
+test("labels the repo has, or workflows without trigger labels, are no issue", () => {
+  const workflows = { items: [workflow("Story", {}, ["bug"]), workflow("Fallback")], errors: [] };
+  assert.deepEqual(diagnose(healthy({ workflows, labels: [{ name: "bug" }] })), []);
+  assert.deepEqual(diagnose(healthy({ labels: [] })), []);
+});
+
+test("unknown labels, or no repo, flag nothing; unknown labels keep the last label issues still triggered on", () => {
+  const workflows = { items: [workflow("Story", {}, ["bug"])], errors: [] };
+  assert.deepEqual(diagnose(healthy({ workflows })), []);
+  assert.deepEqual(diagnose(healthy({ workflows, repo: null, labels: [] })), []);
+  assert.deepEqual(diagnose(healthy({ workflows, repo: undefined, labels: [] })), []);
+  const carried = [{ kind: "label-missing", label: "bug", usedBy: ["Story"], message: "x" }, { kind: "label-missing", label: "gone", usedBy: ["Old"], message: "y" }];
+  assert.deepEqual(diagnose(healthy({ workflows, carried })), [carried[0]]);
+  assert.deepEqual(diagnose(healthy({ workflows, labels: [{ name: "bug" }], carried })), []); // known labels win
+});
+
+test("fixPrompt tells how to create a missing label", () => {
+  const workflows = { items: [workflow("Story", {}, ["bug", "good first"])], errors: [] };
+  const prompt = fixPrompt(diagnose(healthy({ workflows, labels: [] })), { repo: "me/app", project: PROJECT });
+  assert.match(prompt, /`gh label create bug -R me\/app`/);
+  assert.match(prompt, /`gh label create 'good first' -R me\/app`/);
+});
