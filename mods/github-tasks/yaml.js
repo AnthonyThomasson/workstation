@@ -5,10 +5,11 @@
 
 const RESERVED = /^(true|false|yes|no|on|off|y|n|null|~)$/i;
 const PLAIN = /^[A-Za-z][^\n#:]*$/;
+const TIMESTAMP = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z$/; // a task's createdAt: plain, and read back as the same string
 const plainKey = /^[A-Za-z_][\w-]*$/;
 
 function scalar(v) {
-  if (typeof v === "string") return PLAIN.test(v) && !/\s$/.test(v) && !RESERVED.test(v) ? v : JSON.stringify(v);
+  if (typeof v === "string") return (PLAIN.test(v) || TIMESTAMP.test(v)) && !/\s$/.test(v) && !RESERVED.test(v) ? v : JSON.stringify(v);
   if (v == null) return "null";
   return String(v);
 }

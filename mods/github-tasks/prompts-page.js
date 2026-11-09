@@ -9,7 +9,7 @@ import { ROLE_LABELS } from "./workflow-model.js";
 import { S, note } from "./ui.js";
 
 const PAGES = [
-  ["newTask", "What the + beside Backlog tells the agent when it opens: wait for what you want to make, grill you on the acceptance criteria, then ask whether to create the ticket and in which status."],
+  ["newTask", "What the + beside Backlog tells the agent when it opens: wait for what you want to make, grill you on the acceptance criteria, then ask whether to create it and in which status."],
   ["orchestrator", "Directs the work: plans it, starts workers and reviewers, and decides what to fix."],
   ["worker", "Does one job the orchestrator gives it."],
   ["reviewer", "Reads the finished work and reports findings. Read-only."],

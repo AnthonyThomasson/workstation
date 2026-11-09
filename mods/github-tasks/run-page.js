@@ -10,6 +10,8 @@ import { S, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
 import { agentsFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
 import { branchArgs, canMerge, finalSeen, handOffMessage, handOffNote, handOffStep, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
+import { defaultBranchOf, localMergeSteps, localPrBody, moveToStage, squashMessage } from "./local-runs.js";
+import { localTasks, repoHasGithubRemote } from "./local-tasks-env.js";
 
 const stageKey = (id) => `github-tasks.run.${id}.stage`;
 const prKey = (id) => `github-tasks.run.${id}.pr`;
@@ -17,6 +19,8 @@ const finalKey = (id) => `github-tasks.run.${id}.final`; // the final reviewer h
 const autoPrKey = (id) => `github-tasks.run.${id}.autopr`; // the page has tried to open the pull request by itself: it does that once per run
 const agentsKey = (id) => `github-tasks.run.${id}.agents`; // the workers and reviewers seen, so a reload still lists the finished ones
 const POLL_MS = 30000;
+const NO_PR = "This repo's origin isn't on GitHub (or it has none), so there is no pull request to open. Merge puts the work straight into the default branch.";
+const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 
 export class RunPage {
   constructor(props) {
@@ -31,6 +35,10 @@ export class RunPage {
     this.ticket = props?.ticket ?? null; // { number, key }
     this.projectId = props?.projectId ?? null;
     this.statusField = props?.statusField ?? null; // { id, options }
+    // A run on a local task (start.js): its file in ~/.herdr/tasks moves instead of the project's Status. githubRemote: origin is on GitHub, so the pull request flow stays.
+    this.local = props?.taskSource === "local";
+    this.mainRoot = props?.mainRoot ?? props?.repoRoot ?? "";
+    this.githubRemote = props?.githubRemote !== false;
     this.stage = Number(shared(stageKey(this.id))) || 0; // the furthest status already set
     this.pr = shared(prKey(this.id)) || null; // { url, state, number }
     this.finalSeen = finalSeen({ saved: shared(finalKey(this.id)) });
@@ -107,7 +115,7 @@ export class RunPage {
   // When Merge would be allowed and the run has no pull request, open it by itself, once: the attempt is saved before it
   // is made, so neither a reload nor a failure tries again. A failure shows its error, and Create PR stays as the retry.
   autoPr(cx, workers, reviewers) {
-    if (!this.folder || !this.branch) return;
+    if (!this.folder || !this.branch || this.noPr()) return;
     const ready = canMerge({ finalSeen: this.finalSeen, workers, reviewers });
     if (!shouldAutoPr({ ready, pr: this.pr, tried: this.autoPrTried, busy: this.busy })) return;
     this.autoPrTried = true;
@@ -118,14 +126,18 @@ export class RunPage {
   // The ticket follows the run: In Progress once a worker has started, In Review once a reviewer has. It never goes back.
   advance(cx, workers, reviewers) {
     const stage = stageOf({ workers, reviewers });
-    if (stage <= this.stage || this.moving || !this.statusField || !this.projectId || !this.ticket?.key) return;
+    if (stage <= this.stage || this.moving) return;
+    if (this.local ? !this.mainRoot || !this.ticket?.number : !this.statusField || !this.projectId || !this.ticket?.key) return;
     this.moving = true;
     cx.spawn(async (cx) => {
-      const option = optionFor(this.statusField.options, stage);
       try {
-        if (option) {
-          const r = await exec("gh", statusArgs({ projectId: this.projectId, itemId: this.ticket.key, fieldId: this.statusField.id, optionId: option.id }));
-          if (r.code !== 0) throw new Error(out(r));
+        if (this.local) await moveToStage(localTasks(this.mainRoot), this.ticket.number, stage); // the task's file goes to the stage's folder
+        else {
+          const option = optionFor(this.statusField.options, stage);
+          if (option) {
+            const r = await exec("gh", statusArgs({ projectId: this.projectId, itemId: this.ticket.key, fieldId: this.statusField.id, optionId: option.id }));
+            if (r.code !== 0) throw new Error(out(r));
+          }
         }
       } catch (e) {
         notify({ title: "The ticket's status didn't change", body: String(e?.message ?? e), level: "warning" });
@@ -138,13 +150,20 @@ export class RunPage {
   }
 
   // The run's pull request: look for it now and then, so Create PR becomes a link and shows when it is merged.
+  // A local task in a repo whose origin isn't on GitHub: no pull request, and Merge is a local squash.
+  noPr() { return this.local && !this.githubRemote; }
+
   startPolling(cx) {
     if (this.polling || !this.folder) return;
     this.polling = true;
     cx.spawn(async (cx) => {
       for (;;) {
         if (this.pr?.state === "MERGED") break;
-        if (!this.busy) {
+        if (this.local && !this.busy) { // origin may be added or changed while the run goes on
+          const now = await repoHasGithubRemote(this.mainRoot).catch(() => this.githubRemote);
+          if (now !== this.githubRemote) { this.githubRemote = now; cx.notify(); }
+        }
+        if (!this.busy && !this.noPr()) {
           const r = await exec("gh", prViewArgs(this.branch), { cwd: this.folder }).catch(() => ({ code: 1, stdout: "" }));
           const found = r.code === 0 ? parsePr(r.stdout) : null;
           if (found && (found.url !== this.pr?.url || found.state !== this.pr?.state)) { this.pr = found; setShared(prKey(this.id), found); cx.notify(); }
@@ -157,12 +176,14 @@ export class RunPage {
   renderActions(t, lead, cx, workers = [], reviewers = []) {
     // Merge and Create PR wait for the final review and for every worker and reviewer to end; Merge also waits for the pull request.
     const ready = canMerge({ finalSeen: this.finalSeen, workers, reviewers });
-    const button = (id, label, onClick, on = true) => h_flex().id(id).h(26).px(10).items_center().rounded(6).text_size(S().secondary).font_medium()
+    const button = (id, label, onClick, on = true, tip) => h_flex().id(id).h(26).px(10).items_center().rounded(6).text_size(S().secondary).font_medium()
       .when(on, (el) => el.cursor_pointer().bg(t.selected).hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click(onClick))
-      .when(!on, (el) => el.text_color(t.muted)).child(label);
+      .when(!on, (el) => el.text_color(t.muted)).when(Boolean(tip), (el) => el.tooltip(tip)).child(label);
     const row = h_flex().gap(8).items_center().pt(4)
-      .child(button("run-merge", this.busy === "merge" ? "Merging…" : "Merge", (_e, cx) => this.merge(cx), ready && Boolean(this.pr) && !this.busy));
-    if (!this.pr) row.child(button("run-pr", this.busy === "pr" ? "Creating PR…" : "Create PR", (_e, cx) => this.createPr(cx), ready && !this.busy));
+      .child(button("run-merge", this.busy === "merge" ? "Merging…" : "Merge", (_e, cx) => this.merge(cx), ready && (Boolean(this.pr) || this.noPr()) && !this.busy,
+        this.noPr() ? "Merges the ticket branch into the default branch of the main checkout, as one commit. Nothing is pushed." : undefined));
+    if (this.noPr()) row.child(button("run-pr", "Create PR", () => {}, false, NO_PR)); // disabled, and says why
+    else if (!this.pr) row.child(button("run-pr", this.busy === "pr" ? "Creating PR…" : "Create PR", (_e, cx) => this.createPr(cx), ready && !this.busy));
     else row.child(h_flex().id("run-pr-link").h(26).px(10).gap(6).items_center().rounded(6).cursor_pointer().bg(t.selected).hover((s) => s.bg(t.hover))
       .text_size(S().secondary).font_medium().on_mouse_down("left", stop).on_click((_e, cx) => cx.open_url(this.pr.url))
       .child(`PR #${this.pr.number}${this.pr.state === "MERGED" ? " · merged" : ""}`).child(icon("external", 12, t.muted)));
@@ -182,7 +203,10 @@ export class RunPage {
         const cwd = { cwd: this.folder };
         const push = await exec("git", ["-C", this.folder, "push", "-u", "origin", this.branch]);
         if (push.code !== 0) throw new Error(`The push failed: ${out(push)}`);
-        const made = await exec("gh", prArgs({ branch: this.branch, title: this.title.replace(/^#\d+\s+/, ""), number: this.ticket?.number }), cwd);
+        const title = this.title.replace(/^#\d+\s+/, "");
+        // A local task has no GitHub issue to close: the body describes the task instead.
+        const body = this.local ? localPrBody(await localTasks(this.mainRoot).get(this.ticket?.number).catch(() => null), { id: this.ticket?.number, title }) : undefined;
+        const made = await exec("gh", prArgs({ branch: this.branch, title, number: this.ticket?.number, body }), cwd);
         const url = parsePrUrl(made.stdout) ?? parsePrUrl(made.stderr); // gh says "already exists" with the URL on stderr
         if (!url) throw new Error(`gh didn't open a pull request: ${out(made)}`);
         this.pr = { url, state: "OPEN", number: prNumber(url) };
@@ -196,6 +220,7 @@ export class RunPage {
   // ahead of origin, squash-merge the PR with gh, set the ticket Done, then remove the worktree, the local branch and the
   // run files. It never runs git in the main checkout's working tree. Pressing it again finishes what a failure left.
   merge(cx) {
+    if (this.noPr()) return this.mergeLocal(cx);
     if (this.busy || !this.pr) return;
     this.busy = "merge"; this.error = null; this.note = null; cx.notify();
     cx.spawn(async (cx) => {
@@ -211,7 +236,7 @@ export class RunPage {
         if (found.state !== this.pr.state) { this.pr = found; setShared(prKey(this.id), found); }
         const { warnings } = await runSteps(mergeSteps({
           repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, number: found.number, prMerged: found.state === "MERGED", headOid: found.headOid,
-          status: this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
+          status: await this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
         }), exec);
         for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
         if (!(await this.closeSession())) {
@@ -222,6 +247,31 @@ export class RunPage {
         if (!(await this.handOff(e))) this.error = String(e?.message ?? e);
         this.busy = null; cx.notify();
       }
+    });
+  }
+
+  // Merge for a local task with no GitHub remote (local-runs.js has the steps): the main checkout must be on the default branch and
+  // clean and the ticket worktree clean; the work is squashed into it and committed as "<title> (#<id>)", never pushed. A conflict is
+  // undone and listed. Then the task goes to done/ and the worktree, branch, run files and terminals go as in the pull request Merge.
+  mergeLocal(cx) {
+    if (this.busy) return;
+    this.busy = "merge"; this.error = null; cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const workDirExists = (await exec("git", worktreeArgs(this.folder))).code === 0;
+        const branchExists = (await exec("git", branchArgs(this.repoRoot, this.branch))).code === 0;
+        const task = await localTasks(this.mainRoot).get(this.ticket?.number).catch(() => null);
+        const title = task?.title ?? this.title.replace(/^#\d+\s+/, "");
+        const { warnings } = await runSteps(localMergeSteps({
+          repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, defaultBranch: branchExists ? await defaultBranchOf(git, this.repoRoot) : null,
+          message: squashMessage(title, this.ticket?.number), status: await this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
+        }), exec);
+        for (const body of warnings) notify({ title: "The task didn't move", body, level: "warning" });
+        if (!(await this.closeSession())) {
+          this.error = "Merged. This tab couldn't be closed for you: close it yourself.";
+          this.busy = null; cx.notify();
+        }
+      } catch (e) { this.error = String(e?.message ?? e); this.busy = null; cx.notify(); }
     });
   }
 
@@ -239,7 +289,13 @@ export class RunPage {
   }
 
   // How Merge sets the ticket Done: the gh call, a warning when the project has no such option, or null when the run has no project.
-  doneStatus() {
+  // A local task: moving its file to done/, or a warning when the file is gone.
+  async doneStatus() {
+    if (this.local) {
+      const tasks = localTasks(this.mainRoot), id = this.ticket?.number;
+      if (!id || !(await tasks.get(id).catch(() => null))) return { warn: `Task #${id ?? "?"} isn't in the local tasks any more, so it wasn't moved to done/.` };
+      return { move: () => moveToStage(tasks, id, 3) };
+    }
     if (!this.statusField || !this.projectId || !this.ticket?.key) return null;
     const option = optionFor(this.statusField.options, 3);
     if (!option) return { warn: `The project has no "Done" status, so the ticket's status wasn't set. Set it by hand.` };

@@ -49,3 +49,12 @@ test("the New Task prompt waits for the person, grills on acceptance criteria an
   assert.match(prompt, /"Up next" or "Todo"/);
   assert.match(promptForRole("newTask"), /<project>/);
 });
+
+test("the New Task prompt tab shows the local prompt, with a placeholder id, when the repo's tasks are local", () => {
+  const prompt = promptForRole("newTask", { local: { mainRoot: "/r/app", todoDir: "/h/t/to-do", upNextDir: "/h/t/up-next" } });
+  assert.match(prompt, /\/h\/t\/to-do/);
+  assert.match(prompt, /\/h\/t\/up-next/);
+  assert.match(prompt, /next id is <next id>/);
+  assert.match(prompt, /no `gh` calls/);
+  assert.doesNotMatch(promptForRole("newTask", { repo: "me/app" }), /no `gh` calls/);
+});

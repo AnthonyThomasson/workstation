@@ -1,7 +1,11 @@
-// New Task: opens an agent in a tab of its own, in the repo's folder, told what to do (the prompt is in model.js).
-import { knownAgents, spaces } from "herdr";
+// New Task: opens an agent in a tab of its own, in the repo's folder, told what to do (the prompts are in model.js and,
+// for local tasks, local-ui.js).
+import { home, knownAgents, spaces } from "herdr";
 import { newTaskPrompt, groomArgv } from "./model.js";
 import { app } from "./ui.js";
+import { localTasks } from "./local-tasks-env.js";
+import { statusDir } from "./local-tasks.js";
+import { localNewTaskPrompt } from "./local-ui.js";
 
 export const installedAgents = () => knownAgents().then((list) => list.filter((a) => a.installed), () => []);
 
@@ -21,4 +25,11 @@ async function openAgent({ agent, name, task, groomer, where }) {
 export async function startNewTask({ agent, repo, project, settings, groomer, where }) {
   const name = `New task ${String(repo).split("/").pop()}`;
   await openAgent({ agent, name, task: newTaskPrompt({ repo, project, backlog: settings.backlog, groomed: settings.groomed }), groomer, where });
+}
+
+// New Task in local mode: the agent is told the task folders, the next id and the file format, and writes one file.
+export async function startLocalNewTask({ agent, mainRoot, groomer, where }) {
+  const nextId = await localTasks(mainRoot).nextId();
+  const task = localNewTaskPrompt({ mainRoot, nextId, todoDir: statusDir(home(), mainRoot, "to-do"), upNextDir: statusDir(home(), mainRoot, "up-next") });
+  await openAgent({ agent, name: `New task ${mainRoot.split("/").filter(Boolean).pop() || ""}`.trim(), task, groomer, where });
 }

@@ -17,13 +17,17 @@ export const DOCTOR_KEY = "github-tasks.doctor"; // { issues, repo, project }: w
 //   auth           { installed, signedIn: true | false | null (not known), scopes: [string] | null (gh did not list them) } | undefined
 //   agents         what knownAgents() knows: [{ key, installed }] | null (not known)
 //   groomerAgent   the task agent saved on the settings page, or null
+//   source         "local" when the repo's tasks are local files: no project, status or label checks, no gh-scope, and gh-auth only
+//                  when githubRemote (the repo's origin is on GitHub); anything else is github, as it always was
 //   workflows      { items: [workflow], errors: ["file.yaml: why"] } as store.loadAll gives them
 // Kinds: no-project, status-missing, status-misnamed, label-missing, gh-auth, gh-scope, agent-missing, workflow-invalid.
-export function diagnose({ repo, project, statuses, labels, carried = [], auth, agents = null, groomerAgent = null, workflows } = {}) {
+// Local tasks have no project and free-typed labels, so the project, status and label checks are left out.
+export function diagnose({ repo, project, statuses, labels, carried = [], auth, agents = null, groomerAgent = null, workflows, source, githubRemote = false } = {}) {
+  const local = source === "local";
   return [
-    ...checkAuth(auth),
-    ...checkProject({ repo, project, statuses, carried }),
-    ...checkLabels({ repo, labels, carried }, workflows?.items ?? []),
+    ...(local ? checkAuth(githubRemote ? auth : undefined).filter((i) => i.kind === "gh-auth") : checkAuth(auth)),
+    ...(local ? [] : checkProject({ repo, project, statuses, carried })),
+    ...(local ? [] : checkLabels({ repo, labels, carried }, workflows?.items ?? [])),
     ...checkAgents(agents, groomerAgent, workflows?.items ?? []),
     ...(workflows?.errors ?? []).map((error) => ({ kind: "workflow-invalid", message: `A workflow file can't be read: ${error}`, file: error })),
   ];
@@ -125,8 +129,9 @@ export function parseAuthStatus({ code, stdout = "", stderr = "" }) {
 
 // What a check depends on. When it changes, the check runs again. The place is its repo's top folder (cwd when it has none),
 // so moving about inside one repo is not a change.
-export const doctorSignature = ({ place, workflowsChanged, groomer, project }) => JSON.stringify([
-  place?.root ?? place?.cwd ?? null, place?.on ?? null, workflowsChanged ?? null, groomer?.agent ?? null, project ?? null,
+// The task source is part of it, so ticking "local tasks" in the settings checks again.
+export const doctorSignature = ({ place, workflowsChanged, groomer, project, source }) => JSON.stringify([
+  place?.root ?? place?.cwd ?? null, place?.on ?? null, workflowsChanged ?? null, groomer?.agent ?? null, project ?? null, source ?? "github",
 ]);
 
 // Whether a check made for `checked` ({ cwd, on, root }) still describes `place` ({ cwd, on }): the same machine, and the same
@@ -142,11 +147,13 @@ export function samePlace(checked, place) {
 export const doctorFor = (found, place) => (found && samePlace(found.place ?? null, place ?? null) ? found : null);
 
 // A prompt to copy to an agent: the repo and project, the problems, and what to do about each.
-// context: { repo, project: { title, url } | null }. "" when there is nothing wrong.
-export function fixPrompt(issues, { repo = null, project = null } = {}) {
+// context: { repo, project: { title, url } | null, source: "local" | "github" }. "" when there is nothing wrong. A repo with
+// local tasks has no project: the prompt says so and names none.
+export function fixPrompt(issues, { repo = null, project = null, source } = {}) {
   if (!issues?.length) return "";
+  const local = source === "local";
   const where = repo ?? "the repo of this space";
-  const board = project ? `the GitHub Project "${project.title ?? ""}"${project.url ? ` (${project.url})` : ""}` : null;
+  const board = !local && project ? `the GitHub Project "${project.title ?? ""}"${project.url ? ` (${project.url})` : ""}` : null;
   const by = (...kinds) => issues.filter((i) => kinds.includes(i.kind));
   const steps = [];
 
@@ -179,9 +186,11 @@ export function fixPrompt(issues, { repo = null, project = null } = {}) {
   return [
     `# You are helping the person fix the Tasks setup of ${where}`, "",
     "## Context", "",
-    `- Tasks is a Herdr module that shows ${board ?? "the GitHub Project linked to the repo"} as a ticket list and starts agent workflows on tickets.`,
+    local
+      ? "- Tasks is a Herdr module that shows the tasks of the repo as a list and starts agent workflows on them. This repo uses local tasks: YAML files on this computer, so there is no project board to set up."
+      : `- Tasks is a Herdr module that shows ${board ?? "the GitHub Project linked to the repo"} as a ticket list and starts agent workflows on tickets.`,
     `- The repo is ${where}. You are working in its folder.`,
-    board ? `- The project is ${board}.` : "- The repo has no project known to Tasks yet.",
+    ...(local ? [] : [board ? `- The project is ${board}.` : "- The repo has no project known to Tasks yet."]),
     "- Tasks' doctor found these problems:",
     ...issues.map((i) => `  - ${i.message}`), "",
     "## What to do", "",

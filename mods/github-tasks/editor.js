@@ -22,6 +22,7 @@ const SIGN_IN_KINDS = { "no-write-scope": REFRESH, "no-scope": REFRESH, "no-auth
 
 export class TaskEditor {
   constructor(props, cx) {
+    this.props = props ?? {}; // local-editor.js reads its extras from here, because load() runs before its constructor does
     this.ticket = props?.ticket ?? {};
     this.repo = props?.repo ?? "";
     this.project = props?.project ?? null;

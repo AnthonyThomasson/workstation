@@ -427,6 +427,35 @@ test("merge steps, run for real: a retry after the PR merged but the cleanup sto
   assert.ok(!existsSync(w.workDir) && !existsSync(w.runDir));
 });
 
+test("prArgs takes a body of its own, for a task with no GitHub issue to close", () => {
+  const a = prArgs({ branch: "b", title: "T", number: 4, body: "Local task #4: T" });
+  assert.deepEqual(a.slice(-4), ["--title", "#4 T", "--body", "Local task #4: T"]);
+  assert.doesNotMatch(a.join(" "), /Closes/);
+  assert.equal(prArgs({ branch: "b", title: "T", number: 4, body: "" }).at(-1), "", "an empty body is still the caller's");
+});
+
+test("mergeSteps can move a local task's file to done/ instead of setting a project status", async () => {
+  const moved = [];
+  const steps = mergeSteps({ ...ctx, status: { move: async () => { moved.push("done"); } } });
+  assert.deepEqual(names(steps), ["tree-status", "fetch", "ahead", "pr-merge", "status", "remove-worktree", "delete-branch", "remove-run-files"]);
+  const { exec } = fake();
+  const out = await runSteps(steps, exec);
+  assert.deepEqual(moved, ["done"]);
+  assert.match(out.done.join(";"), /moved the task to done/);
+});
+
+test("runSteps: a step can be code (run) and a check can read the output (check)", async () => {
+  const { exec } = fake();
+  const ran = [];
+  await runSteps([{ name: "a", run: async (e) => { ran.push(typeof e); } }], exec);
+  assert.deepEqual(ran, ["function"]);
+  await assert.rejects(runSteps([{ name: "ok", cmd: "x", args: [], done: "did x" }, { name: "b", run: async () => { throw new Error("nope"); } }], exec), /^Error: nope Already done: did x\.$/);
+  const check = { name: "c", cmd: "x", args: [], fail: "Couldn't.", check: (s) => (s.trim() === "main" ? null : `on ${s.trim()}`) };
+  await runSteps([check], fake({ x: { stdout: "main\n" } }).exec);
+  await assert.rejects(runSteps([check], fake({ x: { stdout: "dev\n" } }).exec), /^Error: on dev$/);
+  await assert.rejects(runSteps([check], fake({ x: { code: 1, stderr: "bad" } }).exec), /Couldn't\. bad/);
+});
+
 // A Merge that stops at the ahead or tree-status check is handed to the orchestrator.
 const stopOf = async (answers) => runSteps(mergeSteps(ctx), fake(answers).exec).then(() => null, (e) => e);
 

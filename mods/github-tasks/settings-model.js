@@ -1,5 +1,6 @@
 // Pure state and prompt selection for the Task settings sections and their read-only prompt tabs.
 import { newTaskPrompt, spelled, STATUSES } from "./model.js";
+import { localNewTaskPrompt } from "./local-ui.js";
 import { orchestratorPrompt, workerPrompt, reviewerPrompt } from "./run.js";
 
 // All four sections start closed; only explicit booleans for known sections survive a reload.
@@ -8,7 +9,9 @@ export function normalizeSettingsSections(saved) {
   return Object.fromEntries(["newTask", "orchestrator", "worker", "reviewer"].map((role) => [role, value[role] === true]));
 }
 
-export function promptForRole(role, { repo = "", project = null, options = [] } = {}) {
+// local: { mainRoot, todoDir, upNextDir } when the repo's tasks are local files; the id is a placeholder, as a run's are.
+export function promptForRole(role, { repo = "", project = null, options = [], local = null } = {}) {
+  if (role === "newTask" && local) return localNewTaskPrompt({ ...local, nextId: "<next id>" });
   if (role === "newTask") {
     return newTaskPrompt({ repo, project, backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) });
   }
