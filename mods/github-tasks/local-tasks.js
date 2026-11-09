@@ -4,7 +4,7 @@
 // one list. The folder a file is in is the task's status. Pure: the file operations come in as `io`
 // (local-tasks-env.js passes Herdr's), so node --test runs it against a Map. Nothing here runs git.
 //   io.list(dir) -> file names ([] when the folder is missing)    io.read(path) -> text | null
-//   io.write(path, text)  (last write wins)    io.remove(path)    io.rename(from, to)    io.mkdir(dir)
+//   io.write(path, text)  (last write wins)    io.remove(path)    io.mkdir(dir)
 import { parse, stringify } from "./yaml.js";
 import { slug, uniqueLabels } from "./workflow-model.js";
 import { STATUSES, sameStatus } from "./model.js";
@@ -18,9 +18,9 @@ export const FOLDERS = [
   { key: "done", folder: "done", status: STATUSES.done },
 ];
 
-// "To Do" (or "Todo", or the folder name "to-do") -> "to-do"; null when it is none of the five.
+// "To Do" (or "Todo", "Backlog", or the folder name "to-do") -> "to-do"; null when it is none of the five.
 export const folderOfStatus = (status) => {
-  const found = FOLDERS.find((f) => f.folder === status || sameStatus(f.status, status));
+  const found = FOLDERS.find((f) => f.folder === status || sameStatus(f.status, status) || (f.key === "backlog" && sameStatus("Backlog", status)));
   return found ? found.folder : null;
 };
 // "up-next" -> "Up Next"; null for any other folder.
@@ -54,7 +54,7 @@ export function parseTask(text, fallbackId = null) {
     id: wholeId(doc.id) ?? wholeId(fallbackId),
     title,
     description: doc.description == null ? "" : String(doc.description),
-    labels: uniqueLabels(labels.filter((l) => l != null && typeof l !== "object")),
+    labels: uniqueLabels(labels.filter((l) => l != null && typeof l !== "object").map(String)),
     createdAt: doc.createdAt == null ? null : String(doc.createdAt),
   };
 }
@@ -131,8 +131,9 @@ export function makeLocalTasks({ io, root, home }) {
       const text = stringify({ ...parse(file.text), id: Number(id), title: name, description: description ?? "", labels: uniqueLabels(labels ?? []) });
       const target = taskFileName(id, name);
       const path = `${dir(file.folder)}/${target}`;
-      if (target !== file.name) await io.rename(file.path, path);
-      await io.write(path, text);
+      if (target !== file.name && (await io.read(path)) != null) throw new Error(`There is already a file called ${target} in ${file.folder}/.`);
+      await io.write(path, text); // the new text is written before the old file goes, so a failed write loses nothing
+      if (path !== file.path) await io.remove(file.path);
       return taskOf({ folder: file.folder, name: target, path, text });
     },
 
@@ -142,8 +143,10 @@ export function makeLocalTasks({ io, root, home }) {
       const file = await find(id);
       if (file.folder === folder) return taskOf(file);
       const path = `${dir(folder)}/${file.name}`;
+      if ((await io.read(path)) != null) throw new Error(`There is already a file called ${file.name} in ${folder}/.`);
       await io.mkdir(dir(folder));
-      await io.rename(file.path, path);
+      await io.write(path, file.text); // copied before the old file goes, so a failed write loses nothing
+      await io.remove(file.path);
       return taskOf({ ...file, folder, path });
     },
   };

@@ -22,7 +22,9 @@ export const tasksConfigPath = (mainRoot) => `${tasksConfigDir(mainRoot)}/tasks.
 // read(root) -> "local" | "github", never rejects. write(root, source) makes the folder if it is not there.
 export function makeTasksConfig(io) {
   return {
-    read: async (mainRoot) => parseTaskSource(await io.read(tasksConfigPath(mainRoot)).catch(() => null)),
+    read: async (mainRoot) => {
+      try { return parseTaskSource(await io.read(tasksConfigPath(mainRoot))); } catch { return "github"; }
+    },
     write: async (mainRoot, source) => {
       await io.mkdir(tasksConfigDir(mainRoot));
       await io.write(tasksConfigPath(mainRoot), serializeTaskSource(source));

@@ -56,3 +56,9 @@ test("the adapter writes the file, making its folder first", async () => {
   await config.write("/a", "github");
   assert.equal(await config.read("/a"), "github");
 });
+
+test("read never rejects, even when io.read throws at once", async () => {
+  const config = makeTasksConfig({ read: () => { throw new Error("sync boom"); }, write: async () => {}, mkdir: async () => {} });
+  assert.equal(await config.read("/a"), "github");
+  assert.equal(await makeTasksConfig({ read: () => Promise.reject(new Error("no")) }).read("/a"), "github");
+});

@@ -14,7 +14,6 @@ export const io = {
   // Last write wins: the file is read first only because writeTextFile wants what it replaces.
   write: async (path, text) => writeTextFile(path, text, (await readTextFile(path).catch(() => null)) ?? null),
   remove: async (path) => must(await sh('rm -f "$1"', path), "rm"),
-  rename: async (from, to) => must(await sh('mv -f "$1" "$2"', from, to), "mv"),
   mkdir: async (dir) => must(await sh('mkdir -p "$1"', dir), "mkdir"),
 };
 

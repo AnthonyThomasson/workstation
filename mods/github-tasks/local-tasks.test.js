@@ -25,6 +25,7 @@ test("the five status folders map to the five statuses", () => {
   assert.deepEqual(FOLDERS.map((f) => f.status), [STATUSES.backlog, STATUSES.groomed, STATUSES.inProgress, STATUSES.inReview, STATUSES.done]);
   assert.equal(folderOfStatus("To Do"), "to-do");
   assert.equal(folderOfStatus("Todo"), "to-do");
+  assert.equal(folderOfStatus("Backlog"), "to-do");
   assert.equal(folderOfStatus("Up Next"), "up-next");
   assert.equal(folderOfStatus("in progress"), "in-progress");
   assert.equal(folderOfStatus("In Review"), "in-review");
@@ -72,6 +73,8 @@ test("missing fields get defaults; a missing or empty title, bad YAML or a non-m
   assert.deepEqual(parseTask("title: Just a title\n"), { id: null, title: "Just a title", description: "", labels: [], createdAt: null });
   assert.equal(parseTask("title: Hand\nlabels: bug\n").labels.length, 1);
   assert.deepEqual(parseTask("title: 2024\nlabels: [a, b]\n").labels, ["a", "b"]);
+  assert.deepEqual(parseTask("title: T\nlabels:\n  - 2\n  - true\n  - bug\n").labels, ["2", "true", "bug"]);
+  assert.deepEqual(parseTask("title: T\nlabels: 2\n").labels, ["2"]);
   assert.equal(parseTask("title: 2024\n").title, "2024");
   for (const text of ["", "id: 1\n", "title:\nid: 1\n", "title: '  '\n", "title: [a\n", "a: 1\na: 2\n", "- a\n- b\n", "just text\n", "7\n", "title: x\n\ttab: 1\n", null, undefined]) {
     assert.equal(parseTask(text), null, JSON.stringify(text));
@@ -88,19 +91,14 @@ test("an id that is not a whole number counts as missing; the file name's id sta
 
 // A disk in a Map. write() overwrites (last write wins); list() gives the names directly in a folder.
 function disk(files = {}) {
-  const fs = new Map(Object.entries(files)), calls = [];
+  const fs = new Map(Object.entries(files)), calls = [], failWrites = new Set();
   return {
-    fs, calls,
+    fs, calls, failWrites,
     io: {
       list: async (dir) => [...fs.keys()].filter((p) => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes("/")).map((p) => p.slice(dir.length + 1)),
       read: async (p) => fs.get(p) ?? null,
-      write: async (p, text) => { calls.push(["write", p]); fs.set(p, text); },
+      write: async (p, text) => { calls.push(["write", p]); if (failWrites.has(p)) throw new Error("disk full"); fs.set(p, text); },
       remove: async (p) => { calls.push(["remove", p]); fs.delete(p); },
-      rename: async (from, to) => {
-        calls.push(["rename", from, to]);
-        if (!fs.has(from)) throw new Error("no such file");
-        fs.set(to, fs.get(from)); fs.delete(from);
-      },
       mkdir: async (dir) => { calls.push(["mkdir", dir]); },
     },
   };
@@ -192,7 +190,7 @@ test("saving a new title renames the file to the new slug; the same slug keeps t
   assert.equal(saved.path, `${BASE}/to-do/7-totally-different.yml`);
   assert.deepEqual([...d.fs.keys()], [`${BASE}/to-do/7-totally-different.yml`]);
   assert.equal(parseTask(d.fs.get(saved.path)).title, "Totally different");
-  assert.deepEqual(d.calls[0], ["rename", `${BASE}/to-do/7-fix-login-redirect.yml`, `${BASE}/to-do/7-totally-different.yml`]);
+  assert.deepEqual(d.calls, [["write", `${BASE}/to-do/7-totally-different.yml`], ["remove", `${BASE}/to-do/7-fix-login-redirect.yml`]]); // write first, then remove
 });
 
 test("a file named some other way is renamed to <id>-<slug>.yml on save", async () => {
@@ -229,7 +227,7 @@ test("move puts the file in the other status folder, making it first", async () 
   assert.equal(moved.status, "In Progress");
   assert.equal(moved.folder, "in-progress");
   assert.equal(moved.path, `${BASE}/in-progress/7-fix-login-redirect.yml`);
-  assert.deepEqual(d.calls, [["mkdir", `${BASE}/in-progress`], ["rename", `${BASE}/to-do/7-fix-login-redirect.yml`, `${BASE}/in-progress/7-fix-login-redirect.yml`]]);
+  assert.deepEqual(d.calls, [["mkdir", `${BASE}/in-progress`], ["write", `${BASE}/in-progress/7-fix-login-redirect.yml`], ["remove", `${BASE}/to-do/7-fix-login-redirect.yml`]]);
   assert.equal(d.fs.get(moved.path), SAMPLE);
   assert.equal((await tasks.move(7, "Done")).folder, "done");
   assert.deepEqual((await tasks.list()).map((t) => t.id), []);
@@ -250,4 +248,33 @@ test("a moved file keeps working when its name was not the usual one", async () 
   const moved = await tasks.move(7, "Up Next");
   assert.equal(moved.path, `${BASE}/up-next/7-old-name.yml`); // the file keeps its name; save is what renames it
   assert.equal(d.fs.size, 1);
+});
+
+test("save will not take another file's name, and changes nothing", async () => {
+  const other = file(8, "Other", "2026-01-01T00:00:00Z");
+  const { d, tasks } = setup({ [`${BASE}/to-do/7-fix-login-redirect.yml`]: SAMPLE, [`${BASE}/to-do/7-new-title.yml`]: other });
+  await assert.rejects(tasks.save(7, { title: "New title", description: "", labels: [] }), /already a file called 7-new-title\.yml/);
+  assert.equal(d.fs.get(`${BASE}/to-do/7-new-title.yml`), other);
+  assert.equal(d.fs.get(`${BASE}/to-do/7-fix-login-redirect.yml`), SAMPLE);
+  assert.deepEqual(d.calls, []);
+});
+
+test("move will not take another file's name in the target folder, and changes nothing", async () => {
+  const other = "id: 70\ntitle: Other\n";
+  const { d, tasks } = setup({ [`${BASE}/to-do/7-fix-login-redirect.yml`]: SAMPLE, [`${BASE}/done/7-fix-login-redirect.yml`]: other });
+  await assert.rejects(tasks.move(7, "Done"), /already a file called/);
+  assert.equal(d.fs.get(`${BASE}/done/7-fix-login-redirect.yml`), other);
+  assert.equal(d.fs.get(`${BASE}/to-do/7-fix-login-redirect.yml`), SAMPLE);
+  assert.deepEqual(d.calls, []);
+});
+
+test("a write that fails leaves the old file where it was (save with a new name, and move)", async () => {
+  const { d, tasks } = setup({ [`${BASE}/to-do/7-fix-login-redirect.yml`]: SAMPLE });
+  d.failWrites.add(`${BASE}/to-do/7-totally-different.yml`);
+  await assert.rejects(tasks.save(7, { title: "Totally different", description: "", labels: [] }), /disk full/);
+  assert.deepEqual([...d.fs.keys()], [`${BASE}/to-do/7-fix-login-redirect.yml`]);
+  assert.equal(d.fs.get(`${BASE}/to-do/7-fix-login-redirect.yml`), SAMPLE);
+  d.failWrites.add(`${BASE}/done/7-fix-login-redirect.yml`);
+  await assert.rejects(tasks.move(7, "Done"), /disk full/);
+  assert.deepEqual([...d.fs.keys()], [`${BASE}/to-do/7-fix-login-redirect.yml`]);
 });
