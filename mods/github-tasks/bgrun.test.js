@@ -93,6 +93,17 @@ test("connecting makes a tab with the placeholder, shows the orchestrator over i
   assert.deepEqual(f.slots.r1, { tab: "tNew", left: "pNew", space: "s2" });
 });
 
+test("with no space (none given, none returned by tab.new) connecting skips space.select and still selects the tab", async () => {
+  const f = fakeApp();
+  const app = f.deps.app;
+  f.deps.app = async (name, args) => { const r = await app(name, args); return name === "tab.new" ? { ...r, space: undefined } : r; };
+  const got = await connectRun(f.deps, { ...base, space: undefined });
+  assert.deepEqual(got, { tab: "tNew", left: "pNew", space: null });
+  assert.equal(f.runs.some((r) => r[0] === "space.select"), false);
+  assert.deepEqual(f.runs.slice(0, 1), [["tab.select", { id: "tNew" }]]);
+  assert.deepEqual(f.slots.r1, { tab: "tNew", left: "pNew", space: null });
+});
+
 test("a pane that does not appear says so, and closes the tab it made", async () => {
   const f = fakeApp({ noPane: true });
   await assert.rejects(connectRun(f.deps, base), /pane didn't appear/);

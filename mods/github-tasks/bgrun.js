@@ -78,7 +78,7 @@ export async function connectRun(deps, { id, orchestrator, name, space, folder, 
       try { await deps.app("pane.swap", { pane: left, target: page }); } catch { /* it stays on the right: still works */ }
     }
     const where = existing?.space ?? made?.space ?? space;
-    deps.run("space.select", { id: where });
+    if (where) deps.run("space.select", { id: where });
     deps.run("tab.select", { id: tab });
     const show = async () => {
       try { await deps.app("terminal.show", { terminal: orchestrator, pane: left }); }
