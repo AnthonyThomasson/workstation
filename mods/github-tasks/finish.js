@@ -106,21 +106,28 @@ export function mergeSteps({ repoRoot, workDir, branch, number, prMerged = false
 // attempt, so a reload or a failure doesn't try again), when Merge would be allowed and the run has no pull request yet.
 export const shouldAutoPr = ({ ready, pr, tried, busy }) => Boolean(ready) && !pr && !tried && !busy;
 
+// The steps that come after the work is merged. A failure in one of these is plain red text: there is nothing left to fix
+// before Merge, only the clean-up to finish, which pressing Merge again does.
+const CLEANUP = new Set(["status", "remove-worktree", "prune-worktrees", "delete-branch", "remove-run-files"]);
+
 // Runs steps with exec(cmd, args, opts) -> { code, stdout, stderr }. Besides commands, a step may be { run(exec) } (what it returns, if a string, is what it did) or { check(stdout) }. Resolves { done, warnings } with what happened and
 // what was said on the way; throws an Error at the first step that fails, saying which earlier steps already happened.
+// The error says where it stopped, for mergeFailure: step (the step's name), found (the step ran and found a problem: leftover
+// changes, commits origin lacks; not set when it couldn't run), conflict (a run step's error said so) and phase "cleanup" (the
+// work was merged already).
 export async function runSteps(steps, exec) {
   const done = [], warnings = [];
   const text = (r) => String(r.stderr || r.stdout || "").trim();
-  const stop = (message, step) => { throw Object.assign(new Error(done.length ? `${message} Already done: ${done.join(", ")}.` : message), step ? { step } : {}); };
+  const stop = (message, st, extra = {}) => { throw Object.assign(new Error(done.length ? `${message} Already done: ${done.join(", ")}.` : message), { step: st.name }, CLEANUP.has(st.name) ? { phase: "cleanup" } : {}, extra); };
   const go = async (list) => {
     for (const st of list) {
       if (st.warn) { warnings.push(st.warn); continue; }
       // run: a step that is code, not a command (it gets exec, and throws a message the person can read). Local Merge uses these.
-      if (st.run) { let said; try { said = await st.run(exec); } catch (e) { stop(String(e?.message ?? e)); } const d = typeof said === "string" ? said : st.done; if (d) done.push(d); continue; }
+      if (st.run) { let said; try { said = await st.run(exec); } catch (e) { stop(String(e?.message ?? e), st, e?.conflict ? { conflict: true } : {}); } const d = typeof said === "string" ? said : st.done; if (d) done.push(d); continue; }
       const r = await exec(st.cmd, st.args, st.cwd ? { cwd: st.cwd } : undefined);
-      if (st.check) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim()); const bad = st.check(String(r.stdout ?? "")); if (bad) stop(bad); continue; } // check: stdout -> what to stop with, or null
-      if (st.dirty) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim()); if (String(r.stdout ?? "").trim()) stop(st.dirty, st.name); continue; }
-      if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim());
+      if (st.check) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim(), st); const bad = st.check(String(r.stdout ?? "")); if (bad) stop(bad, st, { found: true }); continue; } // check: stdout -> what to stop with, or null
+      if (st.dirty) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim(), st); if (String(r.stdout ?? "").trim()) stop(st.dirty, st, { found: true }); continue; }
+      if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim(), st);
       if (st.done) done.push(st.done);
     }
   };
@@ -128,25 +135,93 @@ export async function runSteps(steps, exec) {
   return { done, warnings };
 }
 
-// A Merge that stops at one of these checks has something the orchestrator can fix: leftover changes, or commits origin lacks.
-// runSteps puts the stopping check's name on the error (error.step) when the check found something (not when it couldn't run).
-const HAND_OFF = {
-  "tree-status": { what: "uncommitted changes in the ticket worktree", why: "there are uncommitted changes in the worktree" },
-  ahead: { what: "commits on the ticket branch that origin doesn't have", why: "the branch has commits origin doesn't have" },
-};
-export const handOffStep = (error) => (Object.hasOwn(HAND_OFF, error?.step) ? error.step : null);
+// What a failed Merge turns the button into. A failure up to and including the merge itself is something the orchestrator can
+// fix: the button goes red with the short label of the fix. A failure after the work is merged (the clean-up) is not.
+export const LABELS = { conflicts: "Fix conflicts", checks: "Fix checks", commit: "Commit changes", push: "Push branch", merge: "Fix merge" };
 
-// What the run page sends the orchestrator (one line, no double quotes: it is one argument of `hc send`).
-export function handOffMessage({ step, error, branch, workDir }) {
-  const quoted = String(error ?? "").replace(/\s+/g, " ").replace(/"/g, "'").trim();
-  return `Merge stopped on the run page: ${HAND_OFF[step].what}. It said: ${quoted} Please fix it: commit what is left in ${workDir} (have a reviewer check it first if it is new work), then push the ticket branch to origin with a plain \`git -C ${workDir} push origin ${branch}\` (never force), and report back when it is pushed. If the push is rejected because the branch was rebased, stop and ask the person; do not force-push.`;
+// gh args that say whether the pull request can be merged, and what its checks say. Asked when `gh pr merge` fails; the reason is
+// worked out from this, never from the error's text.
+export const prStateArgs = (number) => ["pr", "view", String(number), "--json", "mergeable,mergeStateStatus,statusCheckRollup"];
+
+// A check that failed: a CheckRun's conclusion, or a StatusContext's state.
+const BAD_CONCLUSIONS = new Set(["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"]);
+const BAD_STATES = new Set(["FAILURE", "ERROR"]);
+const upper = (v) => String(v ?? "").toUpperCase();
+
+// The output of prStateArgs as { conflicting, failingChecks }, or null when it isn't the JSON asked for.
+export function parsePrState(text) {
+  let p;
+  try { p = JSON.parse(text); } catch { return null; }
+  if (!p || typeof p !== "object") return null;
+  const rollup = Array.isArray(p.statusCheckRollup) ? p.statusCheckRollup : [];
+  return {
+    conflicting: upper(p.mergeable) === "CONFLICTING",
+    failingChecks: rollup.some((c) => BAD_CONCLUSIONS.has(upper(c?.conclusion)) || BAD_STATES.has(upper(c?.state))),
+  };
 }
 
-// What the page shows in place of the red error once the orchestrator has the message: text, with the original error as detail.
-export const handOffNote = ({ step, error }) => ({
-  text: `Merge stopped: ${HAND_OFF[step].why}. The orchestrator is fixing it; press Merge again once it reports.`,
-  detail: String(error ?? ""),
-});
+// The failure runSteps (or the page's own checks before it) threw, as { kind, label, error }, or null when it is a plain error
+// (the clean-up failed: the work is merged). prState: parsePrState, asked by the page only when `gh pr merge` failed; null when
+// it couldn't be asked. error.step / found / conflict / phase: see runSteps.
+export function mergeFailure({ error, prState } = {}) {
+  if (!error || error.phase === "cleanup") return null;
+  const message = String(error.message ?? error);
+  const kind = error.step === "tree-status" && error.found ? "commit"
+    : error.step === "ahead" && error.found ? "push"
+    : error.conflict ? "conflicts"
+    : error.step === "pr-merge" && prState?.conflicting ? "conflicts"
+    : error.step === "pr-merge" && prState?.failingChecks ? "checks"
+    : "merge";
+  return { kind, label: LABELS[kind], error: message };
+}
+
+// What the orchestrator is asked to do about a failure (a sentence for each kind). noRemote: a local run, which pushes nothing.
+function fixSteps({ kind, branch, workDir, noRemote }) {
+  const commit = `commit what is left in ${workDir} (have a reviewer check it first if it is new work)`;
+  const push = `push the ticket branch with \`git -C ${workDir} push origin ${branch}\``;
+  if (noRemote && kind === "push") kind = "merge"; // a local run has no remote to push to
+  const fix = {
+    commit: noRemote ? `${commit}, then report back` : `${commit}, then ${push}`,
+    push,
+    conflicts: noRemote
+      ? `bring the default branch into the ticket branch: rebase it onto the default branch in ${workDir} and resolve the conflicts, through a worker and a reviewer`
+      : `bring the default branch into the ticket branch: fetch origin and rebase it onto origin's default branch in ${workDir}, resolving the conflicts through a worker and a reviewer, then ${push.replace("push origin", "push --force-with-lease origin")}`,
+    checks: noRemote ? `fix what fails, through a worker and a reviewer` : `fix the failing checks through a worker and a reviewer, then ${push}`,
+    merge: noRemote
+      ? `fix it if you can (through a worker and a reviewer for any code change), and if it needs the person, such as the main checkout, say that you can't fix it`
+      : `fix it if you can (through a worker and a reviewer for any code change, and ${push} if the branch changed, with --force-with-lease after a rebase), and if it needs the person, such as signing in to gh or approving a review, say that you can't fix it`,
+  };
+  return `${fix[kind] ?? fix.merge}. Report back when it is done. Never commit to or push the default branch${noRemote ? " (this repo has no remote: push nothing at all)" : ""}, and do not merge: the person presses Merge again`;
+}
+
+// A line with no double quotes (it is one argument of `hc send`).
+const oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").replace(/"/g, "'").trim();
+
+const failureLine = ({ failure, branch, workDir }) =>
+  `Merge stopped on the run page, and the person pressed ${failure.label}. The full error, in brackets: [${oneLine(failure.error)}] The ticket branch is ${branch}, in the worktree ${workDir}.`;
+
+// What the run page sends the live orchestrator when the red button is pressed: one line, no double quotes.
+// failure: mergeFailure.
+export function fixMessage({ failure, branch, workDir, noRemote }) {
+  return `${failureLine({ failure, branch, workDir })} Please ${fixSteps({ kind: failure.kind, branch, workDir, noRemote })}.`;
+}
+
+// The first task of a new orchestrator, started because the one that ran the ticket has ended: the same fix as fixMessage,
+// with the rules to read first and without the planning, as the ticket is built and merged into the ticket branch already.
+export function restartTask({ runDir, failure, branch, workDir, noRemote }) {
+  return `Read ${runDir}/orchestrator.md and follow its rules, but skip the planning and the questions: the ticket is already built and merged into the ticket branch ${branch}. ${failureLine({ failure, branch, workDir })} Fix only this: ${fixSteps({ kind: failure.kind, branch, workDir, noRemote })}. Any change still goes through a worker and a reviewer; then report.`;
+}
+
+// Whether the "orchestrator is fixing it" state is over. fixing: the saved record { seenWorking }; status: the orchestrator's
+// status word; live: whether its terminal is still there. Returns the record to save, or null when the state ends: the
+// orchestrator was seen working and is now done or idle, or it is gone. Working (and blocked, which waits for the person) is still
+// going; before the first working the message may not have landed, so an idle status doesn't end it yet. Merge never retries by itself.
+export function fixingDone({ fixing, status, live }) {
+  if (!fixing || !live) return null;
+  if (status === "working" || status === "blocked") return { seenWorking: true };
+  if (fixing.seenWorking && (status === "done" || status === "idle")) return null;
+  return { seenWorking: Boolean(fixing.seenWorking) };
+}
 
 // gh args for the pull request; the body links the ticket when it has a number. body: replaces that (a local task has no GitHub issue to close).
 export function prArgs({ branch, title, number, body }) {

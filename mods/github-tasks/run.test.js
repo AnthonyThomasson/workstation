@@ -757,14 +757,21 @@ test("the orchestrator is told to ask its questions with the built-in question t
   assert.ok(text.includes("Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text."));
 });
 
-test("the orchestrator may commit the leftovers and plain-push the ticket branch only when the run page reports a stopped Merge", () => {
+test("the orchestrator may fix any stopped Merge the run page reports, through a worker and a reviewer, and push the ticket branch", () => {
   const text = prompt("orchestrator");
-  assert.match(text, /run page reports a stopped Merge/);
-  assert.match(text, /commit what is left/);
-  assert.ok(text.includes("`git -C /src/app-12-fix-the-login push origin workflow/12-fix-the-login`"));
-  assert.match(text, /never force-push, push the default branch or merge/);
-  assert.match(text, /rejected.*stop and ask the person/s);
+  assert.match(text, /run page reports a stopped Merge \(.*a conflict with the default branch, failing checks or another failure\)/);
+  assert.match(text, /you may fix it, through a worker and a reviewer for any code change/);
+  assert.ok(text.includes("`git -C /src/app-12-fix-the-login push origin workflow/12-fix-the-login` (with `--force-with-lease` after a rebase)"));
+  assert.match(text, /never commit to or push the default branch/);
+  assert.doesNotMatch(text, /never force-push|stop and ask the person/);
   assert.ok(text.includes("without merging into the default branch, pushing or opening a pull request yourself"));
+});
+
+test("with no GitHub remote the orchestrator may fix a stopped Merge too, and is told nothing about pushing it", () => {
+  const text = orchestratorPrompt({ workflow: workflow(), id: "12-abc", ...place, noRemote: true });
+  assert.match(text, /run page reports a stopped Merge \(.*a conflict with the default branch, or another failure\)/);
+  assert.match(text, /you may fix it, through a worker and a reviewer for any code change, then report back; never commit to or push the default branch/);
+  assert.doesNotMatch(text, /force-with-lease|push origin/);
 });
 
 test("the orchestrator gets no allow rule for git: a push or commit follows the person's permission mode", () => {

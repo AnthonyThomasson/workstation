@@ -92,9 +92,10 @@ export function localMergeSteps({ repoRoot, workDir, branch, defaultBranch, mess
         const said = String(r.stderr || r.stdout || "").trim();
         const files = await exec("git", ["-C", repoRoot, "diff", "--name-only", "--diff-filter=U"]); // before reset --merge throws the conflict away
         const named = list(files.stdout ?? "");
-        throw new Error(await put(exec, named
+        const message = await put(exec, named
           ? `Merging ${branch} into ${defaultBranch} conflicts in:\n${named}\nNothing was cleaned up. Have the work rebased onto ${defaultBranch} in ${workDir} and the conflicts resolved, then press Merge again.`
-          : `git couldn't squash ${branch} into ${defaultBranch}: ${said}`));
+          : `git couldn't squash ${branch} into ${defaultBranch}: ${said}`);
+        throw Object.assign(new Error(message), named ? { conflict: true } : {}); // runSteps passes conflict on: Merge's button says Fix conflicts
       },
     },
     {

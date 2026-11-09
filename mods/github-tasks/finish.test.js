@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, optionFor, statusArgs, mergeSteps, runSteps, prArgs, prViewArgs, parsePrUrl, prNumber, parsePr, handOffStep, handOffMessage, handOffNote } from "./finish.js";
+import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, optionFor, statusArgs, mergeSteps, runSteps, prArgs, prViewArgs, parsePrUrl, prNumber, parsePr, LABELS, prStateArgs, parsePrState, mergeFailure, fixMessage, restartTask, fixingDone } from "./finish.js";
 
 test("canMerge needs the final reviewer seen and nobody live", () => {
   const ended = { live: false }, live = { live: true, status: "idle" };
@@ -456,46 +456,158 @@ test("runSteps: a step can be code (run) and a check can read the output (check)
   await assert.rejects(runSteps([check], fake({ x: { code: 1, stderr: "bad" } }).exec), /Couldn't\. bad/);
 });
 
-// A Merge that stops at the ahead or tree-status check is handed to the orchestrator.
-const stopOf = async (answers) => runSteps(mergeSteps(ctx), fake(answers).exec).then(() => null, (e) => e);
+// --- a failed Merge: which fix its button names ---------------------------------------------------------------------------
 
-test("runSteps names the check a dirty stop came from, and only a dirty stop", async () => {
-  assert.equal((await stopOf({ "r-9-x status": { stdout: " M a.js\n" } })).step, "tree-status");
+const stopOf = async (answers, extra = {}) => runSteps(mergeSteps({ ...ctx, ...extra }), fake(answers).exec).then(() => null, (e) => e);
+const PR_FAIL = { "gh pr merge": { code: 1, stderr: "GraphQL: Pull request is not mergeable" } };
+
+test("runSteps marks an error with the step it stopped at, found when the step saw the problem, and cleanup after the merge", async () => {
+  const dirty = await stopOf({ "r-9-x status": { stdout: " M a.js\n" } });
+  assert.equal(dirty.step, "tree-status"); assert.equal(dirty.found, true); assert.equal(dirty.phase, undefined);
   assert.equal((await stopOf({ "rev-list": { stdout: "abc123\n" } })).step, "ahead");
-  assert.equal((await stopOf({ "fetch origin": { code: 128, stderr: "no host" } })).step, undefined);
-  assert.equal((await stopOf({ "status --porcelain": { code: 128, stderr: "bad" } })).step, undefined);
-  assert.equal((await stopOf({ "gh pr merge": { code: 1, stderr: "policy" } })).step, undefined);
+  const cantLook = await stopOf({ "status --porcelain": { code: 128, stderr: "bad" } });
+  assert.equal(cantLook.step, "tree-status"); assert.equal(cantLook.found, undefined, "a check that couldn't run found nothing");
+  assert.equal((await stopOf({ "fetch origin": { code: 128, stderr: "no host" } })).step, "fetch");
+  const refused = await stopOf(PR_FAIL);
+  assert.equal(refused.step, "pr-merge"); assert.equal(refused.phase, undefined, "the merge itself is not the clean-up");
+  for (const [answer, step] of [["graphql", "status"], ["worktree remove", "remove-worktree"], ["branch -D", "delete-branch"], ["rm -rf", "remove-run-files"]]) {
+    const e = await stopOf({ [answer]: { code: 1, stderr: "x" } });
+    assert.equal(e.step, step); assert.equal(e.phase, "cleanup", step);
+  }
+  assert.equal((await stopOf({ "worktree prune": { code: 1, stderr: "x" } }, { workDirExists: false })).phase, "cleanup");
 });
 
-test("only the ahead and tree-status stops are handed to the orchestrator", async () => {
-  assert.equal(handOffStep(await stopOf({ "r-9-x status": { stdout: " M a.js\n" } })), "tree-status");
-  assert.equal(handOffStep(await stopOf({ "rev-list": { stdout: "abc123\n" } })), "ahead");
-  assert.equal(handOffStep(await stopOf({ "gh pr merge": { code: 1, stderr: "policy" } })), null);
-  assert.equal(handOffStep(await stopOf({ "worktree remove": { code: 1, stderr: "busy" } })), null);
-  assert.equal(handOffStep(new Error("Couldn't look up the pull request")), null);
-  assert.equal(handOffStep(null), null);
+const failureOf = async (answers, prState, extra) => mergeFailure({ error: await stopOf(answers, extra), prState });
+const prState = (o) => parsePrState(JSON.stringify(o));
+
+test("mergeFailure: leftover changes are Commit changes, commits origin lacks are Push branch", async () => {
+  assert.deepEqual(await failureOf({ "r-9-x status": { stdout: " M a.js\n" } }), { kind: "commit", label: "Commit changes", error: (await stopOf({ "r-9-x status": { stdout: " M a.js\n" } })).message });
+  assert.equal((await failureOf({ "rev-list": { stdout: "abc123\n" } })).label, "Push branch");
+  assert.equal(LABELS.commit, "Commit changes"); assert.equal(LABELS.push, "Push branch");
 });
 
-test("the message to the orchestrator quotes the error and asks for a commit, a plain push and a report", () => {
-  const error = "workflow/9-x has commits that origin/workflow/9-x doesn't. Run `git -C /r-9-x push origin workflow/9-x` so the pull request has them, then press Merge again.";
-  const text = handOffMessage({ step: "ahead", error, branch: "workflow/9-x", workDir: "/r-9-x" });
-  assert.ok(text.includes("Merge stopped"));
-  assert.ok(text.includes(error));
-  assert.ok(text.includes("git -C /r-9-x push origin workflow/9-x"));
-  assert.match(text, /reviewer check it first if it is new work/);
-  assert.match(text, /never force/i);
-  assert.match(text, /rebased.*stop and ask the person/s);
-  assert.match(text, /report back/i);
-  assert.ok(!text.includes('"'), "it goes in one double-quoted argument of hc send");
-  assert.ok(!text.includes("\n"), "one line");
-  assert.match(handOffMessage({ step: "tree-status", error: "x", branch: "b", workDir: "/w" }), /uncommitted/);
+test("mergeFailure: when gh pr merge fails, the PR's state decides: conflicting, then failing checks, else Fix merge", async () => {
+  assert.equal((await failureOf(PR_FAIL, prState({ mergeable: "CONFLICTING", mergeStateStatus: "DIRTY", statusCheckRollup: [] }))).label, "Fix conflicts");
+  assert.equal((await failureOf(PR_FAIL, prState({ mergeable: "MERGEABLE", statusCheckRollup: [{ __typename: "CheckRun", conclusion: "FAILURE" }] }))).label, "Fix checks");
+  assert.equal((await failureOf(PR_FAIL, prState({ mergeable: "CONFLICTING", statusCheckRollup: [{ conclusion: "FAILURE" }] }))).kind, "conflicts", "conflicts win");
+  assert.equal((await failureOf(PR_FAIL, prState({ mergeable: "MERGEABLE", mergeStateStatus: "BEHIND", statusCheckRollup: [{ conclusion: "SUCCESS" }] }))).label, "Fix merge");
+  assert.equal((await failureOf(PR_FAIL, null)).label, "Fix merge", "the state couldn't be asked");
+  assert.equal((await failureOf(PR_FAIL)).label, "Fix merge");
 });
 
-test("the note says why Merge stopped and that the orchestrator is fixing it, keeping the error", () => {
-  const error = "/r-9-x has uncommitted changes. Commit or discard them.";
-  const n = handOffNote({ step: "tree-status", error });
-  assert.equal(n.detail, error);
-  assert.match(n.text, /^Merge stopped: .*uncommitted changes/);
-  assert.match(n.text, /The orchestrator is fixing it; press Merge again once it reports\.$/);
-  assert.match(handOffNote({ step: "ahead", error }).text, /commits origin doesn't have/);
+test("mergeFailure never reads the error text", async () => {
+  const f = await failureOf({ "gh pr merge": { code: 1, stderr: "Pull request has merge conflicts and failing checks" } }, prState({ mergeable: "MERGEABLE", statusCheckRollup: [] }));
+  assert.equal(f.label, "Fix merge");
+  assert.match(f.error, /merge conflicts and failing checks/, "the error is kept whole");
+});
+
+test("mergeFailure: any other failure before the merge is Fix merge, and the PR state is not used for it", async () => {
+  const conflicting = prState({ mergeable: "CONFLICTING", statusCheckRollup: [] });
+  assert.equal((await failureOf({ "fetch origin": { code: 128, stderr: "no host" } }, conflicting)).label, "Fix merge");
+  assert.equal((await failureOf({ "status --porcelain": { code: 128, stderr: "bad" } })).label, "Fix merge", "tree-status that couldn't run");
+  assert.equal((await failureOf({ "rev-list": { code: 128, stderr: "bad" } })).label, "Fix merge");
+  const mismatch = new Error("The branch's pull request is https://x/pull/2, not https://x/pull/1 that this run opened. Nothing was merged.");
+  assert.equal(mergeFailure({ error: mismatch }).label, "Fix merge");
+  assert.equal(mergeFailure({ error: new Error("Couldn't look up the pull request: no") }).label, "Fix merge");
+  assert.equal((await failureOf({ "rev-list": { stdout: "abc\n" } }, null, { prMerged: true, headOid: "abcdef1234", number: 12 })).label, "Fix merge", "commits beyond a merged PR (not-in-pr)");
+});
+
+test("mergeFailure: a failure after the merge is a plain error", async () => {
+  for (const answer of ["graphql", "worktree remove", "branch -D", "rm -rf"]) {
+    assert.equal(await failureOf({ [answer]: { code: 1, stderr: "x" } }, prState({ mergeable: "CONFLICTING" })), null, answer);
+  }
+  assert.equal(mergeFailure({ error: null }), null);
+});
+
+test("prStateArgs asks gh for mergeable, mergeStateStatus and statusCheckRollup", () => {
+  assert.deepEqual(prStateArgs(12), ["pr", "view", "12", "--json", "mergeable,mergeStateStatus,statusCheckRollup"]);
+});
+
+test("parsePrState reads conflicts and failing checks of both kinds, and not passing, pending or skipped ones", () => {
+  assert.deepEqual(parsePrState('{"mergeable":"CONFLICTING","statusCheckRollup":[]}'), { conflicting: true, failingChecks: false });
+  assert.deepEqual(parsePrState('{"mergeable":"UNKNOWN"}'), { conflicting: false, failingChecks: false });
+  const checks = (...c) => parsePrState(JSON.stringify({ mergeable: "MERGEABLE", statusCheckRollup: c })).failingChecks;
+  for (const conclusion of ["FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE"]) assert.equal(checks({ __typename: "CheckRun", conclusion }), true, conclusion);
+  for (const state of ["FAILURE", "ERROR"]) assert.equal(checks({ __typename: "StatusContext", state }), true, state);
+  assert.equal(checks({ conclusion: "SUCCESS" }, { conclusion: "SKIPPED" }, { conclusion: "NEUTRAL" }, { conclusion: "" , status: "IN_PROGRESS" }, { state: "SUCCESS" }, { state: "PENDING" }), false);
+  assert.equal(checks({ conclusion: "SUCCESS" }, { state: "ERROR" }), true);
+  assert.equal(parsePrState("not json"), null);
+  assert.equal(parsePrState(""), null);
+  assert.equal(parsePrState("null"), null);
+});
+
+// --- what the orchestrator is sent ---------------------------------------------------------------------------------------
+
+const failure = (kind, error = "the error: it failed") => ({ kind, label: LABELS[kind], error });
+const here = { branch: "workflow/9-x", workDir: "/r-9-x" };
+
+test("fixMessage is one line with no double quotes, carrying the label, the whole error, the branch and the worktree", () => {
+  const error = 'Merging b conflicts in:\n  a.txt\n  "b c.txt"\nNothing was cleaned up.';
+  for (const kind of Object.keys(LABELS)) for (const noRemote of [false, true]) {
+    const text = fixMessage({ failure: failure(kind, error), ...here, noRemote });
+    assert.ok(!text.includes('"') && !text.includes("\n"), `${kind}: one line, no double quotes`);
+    assert.ok(text.includes(LABELS[kind]), kind);
+    assert.ok(text.includes("Merging b conflicts in: a.txt 'b c.txt' Nothing was cleaned up."), "the error, on one line");
+    assert.ok(text.includes("workflow/9-x") && text.includes("/r-9-x"), kind);
+    assert.match(text, /[Rr]eport back/);
+    assert.match(text, /[Nn]ever commit to or push the default branch/);
+  }
+});
+
+test("fixMessage per kind, with a remote", () => {
+  const m = (kind) => fixMessage({ failure: failure(kind), ...here });
+  assert.match(m("conflicts"), /rebase.*default branch.*\/r-9-x/);
+  assert.ok(m("conflicts").includes("`git -C /r-9-x push --force-with-lease origin workflow/9-x`"));
+  assert.match(m("checks"), /failing checks through a worker and a reviewer, then push/);
+  assert.ok(m("checks").includes("`git -C /r-9-x push origin workflow/9-x`"));
+  assert.match(m("commit"), /commit what is left in \/r-9-x \(have a reviewer check it first if it is new work\), then push/);
+  assert.ok(m("push").includes("`git -C /r-9-x push origin workflow/9-x`"));
+  assert.doesNotMatch(m("push"), /force/);
+  assert.match(m("merge"), /fix it if you can/);
+  assert.match(m("merge"), /needs the person.*say that you can't fix it/);
+});
+
+test("fixMessage for a local run pushes nothing", () => {
+  for (const kind of Object.keys(LABELS)) {
+    const text = fixMessage({ failure: failure(kind), ...here, noRemote: true });
+    assert.doesNotMatch(text, /git -C \S+ push/, kind);
+    assert.doesNotMatch(text, /force-with-lease|origin/, kind);
+    assert.match(text, /push nothing/, kind);
+  }
+  assert.match(fixMessage({ failure: failure("conflicts"), ...here, noRemote: true }), /rebase it onto the default branch in \/r-9-x/);
+  assert.match(fixMessage({ failure: failure("commit"), ...here, noRemote: true }), /commit what is left.*reviewer.*then report back/);
+});
+
+test("restartTask is the first task of a new orchestrator: the rules, no planning or questions, only this fix", () => {
+  const text = restartTask({ runDir: "/h/.herdr/workflow-runs/9-abc", failure: failure("conflicts"), ...here });
+  assert.ok(text.includes("/h/.herdr/workflow-runs/9-abc/orchestrator.md"));
+  assert.match(text, /skip the planning and the questions/);
+  assert.match(text, /already built and merged into the ticket branch/);
+  assert.match(text, /through a worker and a reviewer/);
+  assert.ok(text.includes("Fix conflicts") && text.includes("the error: it failed") && text.includes("/r-9-x") && text.includes("workflow/9-x"));
+  assert.ok(text.includes("--force-with-lease"));
+  assert.ok(!text.includes('"') && !text.includes("\n"));
+  assert.doesNotMatch(restartTask({ runDir: "/r", failure: failure("conflicts"), ...here, noRemote: true }), /origin|push --force/);
+  assert.match(restartTask({ runDir: "/r", failure: failure("merge"), ...here }), /can't fix it/);
+});
+
+// --- when "the orchestrator is fixing it" ends -----------------------------------------------------------------------------
+
+test("fixingDone: keeps going until the orchestrator has been seen working and is then done or idle", () => {
+  const sent = { seenWorking: false };
+  assert.deepEqual(fixingDone({ fixing: sent, status: "idle", live: true }), { seenWorking: false }, "idle before it picked the message up");
+  assert.deepEqual(fixingDone({ fixing: sent, status: "done", live: true }), { seenWorking: false });
+  assert.deepEqual(fixingDone({ fixing: sent, status: "working", live: true }), { seenWorking: true });
+  assert.deepEqual(fixingDone({ fixing: { seenWorking: true }, status: "working", live: true }), { seenWorking: true });
+  assert.deepEqual(fixingDone({ fixing: { seenWorking: true }, status: "blocked", live: true }), { seenWorking: true }, "waiting for the person is still going");
+  assert.deepEqual(fixingDone({ fixing: sent, status: "blocked", live: true }), { seenWorking: true });
+  assert.deepEqual(fixingDone({ fixing: { seenWorking: true }, status: "unknown", live: true }), { seenWorking: true });
+  assert.equal(fixingDone({ fixing: { seenWorking: true }, status: "idle", live: true }), null);
+  assert.equal(fixingDone({ fixing: { seenWorking: true }, status: "done", live: true }), null);
+});
+
+test("fixingDone: ends when the orchestrator is gone, and does nothing without a record", () => {
+  assert.equal(fixingDone({ fixing: { seenWorking: false }, status: "idle", live: false }), null);
+  assert.equal(fixingDone({ fixing: { seenWorking: true }, status: "working", live: false }), null);
+  assert.equal(fixingDone({ fixing: null, status: "working", live: true }), null);
 });

@@ -124,8 +124,8 @@ export function orchestratorPrompt({ id, workflow, ticket, repo, runDir, workDir
     `- ${runPage(noRemote)}`,
     "- Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text.",
     noRemote
-      ? `- One exception: when the run page reports a stopped Merge (leftover changes in ${workDir}), you may commit what is left there (a new change still gets a reviewer first), then report back; never push or merge.`
-      : `- One exception: when the run page reports a stopped Merge (leftover changes in ${workDir}, or commits origin lacks), you may commit what is left there (a new change still gets a reviewer first) and push the ticket branch with a plain \`git -C ${workDir} push origin ${branch}\`, then report back; never force-push, push the default branch or merge, and if the push is rejected because the branch was rebased, stop and ask the person.`,
+      ? `- One exception: when the run page reports a stopped Merge (leftover changes in ${workDir}, a conflict with the default branch, or another failure), you may fix it, through a worker and a reviewer for any code change, then report back; never commit to or push the default branch.`
+      : `- One exception: when the run page reports a stopped Merge (leftover changes in ${workDir}, commits origin lacks, a conflict with the default branch, failing checks or another failure), you may fix it, through a worker and a reviewer for any code change, and push the ticket branch with \`git -C ${workDir} push origin ${branch}\` (with \`--force-with-lease\` after a rebase), then report back; never commit to or push the default branch.`,
     "- Start now: run the manual, read the ticket, and plan.", "",
     ...section("How this workflow plans", own.planning),
     ...section("How this workflow looks back on the run, once it is done", own.retro),

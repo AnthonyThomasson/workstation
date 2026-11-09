@@ -10,7 +10,7 @@ import { endRun, findTicketSpace, mergeOutcome, peekSpace, slotKey } from "./bgr
 import { S, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
 import { agentsFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
-import { branchArgs, canMerge, finalSeen, handOffMessage, handOffNote, handOffStep, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
+import { branchArgs, canMerge, finalSeen, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
 import { defaultBranchOf, localMergeSteps, localPrBody, moveToStage, squashMessage } from "./local-runs.js";
 import { localTasks, repoHasGithubRemote } from "./local-tasks-env.js";
 
@@ -243,7 +243,7 @@ export class RunPage {
         for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
         if (!(await this.closeSession(ticketSpace))) { this.busy = null; cx.notify(); } // the page is still there: say what is left to do
       } catch (e) {
-        if (!(await this.handOff(e))) this.error = String(e?.message ?? e);
+        this.error = String(e?.message ?? e);
         this.busy = null; cx.notify();
       }
     });
@@ -270,19 +270,6 @@ export class RunPage {
         if (!(await this.closeSession(ticketSpace))) { this.busy = null; cx.notify(); } // the page is still there: closeSession said what is left to do
       } catch (e) { this.error = String(e?.message ?? e); this.busy = null; cx.notify(); }
     });
-  }
-
-  // A Merge that stopped at the ahead or tree-status check goes to the run's orchestrator, once per press (this runs from
-  // merge's catch, never from a render). True when it was sent: the page then shows a note, not the error. False (not one of
-  // those stops, the orchestrator ended, or the send failed) leaves the error to show as before.
-  async handOff(e) {
-    const step = handOffStep(e);
-    if (!step || !orchestratorOf(terminals(), this.orchestrator)?.live) return false;
-    const error = String(e?.message ?? e);
-    const sent = await hc(["send", this.orchestrator, handOffMessage({ step, error, branch: this.branch, workDir: this.folder })]).catch(() => null);
-    if (sent?.code !== 0) return false;
-    this.note = handOffNote({ step, error });
-    return true;
   }
 
   // How Merge sets the ticket Done: the gh call, a warning when the project has no such option, or null when the run has no project.
