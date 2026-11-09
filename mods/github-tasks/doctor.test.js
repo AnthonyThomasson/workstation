@@ -282,6 +282,12 @@ test("local tasks skip the project, status and scope checks", () => {
   assert.deepEqual(kinds(diagnose(healthy({ ...brokenGithub }))), ["gh-scope", "no-project"], "no source is github");
 });
 
+test("local tasks skip the trigger-label check: their labels are typed freely", () => {
+  const workflows = { items: [workflow("Story", {}, ["bug"])], errors: [] };
+  assert.deepEqual(diagnose(healthy({ source: "local", workflows, labels: [] })), []);
+  assert.deepEqual(kinds(diagnose(healthy({ workflows, labels: [] }))), ["label-missing"], "github mode still checks");
+});
+
 test("local tasks check gh-auth only when the origin is on GitHub", () => {
   const signedOut = { installed: true, signedIn: false, scopes: null };
   assert.deepEqual(kinds(diagnose(healthy({ source: "local", githubRemote: true, auth: signedOut }))), ["gh-auth"]);
