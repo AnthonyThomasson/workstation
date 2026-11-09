@@ -70,8 +70,11 @@ export function findRunTab({ slot, spaces, panes, name, ticketSpace = null }) {
 // View's quick path: the run's tab is whole and in the ticket's own space (ticketSpace; or no worktree is known, so it stays
 // where it is): its space and tab are selected, the orchestrator is shown over its left pane again and the slot is rewritten
 // with what was found (it may have been stale). True when that was done, false when the tab must be connected (viewConnect).
-//   args: { slot, spaces, panes, name, ticketSpace, folder, setSlot(slot), run(name, args), show(left) }
-export function viewQuick({ slot, spaces, panes, name, ticketSpace, folder, setSlot, run, show }) {
+// The ticket's space is found here (findTicketSpace) from the worktree (folder) and the main checkout (repoRoot, which GitHub
+// tickets don't carry: read it from pane.json), the same for both paths, so the repo's space is never taken for it.
+//   args: { slot, spaces, panes, name, folder, repoRoot, setSlot(slot), run(name, args), show(left) }
+export function viewQuick({ slot, spaces, panes, name, folder, repoRoot, setSlot, run, show }) {
+  const ticketSpace = findTicketSpace({ spaces, panes, folder, repoRoot });
   const open = runTabParts({ slot, spaces, panes, name, ticketSpace });
   if (!(open?.left && open.page && (ticketSpace || !folder))) return false;
   setSlot({ tab: open.tab, left: open.left, space: open.space });
@@ -85,11 +88,12 @@ export function viewQuick({ slot, spaces, panes, name, ticketSpace, folder, setS
 // that is whole but outside the ticket's own space, and that the slot itself points at (never one found only by name), is
 // made again in the ticket's space (connect(null)), and the old tab is closed only after that has worked; a connect that
 // throws leaves it. Any other tab found is repaired in place (connect(existing)).
-//   args: { slot, spaces, panes, name, ticketSpace, folder, connect(existing) -> Promise, closeTab(tab) }
-export async function viewConnect({ slot, spaces, panes, name, ticketSpace, folder, connect, closeTab }) {
+//   args: { slot, spaces, panes, name, folder, repoRoot, connect(existing, ticketSpace) -> Promise, closeTab(tab) }
+export async function viewConnect({ slot, spaces, panes, name, folder, repoRoot, connect, closeTab }) {
+  const ticketSpace = findTicketSpace({ spaces, panes, folder, repoRoot });
   const part = runTabParts({ slot, spaces, panes, name, ticketSpace });
   const moved = part?.left && part.page && !ticketSpace && Boolean(folder) && part.tab === slot?.tab ? part : null;
-  await connect(part && !moved ? { ...part } : null);
+  await connect(part && !moved ? { ...part } : null, ticketSpace);
   if (moved) closeTab(moved.tab);
 }
 

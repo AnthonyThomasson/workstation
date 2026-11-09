@@ -50,29 +50,25 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
   const name = ticketName(ticket);
   try {
     if (!id) throw new Error("the run has no id, so its details can't be found");
-    // The ticket's own space (found by its worktree), or null; one lookup for both paths.
-    const view = (dir) => ({
-      slot: shared(slotKey(id)), spaces: spaces(), panes: panes(), name, folder: dir,
-      ticketSpace: dir ? viewTarget({ spaces: spaces(), panes: panes(), folder: dir, repoRoot: ticket?.mainRoot }) : null,
-    });
+    // pane.json (what Start saved: repoRoot, the main checkout, which a GitHub ticket doesn't carry) is read first: both paths find
+    // the ticket's own space with it.
+    const partial = {
+      role: "run", id, orchestrator: running.address, title: name, workflow: "", branch: branchName(ticket), folder: folder ?? "",
+      ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null }, projectId: project?.id ?? null,
+      ...(ticket?.local ? { taskSource: "local", mainRoot: ticket.mainRoot, repoRoot: ticket.mainRoot } : {}),
+    };
+    const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
+    const props = reopenProps(saved, partial, running.address);
+    const workDir = folder ?? props.folder;
+    const view = () => ({ slot: shared(slotKey(id)), spaces: spaces(), panes: panes(), name, folder: workDir, repoRoot: props.repoRoot ?? ticket?.mainRoot });
     if (viewQuick({
-      ...view(folder), setSlot: (slot) => setShared(slotKey(id), slot), run,
+      ...view(), setSlot: (slot) => setShared(slotKey(id), slot), run,
       show: (left) => { app("terminal.show", { terminal: running.address, pane: left }).catch(() => {}); }, // if it had slipped off, put it back
     })) return;
     const did = await guarded(connecting, id, async () => {
-      const partial = {
-        role: "run", id, orchestrator: running.address, title: name, workflow: "", branch: branchName(ticket), folder: folder ?? "",
-        ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null }, projectId: project?.id ?? null,
-        ...(ticket?.local ? { taskSource: "local", mainRoot: ticket.mainRoot, repoRoot: ticket.mainRoot } : {}), // the saved pane.json has the rest
-      };
-      // Start saved the full props (repoRoot, statusField, workflow name) beside the run's other files.
-      const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
-      const props = reopenProps(saved, partial, running.address);
-      const workDir = folder ?? props.folder;
-      const v = view(workDir);
       await viewConnect({
-        ...v, closeTab: (tab) => run("tab.close", { id: tab, confirmed: true }),
-        connect: (existing) => connect({ id, orchestrator: running.address, title: name, space: v.ticketSpace, folder: workDir, props, existing }, cx),
+        ...view(), closeTab: (tab) => run("tab.close", { id: tab, confirmed: true }),
+        connect: (existing, space) => connect({ id, orchestrator: running.address, title: name, space, folder: workDir, props, existing }, cx),
       });
       return true;
     });
