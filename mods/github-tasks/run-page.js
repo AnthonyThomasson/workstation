@@ -6,7 +6,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, notify, panes, run, setShared, shared, spaces, terminals, theme } from "herdr";
-import { endRun, mergeOutcome, slotKey } from "./bgrun.js";
+import { endRun, findTicketSpace, mergeOutcome, peekSpace, slotKey } from "./bgrun.js";
 import { S, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
 import { agentsFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
@@ -298,13 +298,24 @@ export class RunPage {
   }
 
 
+  // The ticket's space: its name is the page's title and its terminals are in the ticket's worktree (also once that is removed).
+  ticketSpace() { return findTicketSpace({ spaces: spaces(), panes: panes(), name: this.title, folder: this.folder }); }
+
+  // Looks in on a worker or reviewer. From the ticket's space first, so that keeping its terminal as a tab puts it there and
+  // not in whichever space (the repo's) the person last looked at.
+  peek(address) {
+    const space = peekSpace({ slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes(), name: this.title, folder: this.folder });
+    if (space) run("space.select", { id: space });
+    run("terminal.peek", { terminal: address });
+  }
+
   // Ends the run: its orchestrator, workers and reviewers are killed on purpose (a background run ends no other way), then
-  // its tab is closed if it is open. Says what to do when something couldn't be ended or the tab couldn't be found: it
-  // never leaves the page on "Merging…". Resolves true when the tab (and so this page) was closed.
+  // the ticket's space is closed, with this page in it: the very last thing Merge does. Says what to do when something couldn't
+  // be ended or the space couldn't be found: it never leaves the page on "Merging…". Resolves true when the space was closed.
   async closeSession() {
     const ended = await endRun({
       id: this.id, orchestrator: this.orchestrator, hc, terminals, run, slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes(),
-      clearSlot: () => setShared(slotKey(this.id), null),
+      ticketSpace: this.ticketSpace(), clearSlot: () => setShared(slotKey(this.id), null),
     });
     const outcome = mergeOutcome(ended);
     if (outcome.error) this.error = outcome.error;
@@ -323,7 +334,7 @@ export class RunPage {
     return h_flex().id(`run-agent-${r.address}`).flex_none().px(8).py(7).gap(10).items_start().rounded(8)
       .when(r.needsYou, (el) => el.bg(t.selected))
       .when(r.live, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop))
-      .when(r.live, (el) => el.on_click(() => run("terminal.peek", { terminal: r.address })))
+      .when(r.live, (el) => el.on_click(() => this.peek(r.address)))
       .child(div().mt(6).w(8).h(8).flex_none().rounded_full().bg(statusColor(r.status, t)))
       .child(v_flex().flex_1().min_w(0).gap(1)
         .child(h_flex().gap(8).items_center()
