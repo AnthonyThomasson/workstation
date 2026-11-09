@@ -106,7 +106,7 @@ export function mergeSteps({ repoRoot, workDir, branch, number, prMerged = false
 // attempt, so a reload or a failure doesn't try again), when Merge would be allowed and the run has no pull request yet.
 export const shouldAutoPr = ({ ready, pr, tried, busy }) => Boolean(ready) && !pr && !tried && !busy;
 
-// Runs steps with exec(cmd, args, opts) -> { code, stdout, stderr }. Besides commands, a step may be { run(exec) } or { check(stdout) }. Resolves { done, warnings } with what happened and
+// Runs steps with exec(cmd, args, opts) -> { code, stdout, stderr }. Besides commands, a step may be { run(exec) } (what it returns, if a string, is what it did) or { check(stdout) }. Resolves { done, warnings } with what happened and
 // what was said on the way; throws an Error at the first step that fails, saying which earlier steps already happened.
 export async function runSteps(steps, exec) {
   const done = [], warnings = [];
@@ -116,7 +116,7 @@ export async function runSteps(steps, exec) {
     for (const st of list) {
       if (st.warn) { warnings.push(st.warn); continue; }
       // run: a step that is code, not a command (it gets exec, and throws a message the person can read). Local Merge uses these.
-      if (st.run) { try { await st.run(exec); } catch (e) { stop(String(e?.message ?? e)); } if (st.done) done.push(st.done); continue; }
+      if (st.run) { let said; try { said = await st.run(exec); } catch (e) { stop(String(e?.message ?? e)); } const d = typeof said === "string" ? said : st.done; if (d) done.push(d); continue; }
       const r = await exec(st.cmd, st.args, st.cwd ? { cwd: st.cwd } : undefined);
       if (st.check) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim()); const bad = st.check(String(r.stdout ?? "")); if (bad) stop(bad); continue; } // check: stdout -> what to stop with, or null
       if (st.dirty) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim()); if (String(r.stdout ?? "").trim()) stop(st.dirty); continue; }

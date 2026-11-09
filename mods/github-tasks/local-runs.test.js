@@ -54,15 +54,16 @@ test("moving a task to the stage it is in changes nothing, and a missing task sa
 
 test("the pull request body describes the local task and doesn't close an issue", () => {
   const body = localPrBody({ id: 7, title: "Fix login", description: "It breaks.\nOn /404.", labels: ["bug", "ui"] });
-  assert.match(body, /^Local task #7: Fix login/);
+  assert.match(body, /^Local task 7: Fix login/);
+  assert.doesNotMatch(body, /#/, "GitHub would link a # to an unrelated issue");
   assert.match(body, /It breaks\.\nOn \/404\./);
   assert.match(body, /Labels: bug, ui/);
   assert.doesNotMatch(body, /Closes/);
 });
 
 test("the pull request body copes with a task with no description or labels, and with no task at all", () => {
-  assert.equal(localPrBody({ id: 7, title: "Fix login", description: "", labels: [] }), "Local task #7: Fix login");
-  assert.equal(localPrBody(null, { id: 7, title: "Fix login" }), "Local task #7: Fix login");
+  assert.equal(localPrBody({ id: 7, title: "Fix login", description: "", labels: [] }), "Local task 7: Fix login");
+  assert.equal(localPrBody(null, { id: 7, title: "Fix login" }), "Local task 7: Fix login");
 });
 
 test("the squash commit is '<title> (#<id>)'", () => {
@@ -308,4 +309,17 @@ test("real git: the default branch is origin's, else main or master, else init.d
   git(s.repo, "update-ref", "refs/remotes/origin/develop", "HEAD");
   git(s.repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/develop");
   assert.equal(await defaultBranchOf(realGit, s.repo), "develop");
+});
+
+test("an empty ticket branch is logged as nothing new to merge, not as merged", async () => {
+  const empty = await runSteps(localMergeSteps(ctx), fake({ "diff --cached --quiet": { code: 0 } }).exec);
+  assert.ok(empty.done.some((d) => /nothing new to merge from workflow\/7-fix-login/.test(d)));
+  assert.ok(!empty.done.some((d) => /^merged /.test(d)));
+  const full = await runSteps(localMergeSteps(ctx), fake({ "diff --cached --quiet": { code: 1 } }).exec);
+  assert.ok(full.done.includes("merged workflow/7-fix-login into main"));
+});
+
+test("when main's changes are staged, the refusal says what to do", async () => {
+  await assert.rejects(runSteps(localMergeSteps(ctx), fake({ "-C /r status": { stdout: "M  a.txt\n" } }).exec), /staged: commit them, or drop them with `git reset --merge`/);
+  await assert.rejects(runSteps(localMergeSteps(ctx), fake({ "-C /r status": { stdout: " M a.txt\n?? b.txt\n" } }).exec), (e) => !/staged/.test(e.message));
 });

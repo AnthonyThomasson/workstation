@@ -31,6 +31,7 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
     const partial = {
       role: "run", id, orchestrator: running.address, title: ticketName(ticket), workflow: "", branch: branchName(ticket), folder: folder ?? "",
       ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null }, projectId: project?.id ?? null,
+      ...(ticket?.local ? { taskSource: "local", mainRoot: ticket.mainRoot, repoRoot: ticket.mainRoot } : {}), // the saved pane.json has the rest
     };
     // Start saved the full props (repoRoot, statusField, workflow name) beside the run's other files.
     const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
@@ -61,7 +62,10 @@ async function resolveAgents(workflow, runDir) {
 // given with the file's title, text, labels and status (the file is the truth, the sidebar's copy may be a few seconds old).
 // Nothing for a repo on GitHub tasks, so GitHub mode goes through unchanged. Throws with a message when the task's file is gone.
 async function localTaskFor(repoRoot, ticket) {
-  if ((await tasksConfig.read(repoRoot)) !== "local") return null;
+  const local = (await tasksConfig.read(repoRoot)) === "local";
+  // The list the person clicked in was the other source (tasks.json changed since): don't start the wrong ticket.
+  if (Boolean(ticket?.local) !== local) throw new Error("The task source changed; refresh the list and try again.");
+  if (!local) return null;
   const task = ticket?.number ? await localTasks(repoRoot).get(ticket.number) : null;
   if (!task) throw new Error(`There is no local task #${ticket?.number ?? "?"} in ${repoRoot}'s tasks. Refresh the list and try again.`);
   return {

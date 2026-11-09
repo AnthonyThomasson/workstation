@@ -13,13 +13,13 @@ export function moveToStage(tasks, id, stage) {
 
 const oneLine = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 
-// The pull request body for a local task: no `Closes #N`, as there is no GitHub issue to close.
+// The pull request body for a local task: no `Closes #N`, as there is no GitHub issue to close, and no `#N` at all, which GitHub would link to an unrelated issue.
 // task: { id, title, description, labels } or null (then fallback: { id, title }).
 export function localPrBody(task, fallback = {}) {
   const t = task ?? fallback;
   const description = String(t.description ?? "").trim();
   return [
-    `Local task #${t.id}: ${oneLine(t.title)}`,
+    `Local task ${t.id}: ${oneLine(t.title)}`, // no #: GitHub would link it to an unrelated issue
     ...(description ? ["", description] : []),
     ...(t.labels?.length ? ["", `Labels: ${t.labels.join(", ")}`] : []),
   ].join("\n");
@@ -41,6 +41,9 @@ export async function defaultBranchOf(git, repoRoot) {
   }
   return null;
 }
+
+// Whether `git status --porcelain` shows a staged change (a letter in the first column; ?? and !! are not).
+const stagedIn = (stdout) => String(stdout).split("\n").some((l) => /^[MADRCTU]/.test(l));
 
 const list = (stdout, max = 8) => {
   const lines = String(stdout).split("\n").map((l) => l.trimEnd()).filter(Boolean);
@@ -78,7 +81,7 @@ export function localMergeSteps({ repoRoot, workDir, branch, defaultBranch, mess
     { name: "main-branch", ...git(["-C", repoRoot, "branch", "--show-current"]), fail: `Couldn't look at ${repoRoot}.`,
       check: (out) => out.trim() === defaultBranch ? null : `The main checkout ${repoRoot} is on ${out.trim() || "no branch (a detached HEAD)"}, not ${defaultBranch}. Switch it to ${defaultBranch}, then press Merge again. Nothing was merged.` },
     { name: "main-status", ...git(["-C", repoRoot, "status", "--porcelain"]), fail: `Couldn't look at ${repoRoot}.`,
-      check: (out) => out.trim() ? `The main checkout ${repoRoot} has uncommitted changes:\n${list(out)}\nCommit or discard them, then press Merge again. Nothing was merged.` : null },
+      check: (out) => out.trim() ? `The main checkout ${repoRoot} has uncommitted changes:\n${list(out)}\nCommit or discard them, then press Merge again.${stagedIn(out) ? " Some are staged: commit them, or drop them with `git reset --merge`." : ""} Nothing was merged.` : null },
   ];
   const merge = [
     {
@@ -95,13 +98,14 @@ export function localMergeSteps({ repoRoot, workDir, branch, defaultBranch, mess
       },
     },
     {
-      name: "commit", done: `merged ${branch} into ${defaultBranch}`,
+      name: "commit", // resolves what was done: nothing staged means the branch had nothing new (or an earlier Merge already committed it)
       async run(exec) {
         const staged = await exec("git", ["-C", repoRoot, "diff", "--cached", "--quiet"]); // 0: nothing staged, 1: something is
-        if (staged.code === 0) return;
+        if (staged.code === 0) return `nothing new to merge from ${branch}`;
         if (staged.code !== 1) throw new Error(await put(exec, `Couldn't look at what the squash staged in ${repoRoot}: ${String(staged.stderr || staged.stdout || "").trim()}`));
         const r = await exec("git", ["-C", repoRoot, "commit", "-q", "-m", message]);
         if (r.code !== 0) throw new Error(await put(exec, `Couldn't commit the merge in ${repoRoot}: ${String(r.stderr || r.stdout || "").trim()}`));
+        return `merged ${branch} into ${defaultBranch}`;
       },
     },
   ];
