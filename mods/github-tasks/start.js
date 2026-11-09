@@ -4,7 +4,7 @@
 // the run page (run-page.js), the list of its agents, on the right. Merge closes that space again. From there the
 // orchestrator runs the ticket itself (run.js says how).
 import { exec, focused, hc, home, knownAgents, notify, panes, readTextFile, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
-import { connectRun, guarded, launchRun, reapplyRuns, runTabParts, slotKey, undoRunTab, viewTarget } from "./bgrun.js";
+import { connectRun, guarded, launchRun, reapplyRuns, runTabParts, slotKey, undoRunTab, viewConnect, viewQuick, viewTarget } from "./bgrun.js";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
 import { app } from "./ui.js";
 import { localTasks, repoHasGithubRemote, tasksConfig } from "./local-tasks-env.js";
@@ -21,7 +21,7 @@ export const liveRunFor = (repo, ticket) => {
 };
 
 // What is left of the run's tab, from the slot saved when it was connected (see runTabParts), or null.
-export const runTabOf = (id, name) => runTabParts({ slot: shared(slotKey(id)), spaces: spaces(), panes: panes(), name });
+export const runTabOf = (id, name, ticketSpace = null) => runTabParts({ slot: shared(slotKey(id)), spaces: spaces(), panes: panes(), name, ticketSpace });
 
 // The tab that connects to a run's orchestrator (placeholder on the left, the orchestrator shown over it, the run page on
 // the right). props: the run page's; space: the ticket's space to open it in, or null to make the ticket's space (named
@@ -50,17 +50,15 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
   const name = ticketName(ticket);
   try {
     if (!id) throw new Error("the run has no id, so its details can't be found");
-    // A whole tab outside the ticket's own space (the ticket's was closed, or the run is from before it got one) is made again
-    // in a new ticket space; the old tab goes once that has worked. Without the worktree's folder it is left where it is.
-    const ticketSpace = () => (folder ? viewTarget({ spaces: spaces(), panes: panes(), folder, repoRoot: ticket?.mainRoot }) : "unknown");
-    const open = runTabOf(id, name);
-    if (open?.left && open.page && ticketSpace()) {
-      setShared(slotKey(id), { tab: open.tab, left: open.left, space: open.space }); // the slot may have been stale
-      run("space.select", { id: open.space });
-      run("tab.select", { id: open.tab });
-      app("terminal.show", { terminal: running.address, pane: open.left }).catch(() => {}); // if it had slipped off, put it back
-      return;
-    }
+    // The ticket's own space (found by its worktree), or null; one lookup for both paths.
+    const view = (dir) => ({
+      slot: shared(slotKey(id)), spaces: spaces(), panes: panes(), name, folder: dir,
+      ticketSpace: dir ? viewTarget({ spaces: spaces(), panes: panes(), folder: dir, repoRoot: ticket?.mainRoot }) : null,
+    });
+    if (viewQuick({
+      ...view(folder), setSlot: (slot) => setShared(slotKey(id), slot), run,
+      show: (left) => { app("terminal.show", { terminal: running.address, pane: left }).catch(() => {}); }, // if it had slipped off, put it back
+    })) return;
     const did = await guarded(connecting, id, async () => {
       const partial = {
         role: "run", id, orchestrator: running.address, title: name, workflow: "", branch: branchName(ticket), folder: folder ?? "",
@@ -71,11 +69,11 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
       const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
       const props = reopenProps(saved, partial, running.address);
       const workDir = folder ?? props.folder;
-      const space = viewTarget({ spaces: spaces(), panes: panes(), folder: workDir, repoRoot: props.repoRoot ?? ticket?.mainRoot }); // the ticket's space, or null: make it again
-      const part = runTabOf(id, name); // read again: the person may have closed the rest meanwhile
-      const moved = part?.left && part.page && !space && Boolean(workDir) ? part : null; // whole, but not in a ticket space of its own
-      await connect({ id, orchestrator: running.address, title: name, space, folder: workDir, props, existing: part && !moved ? { ...part } : null }, cx);
-      if (moved) run("tab.close", { id: moved.tab, confirmed: true });
+      const v = view(workDir);
+      await viewConnect({
+        ...v, closeTab: (tab) => run("tab.close", { id: tab, confirmed: true }),
+        connect: (existing) => connect({ id, orchestrator: running.address, title: name, space: v.ticketSpace, folder: workDir, props, existing }, cx),
+      });
       return true;
     });
     if (did === false) notify({ title: name, body: "This run's tab is still being opened. It will be in front in a moment.", level: "info" });
