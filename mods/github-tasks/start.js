@@ -1,13 +1,15 @@
 // Starts a workflow on a ticket: gets the ticket's worktree ready, writes what the agents read, starts the orchestrator in
-// the background (owned by no tab or pane: bgrun.js) and opens a tab that shows it on the left, with the run page
-// (run-page.js), the list of its agents, on the right. From there the orchestrator runs the ticket itself (run.js says how).
+// the background (owned by no tab or pane: bgrun.js) and opens the ticket's own space, rooted at the worktree and named
+// for the ticket (the Spaces sidebar nests it under the repo's space), whose first tab shows the orchestrator on the left, with
+// the run page (run-page.js), the list of its agents, on the right. Merge closes that space again. From there the
+// orchestrator runs the ticket itself (run.js says how).
 import { exec, focused, hc, home, knownAgents, notify, panes, readTextFile, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
-import { connectRun, guarded, launchRun, reapplyRuns, runTabParts, slotKey, viewTarget } from "./bgrun.js";
+import { connectRun, guarded, launchRun, reapplyRuns, runTabParts, slotKey, undoRunTab, viewTarget } from "./bgrun.js";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
 import { app } from "./ui.js";
 import { localTasks, repoHasGithubRemote, tasksConfig } from "./local-tasks-env.js";
 import { ROLES } from "./workflow-model.js";
-import { out, agentArgv, branchName, FOLDER_LABEL, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, SPACE_LABEL, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
+import { out, agentArgv, branchName, FOLDER_LABEL, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 
@@ -22,8 +24,9 @@ export const liveRunFor = (repo, ticket) => {
 export const runTabOf = (id) => runTabParts({ slot: shared(slotKey(id)), spaces: spaces(), panes: panes() });
 
 // The tab that connects to a run's orchestrator (placeholder on the left, the orchestrator shown over it, the run page on
-// the right). props: the run page's; space: where to open it; folder: where the placeholder starts; existing: a tab that is
-// already there and lacks a part (see connectRun). Throws with the reason.
+// the right). props: the run page's; space: the ticket's space to open it in, or null to make the ticket's space (named
+// title, at folder, the ticket's worktree); folder: where the placeholder starts; existing: a tab that is already there and
+// lacks a part (see connectRun). Resolves with the slot (created: true when this made the space). Throws with the reason.
 function connect({ id, orchestrator, title, space, folder, props, existing = null }, cx) {
   return connectRun({
     app, run, paneOf: (made) => paneOf(made, cx), sleep: (ms) => cx.sleep(ms),
@@ -31,19 +34,19 @@ function connect({ id, orchestrator, title, space, folder, props, existing = nul
     isShown: (orchestrator, left) => { const f = focused(); return f?.pane === left && f.shown === orchestrator; },
     warn: (body) => notify({ title: "The orchestrator may not be showing", body, level: "warning" }),
     setSlot: (runId, slot) => setShared(slotKey(runId), slot),
-  }, { id, orchestrator, name: title, space, folder, props, existing });
+  }, { id, orchestrator, name: title, space, spaceName: title, folder, props, existing });
 }
 
 // A run being started, or a tab being connected: one at a time per run, so View (or Start again) never makes a second tab.
 const connecting = new Set();
 
 // Brings a run's tab to the front, showing its orchestrator again. When the tab was closed, opens a tab connected to the
-// same orchestrator, in the space the run started in (or the current one if that was closed); when it lost its left pane
+// same orchestrator, in the ticket's space (or, if that was closed too, in a new one at the worktree); when it lost its left pane
 // or its run page, makes that good in the tab that is there. The run itself isn't touched. The run page's props come from
 // pane.json. A tab that can't be connected is said with the reason; this never fails silently and never throws.
 // ticket and repo: what the run is for, to name the tab.
 export async function viewRun(running, cx, { ticket, repo, project } = {}) {
-  const { [RUN_LABEL]: id, [FOLDER_LABEL]: folder, [SPACE_LABEL]: started } = running.labels ?? {};
+  const { [RUN_LABEL]: id, [FOLDER_LABEL]: folder } = running.labels ?? {};
   const name = ticketName(ticket);
   try {
     if (!id) throw new Error("the run has no id, so its details can't be found");
@@ -63,9 +66,10 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
       // Start saved the full props (repoRoot, statusField, workflow name) beside the run's other files.
       const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
       const props = reopenProps(saved, partial, running.address);
-      const space = viewTarget({ started: started ?? props.space, spaces: spaces(), current: spaces().find((s) => s.active)?.id });
+      const workDir = folder ?? props.folder;
+      const space = viewTarget({ spaces: spaces(), panes: panes(), folder: workDir, repoRoot: props.repoRoot ?? ticket?.mainRoot }); // the ticket's space, or null: make it again
       const part = runTabOf(id); // read again: the person may have closed the rest meanwhile
-      await connect({ id, orchestrator: running.address, title: name, space, folder: folder ?? props.folder, props: { ...props, space: space ?? props.space }, existing: part ? { ...part } : null }, cx);
+      await connect({ id, orchestrator: running.address, title: name, space, folder: workDir, props, existing: part ? { ...part } : null }, cx);
       return true;
     });
     if (did === false) notify({ title: name, body: "This run's tab is still being opened. It will be in front in a moment.", level: "info" });
@@ -163,24 +167,28 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   const runDir = `${home()}/.herdr/workflow-runs/${id}`;
   const argv = await resolveAgents(workflow, runDir); // before the worktree: this fails without changing anything
   const branch = branchName(ticket);
-  const workDir = await prepareWorktree(git, repoRoot, branch, worktreePath(repoRoot, branch));
+  const workDir = await prepareWorktree(git, repoRoot, branch, worktreePath(repoRoot, branch, home()));
   await writeRunFolder(id, { workflow, ticket, repo, runDir, workDir, repoRoot, branch, local: Boolean(found), noRemote: Boolean(found) && !found.githubRemote }, argv);
 
-  const space = spaces().find((s) => s.active)?.id;
+  const name = ticketName(ticket);
   const props = {
-    role: "run", id, orchestrator: null, title: ticketName(ticket), workflow: workflow.name, branch, folder: workDir,
+    role: "run", id, orchestrator: null, title: name, workflow: workflow.name, branch, folder: workDir,
     repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null },
-    projectId: board.project?.id ?? null, statusField: board.statusField ?? null, space: space ?? null,
+    projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
     // A local task: the page moves the task's file, and Create PR and Merge depend on whether origin is on GitHub.
     ...(found ? { taskSource: "local", mainRoot: repoRoot, githubRemote: found.githubRemote } : {}),
   };
   // The orchestrator runs in the background, owned by no tab or pane, so closing the tab never ends it. It is guarded as
   // a whole: from the moment it exists View and Start see it, and the tab is opened here, not by them (bgrun.js launchRun).
+  // The run goes in the ticket's space: the one an earlier run of this ticket left (a failed or ended run), else a new one at
+  // the worktree, which is taken down again if the start fails (closeTab).
+  const space = viewTarget({ spaces: spaces(), panes: panes(), folder: workDir, repoRoot });
+  let created = null; // the space this Start made
   const launched = await guarded(connecting, id, () => launchRun({
     hc, writePaneJson: (p) => writeTextFile(`${runDir}/pane.json`, JSON.stringify(p), null),
-    connect: (p) => connect({ id, orchestrator: p.orchestrator, title: p.title, space, folder: workDir, props: p }, cx),
-    closeTab: () => { const part = runTabOf(id); if (part) run("tab.close", { id: part.tab }); setShared(slotKey(id), null); },
-  }, { id, key, workDir, space, argv: argv.orchestrator, task: `Read ${runDir}/orchestrator.md and follow it.`, props }));
+    connect: async (p) => { const slot = await connect({ id, orchestrator: p.orchestrator, title: p.title, space, folder: workDir, props: p }, cx); created = slot.created ? slot.space : null; return slot; },
+    closeTab: () => { undoRunTab({ created, part: runTabOf(id), run: (n, a) => run(n, a) }); created = null; setShared(slotKey(id), null); },
+  }, { id, key, workDir, argv: argv.orchestrator, task: `Read ${runDir}/orchestrator.md and follow it.`, props }));
   if (launched.problems.length) notify({ title: "The workflow started, with a problem", body: launched.problems.join(" "), level: "warning" });
   return { resumed: false };
 }

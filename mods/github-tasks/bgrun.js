@@ -1,15 +1,17 @@
 // A run's orchestrator runs in the background, owned by no tab or pane (`hc run --bg`, with none of the herdr.space /
 // herdr.tab labels that would adopt it into a pane). Its tab only shows it: a placeholder terminal on the left with the
 // orchestrator shown over it (terminal.show), and the run page on the right. Closing the tab ends the placeholder, not
-// the run. Pure apart from the deps it is handed, so node --test runs it.
-import { FOLDER_LABEL, ROLE_LABEL, RUN_LABEL, SPACE_LABEL, TICKET_LABEL, shQuote } from "./run.js";
+// the run. The tab is the first tab of the ticket's own space, rooted at the ticket's worktree and named for the ticket,
+// which the Spaces sidebar nests under the repo's space; Merge closes that space. Pure apart from the deps it is handed,
+// so node --test runs it.
+import { FOLDER_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL, shQuote } from "./run.js";
 
 // Where the run's tab is saved (shared state, as herdr.tab labels are gone): { tab, left, space }.
 export const slotKey = (id) => `github-tasks.runtab.${id}`;
 
 // `hc run` for the orchestrator: no parent, so nothing but a kill or Merge ends it; its labels are set at birth.
-export function orchestratorRunArgs({ id, key, workDir, space, argv }) {
-  const labels = [`${RUN_LABEL}=${id}`, `${ROLE_LABEL}=orchestrator`, `${TICKET_LABEL}=${key}`, `${FOLDER_LABEL}=${workDir}`, ...(space ? [`${SPACE_LABEL}=${space}`] : [])];
+export function orchestratorRunArgs({ id, key, workDir, argv }) {
+  const labels = [`${RUN_LABEL}=${id}`, `${ROLE_LABEL}=orchestrator`, `${TICKET_LABEL}=${key}`, `${FOLDER_LABEL}=${workDir}`];
   return ["run", "--bg", "--json", "--no-parent", "--cwd", workDir, ...labels.flatMap((l) => ["--label", l]), "--", ...argv];
 }
 
@@ -48,23 +50,65 @@ export async function guarded(busy, id, fn) {
   try { return await fn(); } finally { busy.delete(id); }
 }
 
-// The space View opens a tab in: the one the run started in, or the current one when that is closed.
-export const viewTarget = ({ started, spaces, current }) => ((spaces ?? []).some((s) => s.id === started) ? started : current);
+const inside = (path, folder) => path === folder || path.startsWith(`${folder.replace(/\/+$/, "")}/`);
+
+// The ticket's own space, if it is open: on this computer, and its first terminal is inside the ticket's worktree (folder;
+// what the sidebar nests by). The space's own folder is only used when no first terminal is known, as it can drift with the
+// focused pane (a repo space would then look like the ticket's). Matching is by the worktree, not
+// by name, so a renamed issue or space is still found. The repo's space never is: it is skipped when its folder is the main
+// checkout (repoRoot), and a tab an older run opened at the worktree inside it doesn't count, as it is not its first terminal.
+// Its id, or null.
+export function findTicketSpace({ spaces, panes, folder, repoRoot = "" }) {
+  if (!folder || folder === repoRoot) return null;
+  const first = (s) => { const tab = s.tabs?.[0]?.id; return (panes ?? []).find((p) => p.tab === tab && p.cwd); };
+  const found = (spaces ?? []).find((s) => {
+    if (s.machine || (repoRoot && s.folder === repoRoot)) return false;
+    const terminal = first(s);
+    return terminal ? inside(terminal.cwd, folder) : Boolean(s.folder && inside(s.folder, folder));
+  });
+  return found?.id ?? null;
+}
+
+// The space View connects the run's tab in: the ticket's, or null when it was closed (then View makes a new one at the
+// worktree). Never the space the person happens to be in, which may be the repo's.
+export const viewTarget = findTicketSpace;
+
+// The space a worker's or reviewer's terminal is peeked from, so that keeping it as a tab lands in the ticket's space: the
+// space of the run's open tab, else the ticket's space found by its worktree, else null.
+export function peekSpace({ slot, spaces, panes, folder, repoRoot }) {
+  return runTabParts({ slot, spaces, panes })?.space ?? findTicketSpace({ spaces, panes, folder, repoRoot });
+}
+
+// Takes back what Start opened when the run fails to start: the space it made (confirmed: it holds only the run's tab), else
+// the tab it added to a space that was there already. Nothing to do when neither is open.
+export function undoRunTab({ created, part, run }) {
+  if (created) run("space.close", { id: created, confirmed: true });
+  else if (part) run("tab.close", { id: part.tab, confirmed: true }); // confirmed: it may be the space's last tab
+}
 
 const why = (e) => String(e?.message ?? e);
 
-// Opens a tab connected to the orchestrator: placeholder on the left, orchestrator shown over it, run page on the right,
+// Opens the run's tab connected to the orchestrator: placeholder on the left, orchestrator shown over it, run page on the right,
 // the left focused. With `existing` ({ tab, space, left, page }, from runTabParts) it makes good what that tab lacks (a
 // left placeholder, or the run page) instead of opening another tab. Throws with the reason; a tab it made itself is closed
 // again then, so a retry never leaves two. A tab that was already there is left alone.
+// Without a space to put the tab in (`space` null) and with spaceName, it makes a new space of that name rooted at `folder`
+// (the ticket's worktree: the sidebar nests a space under its repo by where its first terminal is) with the tab as its first;
+// the slot returned then has created: true, and a failure closes that whole space.
 //   deps: { app(name, args) -> made, paneOf(made) -> pane id | null, run(name, args), setSlot(id, slot), sleep(ms),
 //           isShown?(orchestrator, left), warn?(message) }
-export async function connectRun(deps, { id, orchestrator, name, space, folder, props, existing = null }) {
-  let made = null, tab = existing?.tab, left = existing?.left ?? null, page = existing?.page ?? null;
+export async function connectRun(deps, { id, orchestrator, name, space, spaceName, folder, props, existing = null }) {
+  let made = null, tab = existing?.tab, left = existing?.left ?? null, page = existing?.page ?? null, createdSpace = false;
   try {
     if (!existing) {
-      try { made = await deps.app("tab.new", { name, ...(folder ? { folder } : {}), argv: placeholderArgv(orchestrator), ...(space ? { space } : {}) }); }
-      catch (e) { throw new Error(`the tab couldn't be made (${why(e)})`); }
+      createdSpace = !space && Boolean(spaceName);
+      if (createdSpace) {
+        try { made = await deps.app("space.new", { name: spaceName, tab: name, ...(folder ? { folder } : {}), argv: placeholderArgv(orchestrator) }); }
+        catch (e) { throw new Error(`the space couldn't be made (${why(e)})`); }
+      } else {
+        try { made = await deps.app("tab.new", { name, ...(folder ? { folder } : {}), argv: placeholderArgv(orchestrator), ...(space ? { space } : {}) }); }
+        catch (e) { throw new Error(`the tab couldn't be made (${why(e)})`); }
+      }
       tab = made.tab;
       left = await deps.paneOf(made);
       if (!left) throw new Error("the tab's pane didn't appear");
@@ -94,9 +138,14 @@ export async function connectRun(deps, { id, orchestrator, name, space, folder, 
     deps.run("pane.focus", { pane: left });
     const held = await holdShown(deps, { orchestrator, left, show });
     if (held === false) deps.warn?.(`The orchestrator ${orchestrator} may not be showing in its tab yet. Press View on the ticket to show it again; the run itself is going.`);
-    return slot;
+    return createdSpace ? { ...slot, created: true } : slot;
   } catch (e) {
-    if (made) { try { deps.run("tab.close", { id: made.tab }); } catch { /* it stays; View repairs it */ } }
+    if (made) {
+      try { // a space this made holds only this tab: it goes whole, so no empty space is left
+        if (createdSpace) deps.run(made.space ? "space.close" : "tab.close", made.space ? { id: made.space, confirmed: true } : { id: made.tab, confirmed: true });
+        else deps.run("tab.close", { id: made.tab });
+      } catch { /* it stays; View repairs it */ }
+    }
     throw e;
   }
 }
@@ -144,12 +193,15 @@ export async function reapplyRuns({ terminals, slot, spaces, panes, show }) {
 }
 
 // Merge's end of a run: the orchestrator is killed on purpose first (nothing else ends a background run, and it would
-// start more workers meanwhile), then the terminals of the run that are left, read again; then the run's tab is closed if it
-// is open. A terminal that is still live after its kill is an error: the tab and slot are kept and the error says which, so
-// the person can end it by hand. A closed tab is not a failure; `tabFound` false tells the page nothing was there to close.
-//   deps: { hc(args) -> { code, stderr }, terminals() (read again as needed), run(name, args), slot, spaces, panes, clearSlot() }.
-//   Resolves with { tabClosed, error } (+ tabFound: false when no tab was found).
-export async function endRun({ id, orchestrator, hc, terminals, run, slot, spaces, panes, clearSlot }) {
+// start more workers meanwhile), then the terminals of the run that are left, read again; then, as the very last step (the
+// run page lives in it), the ticket's whole space is closed, confirmed, even with other tabs the person opened in it. That is
+// only done to the ticket's own space (ticketSpace, found by its worktree): a run from before the ticket got a space has its
+// tab in the repo's space, and then only that tab is closed. With no tab left, ticketSpace is closed. A terminal that is still live after its kill is an
+// error: the space and slot are kept and the error says which, so the person can end it by hand. A space already closed is
+// not a failure; `tabFound` false tells the page nothing was there to close.
+//   deps: { hc(args) -> { code, stderr }, terminals() (read again as needed), run(name, args), slot, spaces, panes, ticketSpace?, clearSlot() }.
+//   Resolves with { closed, error } (+ tabFound: false when no space was found).
+export async function endRun({ id, orchestrator, hc, terminals, run, slot, spaces, panes, ticketSpace = null, clearSlot }) {
   const live = () => (terminals() ?? []).filter((k) => k.state === "live" && (k.address === orchestrator || k.labels?.[RUN_LABEL] === id));
   const stuck = [];
   const kill = async (address) => {
@@ -159,12 +211,13 @@ export async function endRun({ id, orchestrator, hc, terminals, run, slot, space
   };
   if (orchestrator) await kill(orchestrator);
   for (const k of live().filter((k) => k.address !== orchestrator)) await kill(k.address);
-  if (stuck.length) return { tabClosed: false, error: `couldn't end ${stuck.join("; ")}. Its tab was kept; end it with hc kill.` };
+  if (stuck.length) return { closed: false, error: `couldn't end ${stuck.join("; ")}. Its space was kept; end it with hc kill.` };
   const parts = runTabParts({ slot, spaces, panes });
   clearSlot();
-  if (!parts) return { tabClosed: false, error: null, tabFound: false };
-  run("tab.close", { id: parts.tab });
-  return { tabClosed: true, error: null };
+  if (parts && parts.space !== ticketSpace) run("tab.close", { id: parts.tab }); // not the ticket's own space: the person's other tabs stay
+  else if (ticketSpace) run("space.close", { id: ticketSpace, confirmed: true });
+  else return { closed: false, error: null, tabFound: false };
+  return { closed: true, error: null };
 }
 
 // Starts a run's orchestrator and opens its tab at once, so the person watches it boot (and View, held off by the caller's
@@ -173,8 +226,8 @@ export async function endRun({ id, orchestrator, hc, terminals, run, slot, space
 // is only a problem to say: the run is going and View connects it.
 //   deps: { hc(args), writePaneJson(props), connect(props) -> slot (throws), closeTab() }
 //   Resolves with { orchestrator, problems }.
-export async function launchRun(deps, { id, key, workDir, space, argv, task, props }) {
-  const started = await deps.hc(orchestratorRunArgs({ id, key, workDir, space, argv })).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+export async function launchRun(deps, { id, key, workDir, argv, task, props }) {
+  const started = await deps.hc(orchestratorRunArgs({ id, key, workDir, argv })).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
   const orchestrator = started.code === 0 ? parseStarted(started.stdout) : null;
   if (!orchestrator) throw new Error(`The orchestrator didn't start: ${String(started.stderr || started.stdout || "").trim() || "hc gave no address"}`);
   const full = { ...props, orchestrator };
@@ -195,10 +248,10 @@ export async function launchRun(deps, { id, key, workDir, space, argv, task, pro
   return { orchestrator, problems };
 }
 
-// What the run page shows once Merge has ended the run: done (its tab, and so the page, is closed), an error naming what
-// couldn't be ended, or a note that the tab couldn't be found. Anything but done frees the page from "Merging…".
+// What the run page shows once Merge has ended the run: done (its space, or for an older run its tab, and so the page, is closed), an error naming what
+// couldn't be ended, or a note that the space couldn't be found. Anything but done frees the page from "Merging…".
 export function mergeOutcome(ended) {
-  if (ended.tabClosed) return { done: true, error: null, note: null };
+  if (ended.closed) return { done: true, error: null, note: null };
   if (ended.error) return { done: false, error: `Merged, but ${ended.error}`, note: null };
-  return { done: false, error: null, note: { text: "Merged. This run's tab couldn't be found to close: close it yourself.", detail: "The run has ended; only its tab is left." } };
+  return { done: false, error: null, note: { text: "Merged. This run's space couldn't be found to close: close it yourself.", detail: "The run has ended; only its space is left." } };
 }

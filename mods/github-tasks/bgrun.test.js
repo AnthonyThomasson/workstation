@@ -1,24 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { connectRun, endRun, guarded, mergeOutcome, launchRun, holdShown, findRunTab, runTabParts, waitReady, orchestratorRunArgs, parseStarted, placeholderArgv, reapplyRuns, slotKey, viewTarget } from "./bgrun.js";
+import { connectRun, endRun, guarded, mergeOutcome, launchRun, holdShown, findRunTab, runTabParts, waitReady, orchestratorRunArgs, parseStarted, placeholderArgv, reapplyRuns, slotKey, viewTarget, findTicketSpace, peekSpace, undoRunTab } from "./bgrun.js";
+import { ticketName } from "./run.js";
 
 const SPACES = [{ id: "s1", tabs: [{ id: "tA" }, { id: "tB" }] }, { id: "s2", tabs: [{ id: "tC" }] }];
 const PANES = [{ pane: "pA", tab: "tA", terminal: "t9" }, { pane: "pB", tab: "tB", terminal: "t8" }, { pane: "pM", tab: "tB", mod: "github-tasks", terminal: null }];
 
 test("the orchestrator starts in the background with no parent, no pane labels, and the run's labels", () => {
-  const args = orchestratorRunArgs({ id: "22-x", key: "o/r#22", workDir: "/w", space: "s1", argv: ["claude", "--effort", "high"] });
+  const args = orchestratorRunArgs({ id: "22-x", key: "o/r#22", workDir: "/w", argv: ["claude", "--effort", "high"] });
   assert.deepEqual(args.slice(0, 5), ["run", "--bg", "--json", "--no-parent", "--cwd"]);
   assert.equal(args[5], "/w");
   assert.deepEqual(args.slice(args.indexOf("--") + 1), ["claude", "--effort", "high"]);
   const labels = args.flatMap((a, i) => (args[i - 1] === "--label" ? [a] : []));
   assert.deepEqual(labels.sort(), [
-    "herdr.role=orchestrator", "herdr.workflow.folder=/w", "herdr.workflow.run=22-x", "herdr.workflow.space=s1", "herdr.workflow.ticket=o/r#22",
+    "herdr.role=orchestrator", "herdr.workflow.folder=/w", "herdr.workflow.run=22-x", "herdr.workflow.ticket=o/r#22",
   ]);
   assert.ok(!labels.some((l) => l.startsWith("herdr.space") || l.startsWith("herdr.tab")), "those would adopt it into a pane");
 });
 
-test("no space label when the run started outside any space", () => {
-  const args = orchestratorRunArgs({ id: "a", key: "k", workDir: "/w", space: null, argv: ["x"] });
+test("no space label is written: the ticket's space is found by its worktree", () => {
+  const args = orchestratorRunArgs({ id: "a", key: "k", workDir: "/w", argv: ["x"] });
   assert.ok(!args.some((a) => a.startsWith("herdr.workflow.space")));
 });
 
@@ -50,11 +51,91 @@ test("no run tab: nothing saved, the tab was closed, or the left pane is gone", 
   assert.equal(findRunTab({ slot: { tab: "tA", left: "pB" }, spaces: SPACES, panes: PANES }), null); // that pane is in another tab
 });
 
-test("View connects in the space the run started in, or the current one when it is closed", () => {
-  assert.equal(viewTarget({ started: "s2", spaces: SPACES, current: "s1" }), "s2");
-  assert.equal(viewTarget({ started: "closed", spaces: SPACES, current: "s1" }), "s1");
-  assert.equal(viewTarget({ started: null, spaces: SPACES, current: "s1" }), "s1");
-  assert.equal(viewTarget({ started: null, spaces: SPACES, current: undefined }), undefined);
+// The ticket's own space: its first terminal is in the ticket's worktree. The repo's space is at the repo root.
+const TICKET = [
+  { id: "s1", name: "workstation", named: false, folder: "/r", machine: null, tabs: [{ id: "tA" }, { id: "tB" }] },
+  { id: "sT", name: "#32 Run each ticket", named: true, folder: "/wt/ticket", machine: null, tabs: [{ id: "tT" }] },
+];
+const TPANES = [{ pane: "pA", tab: "tA", cwd: "/r" }, { pane: "pT", tab: "tT", cwd: "/wt/ticket" }];
+const where = { folder: "/wt/ticket", repoRoot: "/r" };
+
+test("the space is named #<number> <title>, as the sidebar and the run's tab are", () => {
+  assert.equal(ticketName({ number: 32, title: "Run each ticket in its own worktree space" }), "#32 Run each ticket in its own worktree space");
+  assert.equal(ticketName({ title: "A draft" }), "A draft");
+});
+
+test("a ticket's space is found by its worktree, whatever it is called now (a renamed issue or space)", () => {
+  assert.equal(findTicketSpace({ spaces: TICKET, panes: TPANES, ...where }), "sT");
+  const renamed = TICKET.map((s) => (s.id === "sT" ? { ...s, name: "my notes", named: true } : s));
+  assert.equal(findTicketSpace({ spaces: renamed, panes: TPANES, ...where }), "sT");
+});
+
+test("a space elsewhere is not the ticket's, and neither is the repo's", () => {
+  assert.equal(findTicketSpace({ spaces: TICKET, panes: TPANES, folder: "/wt/other", repoRoot: "/r" }), null);
+});
+
+test("a ticket space whose folder moved is still found by its first terminal in the worktree (even in a subfolder)", () => {
+  const moved = TICKET.map((s) => (s.id === "sT" ? { ...s, folder: "" } : s));
+  assert.equal(findTicketSpace({ spaces: moved, panes: [{ pane: "pT", tab: "tT", cwd: "/wt/ticket/src" }], ...where }), "sT");
+  assert.equal(findTicketSpace({ spaces: moved, panes: [{ pane: "pT", tab: "tT", cwd: "/wt/ticket-2" }], ...where }), null, "a sibling folder is not inside it");
+});
+
+test("the repo's space is never the ticket's, even one a run before this change left a tab in at the worktree", () => {
+  // that run's tab was a second tab of the repo's space: its terminal is in the worktree, the space's first terminal is not
+  const old = [{ ...TICKET[0], tabs: [{ id: "tA" }, { id: "tOld" }] }];
+  const panes = [{ pane: "pA", tab: "tA", cwd: "/r" }, { pane: "pOld", tab: "tOld", cwd: "/wt/ticket" }];
+  assert.equal(findTicketSpace({ spaces: old, panes, ...where }), null);
+  // and a space at the main checkout is skipped even when the "worktree" is the repo root
+  assert.equal(findTicketSpace({ spaces: TICKET, panes: TPANES, folder: "/r", repoRoot: "/r" }), null);
+});
+
+test("the repo's space whose folder drifted into the worktree is not the ticket's: its first terminal, still at the repo, decides", async () => {
+  const drifted = [{ ...TICKET[0], folder: "/wt/ticket" }]; // folder follows the focused pane, which is in the worktree
+  const panes = [{ pane: "pA", tab: "tA", cwd: "/r" }, { pane: "pB", tab: "tB", cwd: "/wt/ticket" }];
+  const ticketSpace = findTicketSpace({ spaces: drifted, panes, ...where });
+  assert.equal(ticketSpace, null);
+  // so Merge closes only the run's tab in it, never the repo's space
+  const core = fakeCore({ live: [] });
+  const calls = [];
+  await endRun(endDeps(core, { spaces: drifted, panes, ticketSpace, run: (n, a) => calls.push([n, a]) }));
+  assert.deepEqual(calls, [["tab.close", { id: "tB" }]]);
+});
+
+test("with no first terminal known (no panes, or none with a cwd) the space's own folder decides", () => {
+  assert.equal(findTicketSpace({ spaces: TICKET, panes: [], ...where }), "sT");
+  assert.equal(findTicketSpace({ spaces: TICKET, panes: [{ pane: "pT", tab: "tT" }], ...where }), "sT");
+  const elsewhere = TICKET.map((s) => (s.id === "sT" ? { ...s, folder: "/wt/other" } : s));
+  assert.equal(findTicketSpace({ spaces: elsewhere, panes: [], ...where }), null);
+  assert.equal(findTicketSpace({ spaces: [TICKET[0]], panes: [], ...where }), null, "the repo's space still never matches");
+});
+
+test("a space on another machine is never the ticket's", () => {
+  const remote = TICKET.map((s) => (s.id === "sT" ? { ...s, machine: "box" } : s));
+  assert.equal(findTicketSpace({ spaces: remote, panes: TPANES, ...where }), null);
+});
+
+test("View connects in the ticket's space; when it was closed that is null, meaning a new space at the worktree (never the current one)", () => {
+  assert.equal(viewTarget({ spaces: TICKET, panes: TPANES, ...where }), "sT");
+  assert.equal(viewTarget({ spaces: [TICKET[0]], panes: [TPANES[0]], ...where }), null);
+});
+
+test("a worker's terminal is peeked from the ticket's space: the run tab's space first, else the one found by worktree", () => {
+  const slot = { tab: "tT", left: "pL", space: "sT" };
+  assert.equal(peekSpace({ slot, spaces: TICKET, panes: [...TPANES, { pane: "pL", tab: "tT" }], ...where }), "sT");
+  assert.equal(peekSpace({ slot: null, spaces: TICKET, panes: TPANES, ...where }), "sT");
+  assert.equal(peekSpace({ slot: null, spaces: [TICKET[0]], panes: [TPANES[0]], ...where }), null);
+});
+
+test("undoing a Start closes the space it made, or only the tab it added to an existing space", () => {
+  const log = [];
+  undoRunTab({ created: "sT", part: { tab: "tT" }, run: (n, a) => log.push([n, a]) });
+  assert.deepEqual(log, [["space.close", { id: "sT", confirmed: true }]]);
+  log.length = 0;
+  undoRunTab({ created: null, part: { tab: "tT" }, run: (n, a) => log.push([n, a]) });
+  assert.deepEqual(log, [["tab.close", { id: "tT", confirmed: true }]], "confirmed: if it is the space's last tab Herdr would ask");
+  log.length = 0;
+  undoRunTab({ created: null, part: null, run: (n, a) => log.push([n, a]) });
+  assert.deepEqual(log, [], "nothing to close");
 });
 
 // A fake of the app: records its commands, and answers tab.new.
@@ -130,6 +211,55 @@ test("when the tab can't be made the error says why", async () => {
   assert.deepEqual(f.runs, []);
 });
 
+// A fake of the app that also answers space.new, as a space with its first tab.
+function fakeSpaceApp(over = {}) {
+  const f = fakeApp(over);
+  const app = f.deps.app;
+  f.deps.app = async (name, args) => {
+    if (name === "space.new") {
+      f.calls.push([name, args]);
+      if (over.fail?.["space.new"]) throw new Error(over.fail["space.new"]);
+      return { space: "sNew", tab: "tNew", terminal: "tp", ...(over.noPane ? {} : { pane: "pNew" }) };
+    }
+    return app(name, args);
+  };
+  return f;
+}
+const fresh = { ...base, space: null, spaceName: "#22 x", folder: "/wt/ticket" };
+
+test("with no space to use, connecting makes a new space at the worktree, named for the ticket, with the run tab as its first tab", async () => {
+  const f = fakeSpaceApp();
+  const got = await connectRun(f.deps, fresh);
+  assert.deepEqual(got, { tab: "tNew", left: "pNew", space: "sNew", created: true });
+  assert.deepEqual(f.calls.map((c) => c[0]), ["space.new", "terminal.show", "pane.split", "terminal.show"]);
+  assert.deepEqual(f.calls[0][1], { name: "#22 x", tab: "#22 x", folder: "/wt/ticket", argv: placeholderArgv("t7") });
+  assert.deepEqual(f.runs.slice(0, 2), [["space.select", { id: "sNew" }], ["tab.select", { id: "tNew" }]]);
+  assert.deepEqual(f.slots.r1, { tab: "tNew", left: "pNew", space: "sNew" }, "the saved slot doesn't say how the space came to be");
+});
+
+test("with a space to use, even a named new one is not made: the tab goes in it", async () => {
+  const f = fakeSpaceApp();
+  const got = await connectRun(f.deps, { ...fresh, space: "sT" });
+  assert.equal(f.calls[0][0], "tab.new");
+  assert.equal(f.calls[0][1].space, "sT");
+  assert.equal(got.created, undefined);
+});
+
+test("a new space whose pane doesn't appear, or whose orchestrator can't be shown, is closed whole, confirmed", async () => {
+  for (const over of [{ noPane: true }, { fail: { "terminal.show": "gone" } }, { fail: { "pane.split": "boom" } }]) {
+    const f = fakeSpaceApp(over);
+    await assert.rejects(connectRun(f.deps, fresh));
+    assert.deepEqual(f.runs.at(-1), ["space.close", { id: "sNew", confirmed: true }]);
+    assert.equal(f.slots.r1, undefined);
+  }
+});
+
+test("a space that can't be made says why and closes nothing", async () => {
+  const f = fakeSpaceApp({ fail: { "space.new": "layout unavailable" } });
+  await assert.rejects(connectRun(f.deps, fresh), /space couldn't be made.*layout unavailable/);
+  assert.deepEqual(f.runs, []);
+});
+
 test("after a restart each live run's orchestrator is shown again in the one tab it has", async () => {
   const shown = [];
   const slots = { r1: { tab: "tB", left: "pB" }, r2: { tab: "tC", left: "pC" }, r3: null };
@@ -171,14 +301,14 @@ function fakeCore({ stuck = [], live = ["t7", "t3"] } = {}) {
 }
 const endDeps = (core, over = {}) => ({
   id: "r1", orchestrator: "t7", hc: core.hc, terminals: core.terminals, run: (n, a) => core.log.push(`${n} ${a.id}`),
-  slot: { tab: "tB", left: "pB" }, spaces: SPACES, panes: PANES, clearSlot: () => core.log.push("clear"), ...over,
+  slot: { tab: "tB", left: "pB" }, spaces: SPACES, panes: PANES, ticketSpace: "s1", clearSlot: () => core.log.push("clear"), ...over,
 });
 
-test("Merge kills the orchestrator first, then the workers and reviewers it left, then closes the open run tab", async () => {
+test("Merge kills the orchestrator first, then the workers and reviewers it left, and closes the ticket's whole space as its very last step", async () => {
   const core = fakeCore();
   const got = await endRun(endDeps(core));
-  assert.deepEqual(got, { tabClosed: true, error: null });
-  assert.deepEqual(core.log, ["kill t7", "rm t7", "kill t3", "rm t3", "clear", "tab.close tB"]);
+  assert.deepEqual(got, { closed: true, error: null });
+  assert.deepEqual(core.log, ["kill t7", "rm t7", "kill t3", "rm t3", "clear", "space.close s1"]);
 });
 
 test("a worker started while the orchestrator was being killed is still ended (terminals are read again)", async () => {
@@ -196,33 +326,56 @@ test("a worker started while the orchestrator was being killed is still ended (t
 test("when the orchestrator can't be killed the tab and slot stay and the error is returned", async () => {
   const core = fakeCore({ stuck: ["t7"] });
   const got = await endRun(endDeps(core));
-  assert.equal(got.tabClosed, false);
+  assert.equal(got.closed, false);
   assert.match(got.error, /t7/);
   assert.match(got.error, /could not kill/);
-  assert.ok(!core.log.includes("clear") && !core.log.some((l) => l.startsWith("tab.close")));
+  assert.ok(!core.log.includes("clear") && !core.log.some((l) => l.startsWith("space.close") || l.startsWith("tab.close")), "the space stays open");
 });
 
 test("a kill that fails because the terminal already ended is not an error", async () => {
   const core = fakeCore({ live: [] });
   core.hc = async () => ({ code: 1, stderr: "not live", stdout: "" });
   const got = await endRun(endDeps(core));
-  assert.deepEqual(got, { tabClosed: true, error: null });
+  assert.deepEqual(got, { closed: true, error: null });
 });
 
 test("Merge doesn't fail when the run's tab is already closed or was never saved", async () => {
   const core = fakeCore({ live: [] });
-  const got = await endRun(endDeps(core, { slot: { tab: "tGone", left: "pB" } }));
-  assert.deepEqual(got, { tabClosed: false, error: null, tabFound: false });
+  const got = await endRun(endDeps(core, { slot: { tab: "tGone", left: "pB" }, ticketSpace: null }));
+  assert.deepEqual(got, { closed: false, error: null, tabFound: false });
   assert.deepEqual(core.log.slice(-1), ["clear"]);
-  assert.ok(!core.log.some((l) => l.startsWith("tab.close")));
+  assert.ok(!core.log.some((l) => l.startsWith("space.close")));
 });
 
-test("a run tab that lost its left pane is still closed by Merge", async () => {
+test("a run tab that lost its left pane still has its space closed by Merge", async () => {
   const core = fakeCore({ live: [] });
   const panes = PANES.filter((p) => p.pane !== "pB"); // only the run page is left in tB
   const got = await endRun(endDeps(core, { panes }));
-  assert.equal(got.tabClosed, true);
-  assert.ok(core.log.includes("tab.close tB"));
+  assert.equal(got.closed, true);
+  assert.ok(core.log.includes("space.close s1"));
+});
+
+test("a run from before the ticket got its own space has its tab in the repo's space: Merge closes only that tab, never the space", async () => {
+  const core = fakeCore({ live: [] });
+  const calls = [];
+  // slot's space s1 has another tab (tA) and is not the ticket's space: there is none
+  const got = await endRun(endDeps(core, { ticketSpace: null, run: (n, a) => calls.push([n, a]) }));
+  assert.deepEqual(got, { closed: true, error: null });
+  assert.deepEqual(calls, [["tab.close", { id: "tB" }]]);
+});
+
+test("when the run's tab is gone the ticket's space is still closed, if it is found by its worktree", async () => {
+  const core = fakeCore({ live: [] });
+  const got = await endRun(endDeps(core, { slot: { tab: "tGone", left: "pB" }, ticketSpace: "s2" }));
+  assert.deepEqual(got, { closed: true, error: null });
+  assert.deepEqual(core.log.slice(-2), ["clear", "space.close s2"]);
+});
+
+test("closing the space is confirmed, so it closes even with other tabs the person opened in it", async () => {
+  const core = fakeCore({ live: [] });
+  const calls = [];
+  await endRun(endDeps(core, { run: (n, a) => calls.push([n, a]) }));
+  assert.deepEqual(calls, [["space.close", { id: "s1", confirmed: true }]]);
 });
 
 test("the show is repeated until the app says it holds, then stops", async () => {
@@ -378,7 +531,7 @@ function fakeLaunch({ ready = answer({ reason: "status", status: "idle", ended: 
   };
   return { deps, log };
 }
-const launch = { id: "r1", key: "o/r#1", workDir: "/w", space: "s1", argv: ["claude"], task: "Read x and follow it.", props: { role: "run", id: "r1", orchestrator: null } };
+const launch = { id: "r1", key: "o/r#1", workDir: "/w", argv: ["claude"], task: "Read x and follow it.", props: { role: "run", id: "r1", orchestrator: null } };
 
 test("launch: pane.json is written and the tab opened before the wait for the agent to boot, then the task is sent", async () => {
   const f = fakeLaunch();
@@ -438,11 +591,11 @@ test("launch: View or Start pressed while the run boots is refused for the whole
 });
 
 test("what the page says after Merge: nothing when its tab was closed, an error when something couldn't be ended, a note when no tab was found; never left busy", () => {
-  assert.deepEqual(mergeOutcome({ tabClosed: true, error: null }), { done: true, error: null, note: null });
-  const bad = mergeOutcome({ tabClosed: false, error: "couldn't end t7: x. Its tab was kept; end it with hc kill." });
+  assert.deepEqual(mergeOutcome({ closed: true, error: null }), { done: true, error: null, note: null });
+  const bad = mergeOutcome({ closed: false, error: "couldn't end t7: x. Its space was kept; end it with hc kill." });
   assert.equal(bad.done, false);
   assert.match(bad.error, /^Merged, but couldn't end t7/);
-  const gone = mergeOutcome({ tabClosed: false, error: null, tabFound: false });
+  const gone = mergeOutcome({ closed: false, error: null, tabFound: false });
   assert.equal(gone.done, false);
   assert.equal(gone.error, null);
   assert.match(gone.note.text, /close it yourself/);

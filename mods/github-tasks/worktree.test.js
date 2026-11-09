@@ -35,7 +35,7 @@ function scratch({ remote = false } = {}) {
     sh(other, ...ident, "commit", "-q", "--allow-empty", "-m", "pushed by someone else");
     sh(other, "push", "-q", "origin", "main");
   }
-  return { dir, repo, origin };
+  return { dir, repo, origin, home: join(dir, "home") }; // home doesn't exist yet: the worktree's parent folders are made on demand
 }
 
 test("mainCheckout is the repo itself", async () => {
@@ -53,8 +53,8 @@ test("mainCheckout from inside a linked worktree is still the main checkout", as
 });
 
 test("a new ticket branch is cut from origin's default branch, after a fetch", async () => {
-  const { repo } = scratch({ remote: true });
-  const target = worktreePath(repo, "workflow/1-x");
+  const { repo, home } = scratch({ remote: true });
+  const target = worktreePath(repo, "workflow/1-x", home);
   const path = await prepareWorktree(git, repo, "workflow/1-x", target);
   assert.equal(path, target);
   assert.equal(sh(path, "branch", "--show-current"), "workflow/1-x");
@@ -64,40 +64,40 @@ test("a new ticket branch is cut from origin's default branch, after a fetch", a
 });
 
 test("with no remote, a new branch is cut from the local default branch, not whatever is checked out", async () => {
-  const { repo } = scratch();
+  const { repo, home } = scratch();
   sh(repo, "checkout", "-q", "-b", "wip");
   sh(repo, ...ident, "commit", "-q", "--allow-empty", "-m", "unfinished");
-  const path = await prepareWorktree(git, repo, "workflow/2-y", worktreePath(repo, "workflow/2-y"));
+  const path = await prepareWorktree(git, repo, "workflow/2-y", worktreePath(repo, "workflow/2-y", home));
   assert.equal(sh(path, "log", "-1", "--format=%s"), "first");
 });
 
 test("with no default branch to find, a new branch is cut from HEAD", async () => {
-  const { repo } = scratch();
+  const { repo, home } = scratch();
   sh(repo, "checkout", "-q", "-b", "wip");
   sh(repo, "branch", "-q", "-m", "main", "elsewhere"); // no main or master any more
   sh(repo, ...ident, "commit", "-q", "--allow-empty", "-m", "on head");
   assert.equal(await baseFor(git, repo), "HEAD");
-  const path = await prepareWorktree(git, repo, "workflow/3-z", worktreePath(repo, "workflow/3-z"));
+  const path = await prepareWorktree(git, repo, "workflow/3-z", worktreePath(repo, "workflow/3-z", home));
   assert.equal(sh(path, "log", "-1", "--format=%s"), "on head");
 });
 
 test("an existing ticket branch is used as it is", async () => {
-  const { repo } = scratch({ remote: true });
+  const { repo, home } = scratch({ remote: true });
   sh(repo, "branch", "workflow/4-w", "main");
-  const path = await prepareWorktree(git, repo, "workflow/4-w", worktreePath(repo, "workflow/4-w"));
+  const path = await prepareWorktree(git, repo, "workflow/4-w", worktreePath(repo, "workflow/4-w", home));
   assert.equal(sh(path, "log", "-1", "--format=%s"), "first"); // not moved to origin's newer commit
 });
 
 test("a branch already checked out in a worktree gives that worktree's path", async () => {
-  const { repo, dir } = scratch();
+  const { repo, dir, home } = scratch();
   const elsewhere = join(dir, "somewhere else");
   sh(repo, "worktree", "add", "-q", "-b", "workflow/5-v", elsewhere);
-  assert.equal(await prepareWorktree(git, repo, "workflow/5-v", worktreePath(repo, "workflow/5-v")), elsewhere);
+  assert.equal(await prepareWorktree(git, repo, "workflow/5-v", worktreePath(repo, "workflow/5-v", home)), elsewhere);
 });
 
 test("a worktree whose folder was deleted by hand is made again, not reused", async () => {
-  const { repo } = scratch();
-  const target = worktreePath(repo, "workflow/6-u");
+  const { repo, home } = scratch();
+  const target = worktreePath(repo, "workflow/6-u", home);
   await prepareWorktree(git, repo, "workflow/6-u", target);
   rmSync(target, { recursive: true });
   const path = await prepareWorktree(git, repo, "workflow/6-u", target);
@@ -107,9 +107,28 @@ test("a worktree whose folder was deleted by hand is made again, not reused", as
 });
 
 test("a worktree that can't be made says why", async () => {
-  const { repo } = scratch();
-  const target = worktreePath(repo, "workflow/7-t");
-  mkdirSync(target);
+  const { repo, home } = scratch();
+  const target = worktreePath(repo, "workflow/7-t", home);
+  mkdirSync(target, { recursive: true });
   execFileSync("touch", [join(target, "in the way")]);
   await assert.rejects(prepareWorktree(git, repo, "workflow/7-t", target), /Couldn't make a worktree at/);
+});
+
+test("a ticket worktree lands in Herdr's worktree folder, named for the main checkout even when started from a worktree", async () => {
+  const { repo, dir, home } = scratch();
+  const linked = join(dir, "linked");
+  sh(repo, "worktree", "add", "-q", "-b", "side", linked);
+  const main = await mainCheckout(git, linked);
+  const target = worktreePath(main, "workflow/9-q", home);
+  assert.equal(target, join(home, ".herdr", "worktrees", "my app", "workflow-9-q"));
+  assert.equal(await prepareWorktree(git, main, "workflow/9-q", target), target);
+  assert.ok(existsSync(join(target, ".git")));
+  assert.equal(sh(target, "branch", "--show-current"), "workflow/9-q");
+});
+
+test("a second Start for the same branch reuses its worktree under Herdr's folder", async () => {
+  const { repo, home } = scratch();
+  const target = worktreePath(repo, "workflow/10-p", home);
+  await prepareWorktree(git, repo, "workflow/10-p", target);
+  assert.equal(await prepareWorktree(git, repo, "workflow/10-p", target), target);
 });
