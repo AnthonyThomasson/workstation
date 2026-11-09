@@ -2,7 +2,7 @@
 // The title, body, status and labels are editable; Save sends only what changed to GitHub.
 // Not a View of its own: main.js builds one in init and draws it from render.
 import { div } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
+import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, TextView } from "gpui-base";
 import { run, setShared, theme } from "herdr";
 import { snapshot, isDirty, changes } from "./model.js";
 import { GitHubError, loadTask, loadStatusField, saveTask } from "./loader.js";
@@ -12,6 +12,7 @@ import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { matchWorkflows } from "./match.js";
 import { loadWorkflows } from "./workflow-env.js";
 import { startRun } from "./start.js";
+import { markdownLiteral } from "./settings-model.js";
 
 // Set to the time of each save, so the panel's list refreshes.
 export const CHANGED = "github-tasks.changed";
@@ -29,6 +30,8 @@ export class TaskEditor {
     this.autoStart = Boolean(props?.autoStart); // the sidebar's Start asked for several workflows or none: show the dialog once loaded
 
     this.auth = new Auth();
+    this.editingBody = false; // the Description shows as markdown, or as the textarea while this is true
+    this.opened = false; // set by the first load: only then may an empty draft open in the textarea
     this.titleInput = InputState.new({ value: this.ticket.title ?? "" });
     this.bodyInput = TextareaState.new({ value: "", rows: 12 });
     const touched = (_e, cx) => { if (this.notice?.kind === "saved") this.notice = null; cx.notify(); };
@@ -92,6 +95,8 @@ export class TaskEditor {
         this.updatedAt = task.value.updatedAt;
         this.titleInput.set_value(task.value.title);
         this.bodyInput.set_value(task.value.body);
+        this.editingBody = !this.opened && this.draft && !task.value.body.trim();
+        this.opened = true;
         this.base = snapshot({ ...task.value, status: this.status });
         this.loaded = true;
         this.checkStartable(cx);
@@ -116,6 +121,7 @@ export class TaskEditor {
   revert(cx) {
     this.titleInput.set_value(this.base.title);
     this.bodyInput.set_value(this.base.body);
+    this.editingBody = false;
     this.labels = new Set(this.base.labels);
     this.status = this.base.status;
     this.notice = null;
@@ -145,6 +151,7 @@ export class TaskEditor {
         this.base = after;
         this.updatedAt = await loadTask(gh, repo, ticket, where).then((t) => t.updatedAt, () => this.updatedAt);
         this.notice = { kind: "saved", text: "Saved to GitHub." };
+        this.editingBody = false;
         this.checkStartable(cx);
         if (renamed) run("tab.rename", { name: tabName(ticket, after.title) });
         setShared(CHANGED, Date.now());
@@ -202,6 +209,13 @@ export class TaskEditor {
     this.startToken++;
     this.start = null;
     cx.notify();
+  }
+
+  // Switches the Description between rendered markdown and the textarea, which takes focus. The text is kept either way.
+  setEditingBody(on, cx) {
+    this.editingBody = on;
+    cx.notify();
+    if (on) cx.timer.after(50, () => this.bodyInput.focus?.());
   }
 
   openPicker(kind, cx) {
@@ -385,11 +399,18 @@ export class TaskEditor {
       .child(dialog);
   }
 
+  // The Description: rendered markdown (HTML kept as text) that scrolls inside its box, or the textarea while editing.
   renderBody(t) {
+    const editing = this.editingBody, text = this.bodyInput.value();
+    const content = editing ? Textarea.new(this.bodyInput).size_full().text_size(S().body).text_color(t.foreground)
+      : text.trim() ? div().id("body-scroll").size_full().overflow_y_scrollbar().child(TextView.markdown("ticket-body", markdownLiteral(text)).selectable(true))
+      : note(t, "No description");
     return v_flex().flex_1().min_h(0).gap(6)
-      .child(div().flex_none().text_size(S().label).font_semibold().text_color(t.muted).child("Description"))
+      .child(h_flex().flex_none().h(24).gap(4).items_center()
+        .child(div().text_size(S().label).font_semibold().text_color(t.muted).child("Description"))
+        .child(iconButton("edit-description", editing ? "eye" : "edit", t, (_e, cx) => this.setEditingBody(!editing, cx), false, editing ? "Show rendered" : "Edit")))
       .child(div().id("field-body").flex_1().min_h(0).p(10).rounded(8).border_1().border_color(t.input).on_mouse_down("left", stop)
-        .child(Textarea.new(this.bodyInput).size_full().text_size(S().body).text_color(t.foreground)));
+        .child(content));
   }
 
   renderFooter(t, cx) {
