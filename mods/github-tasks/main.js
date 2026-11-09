@@ -291,6 +291,7 @@ export default class GitHubTasks extends View {
       .text_color(t.foreground).text_size(S().body)
       .child(h_flex().h(36).flex_none().pl(14).pr(8).gap(2).items_center()
         .child(div().flex_1().text_size(S().label).font_semibold().text_color(t.muted).child("Tasks"))
+        .when(Boolean(ctx), (el) => el.child(this.newTaskButton(t)))
         .child(iconButton("settings", "settings", t, () => showSettings(), false, problems ? `Task settings (${problems} ${problems === 1 ? "problem" : "problems"} found)` : "Task settings", undefined, problems ? t.ansi1 : undefined))
         .when(Boolean(ctx), (el) => el.child(iconButton("refresh", this.loading && !this.quiet ? "ring" : "sync", t, (_e, cx) => this.refresh(cx, { fresh: true }), this.loading && !this.quiet, "Refresh"))))
       .when(this.projects.length > 1, (el) => el.child(this.renderContext(t)))
@@ -435,7 +436,7 @@ export default class GitHubTasks extends View {
     return chooseAgent(this.agents, normalizeGroomer(shared(GROOMER_KEY)).agent ?? shared(AGENT_KEY));
   }
 
-  // The + beside Backlog: opens the New task dialog (new-task.js), a small overlay that asks what the ticket should be about, then
+  // The + in the Tasks header: opens the New task dialog (new-task.js), a small overlay that asks what the ticket should be about, then
   // starts a New Task session (an Investigation) with that description. Nothing opens without a place to start from or an agent.
   openNewTask() {
     const ctx = this.ctx, project = this.project, local = this.source === "local";
@@ -474,7 +475,7 @@ export default class GitHubTasks extends View {
     });
   }
 
-  // The + beside Backlog: opens the New task dialog.
+  // The + in the Tasks header (left of the settings gear, shown while a space is open): opens the New task dialog.
   newTaskButton(t) {
     const agent = this.agent();
     return iconButton("new-task", "plus", t, () => this.openNewTask(), false, agent ? "Start a new task with an agent" : "No agent is installed to help with a task");
@@ -486,8 +487,7 @@ export default class GitHubTasks extends View {
       .text_size(S().label).font_semibold().text_color(t.muted).hover((s) => s.text_color(t.foreground))
       .on_mouse_down("left", stop).on_click((_e, cx) => { this.open[id] = !this.open[id]; cx.notify(); })
       .child(icon(open ? "chevron-down" : "chevron-right", 12, t.muted))
-      .child(div().flex_1().child(title))
-      .when(id === "backlog", (el) => el.child(this.newTaskButton(t)));
+      .child(div().flex_1().child(title));
   }
 
   // A click opens the ticket in a large popup over the app to edit (editor.js, popup.js). Its folder and machine go
