@@ -417,7 +417,7 @@ export class TaskEditor {
         .child(div().text_size(S().label).font_semibold().text_color(t.muted).child("Description"))
         .child(iconButton("edit-description", editing ? "eye" : "edit", t, (_e, cx) => this.setEditingBody(!editing, cx), false, editing ? "Show rendered" : "Edit")))
       .child(div().id("field-body").flex_1().min_h(0).p(10).rounded(8).border_1().border_color(t.input)
-        .on_mouse_down("left", (e, cx) => { if (!editing) this.handle.focus(); stop(e, cx); })
+        .on_mouse_down("left", stop)
         .child(content));
   }
 
