@@ -27,19 +27,39 @@ export const placeholderArgv = (orchestrator) => ["sh", "-c", `printf '%s\\n' ${
 
 // What is left of the run's tab, from the saved slot: { tab, space, left, page } with left (the pane the orchestrator is
 // shown in) or page (the run page) null when closed, or null when the tab is gone or has neither.
-export function runTabParts({ slot, spaces, panes }) {
-  if (!slot?.tab) return null;
-  const space = (spaces ?? []).find((s) => (s.tabs ?? []).some((t) => t.id === slot.tab));
-  if (!space) return null;
-  const inTab = (panes ?? []).filter((p) => p.tab === slot.tab);
-  const left = inTab.some((p) => p.pane === slot.left) ? slot.left : null;
-  const page = inTab.find((p) => p.mod === "github-tasks")?.pane ?? null;
-  return left || page ? { tab: slot.tab, space: space.id, left, page } : null;
+// The slot can go stale (the ids change). With the tab's `name` (the ticket's name) a stale slot is made good: the tab that
+// has that name, a github-tasks pane and a terminal pane is the run's tab (the slot's own tab and space first); its left is
+// the slot's left if still there, else its one terminal pane. panes() can't tell the run page from a ticket editor (both are
+// the mod's pane, tab named the same), so a tab with no terminal pane is never taken by name.
+export function runTabParts({ slot, spaces, panes, name }) {
+  const tabParts = (tab, space) => {
+    const inTab = (panes ?? []).filter((p) => p.tab === tab);
+    const left = inTab.some((p) => p.pane === slot?.left) ? slot.left : null;
+    const page = inTab.find((p) => p.mod === "github-tasks")?.pane ?? null;
+    return { tab, space, left, page, inTab };
+  };
+  const spaceOf = (tab) => (spaces ?? []).find((s) => (s.tabs ?? []).some((t) => t.id === tab))?.id;
+  const strip = ({ inTab, ...parts }) => parts;
+  const slotSpace = slot?.tab ? spaceOf(slot.tab) : undefined;
+  const own = slotSpace ? tabParts(slot.tab, slotSpace) : null;
+  if (own?.left && own.page) return strip(own);
+  if (name) {
+    const named = [];
+    for (const s of spaces ?? []) for (const t of s.tabs ?? []) if (t.name === name) named.push(tabParts(t.id, s.id));
+    const whole = named.filter((c) => c.page && c.inTab.some((p) => p.terminal && p.mod !== "github-tasks"));
+    whole.sort((a, b) => (b.tab === slot?.tab) - (a.tab === slot?.tab) || (b.space === slot?.space) - (a.space === slot?.space));
+    const found = whole[0];
+    if (found) {
+      const left = found.left ?? found.inTab.find((p) => p.terminal && p.mod !== "github-tasks").pane;
+      return { tab: found.tab, space: found.space, left, page: found.page };
+    }
+  }
+  return own && (own.left || own.page) ? strip(own) : null;
 }
 
 // The run's open tab, whole enough to show the orchestrator: the saved slot, while its tab and its left pane exist.
-export function findRunTab({ slot, spaces, panes }) {
-  const parts = runTabParts({ slot, spaces, panes });
+export function findRunTab({ slot, spaces, panes, name }) {
+  const parts = runTabParts({ slot, spaces, panes, name });
   return parts?.left ? { tab: parts.tab, left: parts.left, space: parts.space } : null;
 }
 

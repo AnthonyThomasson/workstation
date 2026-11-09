@@ -685,8 +685,9 @@ const NAMED = [{ id: "s1", tabs: [{ id: "tA", name: "1" }, { id: "tX", name: "#2
 const NPANES = [{ pane: "pA", tab: "tA", terminal: "t9" }, { pane: "pX", tab: "tX", terminal: "t8" }, { pane: "pP", tab: "tX", mod: "github-tasks", terminal: null }];
 
 test("#35 a stale left pane id: the tab's terminal pane is its left pane", () => {
-  const got = runTabParts({ slot: { tab: "tX", left: "pOld" }, spaces: NAMED, panes: NPANES });
+  const got = runTabParts({ slot: { tab: "tX", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x" });
   assert.deepEqual(got, { tab: "tX", space: "s1", left: "pX", page: "pP" });
+  assert.equal(runTabParts({ slot: { tab: "tX", left: "pOld" }, spaces: NAMED, panes: NPANES }).left, null, "without the name the slot is all there is");
 });
 
 test("#35 a stale tab id too: the complete tab is found again by the run's name", () => {
@@ -696,10 +697,28 @@ test("#35 a stale tab id too: the complete tab is found again by the run's name"
 });
 
 test("#35 a complete tab behind a stale slot is not given a second placeholder", async () => {
-  const existing = runTabParts({ slot: { tab: "tX", left: "pOld" }, spaces: NAMED, panes: NPANES });
+  const existing = runTabParts({ slot: { tab: "tX", left: "pOld" }, spaces: NAMED, panes: NPANES, name: "#22 x" });
   const f = fakeApp();
   f.deps.app = ((app) => async (name, args) => { const r = await app(name, args); return name === "pane.split" && args.argv ? { pane: "pLeft", terminal: "tp2" } : r; })(f.deps.app);
   await connectRun(f.deps, { ...base, existing });
   assert.deepEqual(f.calls.filter((c) => c[0] === "pane.split"), [], "neither a left placeholder nor the run page is split in");
   assert.deepEqual(f.slots.r1, { tab: "tX", left: "pX", space: "s1" }, "the slot is made good");
+});
+
+test("#35 a ticket editor tab of the same name (a mod pane, no terminal) is never taken for the run's tab", () => {
+  const spaces = [{ id: "s1", tabs: [{ id: "tE", name: "#22 x" }] }];
+  const panes = [{ pane: "pE", tab: "tE", mod: "github-tasks", terminal: null }];
+  assert.equal(runTabParts({ slot: { tab: "tOld", left: "pOld" }, spaces, panes, name: "#22 x" }), null);
+  assert.equal(findRunTab({ slot: null, spaces, panes, name: "#22 x" }), null);
+});
+
+test("#35 of two same-named tabs the whole one is taken, and the slot's space first", () => {
+  const spaces = [{ id: "s1", tabs: [{ id: "tE", name: "#22 x" }] }, { id: "s2", tabs: [{ id: "tR", name: "#22 x" }] }, { id: "s3", tabs: [{ id: "tQ", name: "#22 x" }] }];
+  const panes = [
+    { pane: "pE", tab: "tE", mod: "github-tasks", terminal: null },
+    { pane: "pR", tab: "tR", terminal: "t1" }, { pane: "pRp", tab: "tR", mod: "github-tasks", terminal: null },
+    { pane: "pQ", tab: "tQ", terminal: "t2" }, { pane: "pQp", tab: "tQ", mod: "github-tasks", terminal: null },
+  ];
+  assert.equal(runTabParts({ slot: { tab: "gone", space: "s3" }, spaces, panes, name: "#22 x" }).tab, "tQ");
+  assert.equal(runTabParts({ slot: { tab: "gone" }, spaces, panes, name: "#22 x" }).tab, "tR");
 });
