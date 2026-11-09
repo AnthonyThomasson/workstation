@@ -702,3 +702,18 @@ test("merge: terminals listed but no address readable is a failure, and the job 
   assert.ok(git(r.ticketDir, "worktree", "list").includes("--auth"));
   assert.ok(exists(r.ticketDir, "show-ref", "--verify", "--quiet", `refs/heads/${r.job.branch}`));
 });
+
+test("the orchestrator may commit the leftovers and plain-push the ticket branch only when the run page reports a stopped Merge", () => {
+  const text = prompt("orchestrator");
+  assert.match(text, /run page reports a stopped Merge/);
+  assert.match(text, /commit what is left/);
+  assert.ok(text.includes("`git -C /src/app-12-fix-the-login push origin workflow/12-fix-the-login`"));
+  assert.match(text, /never force-push, push the default branch or merge/);
+  assert.match(text, /rejected.*stop and ask the person/s);
+  assert.ok(text.includes("without merging into the default branch, pushing or opening a pull request yourself"));
+});
+
+test("the orchestrator gets no allow rule for git: a push or commit follows the person's permission mode", () => {
+  const argv = agentArgv("orchestrator", { agent: "claude", permissions: "ask" }, ["claude"], "/runs/1");
+  assert.ok(!argv.some((a) => /git (push|commit)/.test(a)));
+});
