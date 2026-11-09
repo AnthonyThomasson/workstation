@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, optionFor, statusArgs, mergeSteps, runSteps, prArgs, prViewArgs, parsePrUrl, prNumber, parsePr } from "./finish.js";
+import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, optionFor, statusArgs, mergeSteps, runSteps, prArgs, prViewArgs, parsePrUrl, prNumber, parsePr, handOffStep, handOffMessage, handOffNote } from "./finish.js";
 
 test("canMerge needs the final reviewer seen and nobody live", () => {
   const ended = { live: false }, live = { live: true, status: "idle" };
@@ -454,4 +454,48 @@ test("runSteps: a step can be code (run) and a check can read the output (check)
   await runSteps([check], fake({ x: { stdout: "main\n" } }).exec);
   await assert.rejects(runSteps([check], fake({ x: { stdout: "dev\n" } }).exec), /^Error: on dev$/);
   await assert.rejects(runSteps([check], fake({ x: { code: 1, stderr: "bad" } }).exec), /Couldn't\. bad/);
+});
+
+// A Merge that stops at the ahead or tree-status check is handed to the orchestrator.
+const stopOf = async (answers) => runSteps(mergeSteps(ctx), fake(answers).exec).then(() => null, (e) => e);
+
+test("runSteps names the check a dirty stop came from, and only a dirty stop", async () => {
+  assert.equal((await stopOf({ "r-9-x status": { stdout: " M a.js\n" } })).step, "tree-status");
+  assert.equal((await stopOf({ "rev-list": { stdout: "abc123\n" } })).step, "ahead");
+  assert.equal((await stopOf({ "fetch origin": { code: 128, stderr: "no host" } })).step, undefined);
+  assert.equal((await stopOf({ "status --porcelain": { code: 128, stderr: "bad" } })).step, undefined);
+  assert.equal((await stopOf({ "gh pr merge": { code: 1, stderr: "policy" } })).step, undefined);
+});
+
+test("only the ahead and tree-status stops are handed to the orchestrator", async () => {
+  assert.equal(handOffStep(await stopOf({ "r-9-x status": { stdout: " M a.js\n" } })), "tree-status");
+  assert.equal(handOffStep(await stopOf({ "rev-list": { stdout: "abc123\n" } })), "ahead");
+  assert.equal(handOffStep(await stopOf({ "gh pr merge": { code: 1, stderr: "policy" } })), null);
+  assert.equal(handOffStep(await stopOf({ "worktree remove": { code: 1, stderr: "busy" } })), null);
+  assert.equal(handOffStep(new Error("Couldn't look up the pull request")), null);
+  assert.equal(handOffStep(null), null);
+});
+
+test("the message to the orchestrator quotes the error and asks for a commit, a plain push and a report", () => {
+  const error = "workflow/9-x has commits that origin/workflow/9-x doesn't. Run `git -C /r-9-x push origin workflow/9-x` so the pull request has them, then press Merge again.";
+  const text = handOffMessage({ step: "ahead", error, branch: "workflow/9-x", workDir: "/r-9-x" });
+  assert.ok(text.includes("Merge stopped"));
+  assert.ok(text.includes(error));
+  assert.ok(text.includes("git -C /r-9-x push origin workflow/9-x"));
+  assert.match(text, /reviewer check it first if it is new work/);
+  assert.match(text, /never force/i);
+  assert.match(text, /rebased.*stop and ask the person/s);
+  assert.match(text, /report back/i);
+  assert.ok(!text.includes('"'), "it goes in one double-quoted argument of hc send");
+  assert.ok(!text.includes("\n"), "one line");
+  assert.match(handOffMessage({ step: "tree-status", error: "x", branch: "b", workDir: "/w" }), /uncommitted/);
+});
+
+test("the note says why Merge stopped and that the orchestrator is fixing it, keeping the error", () => {
+  const error = "/r-9-x has uncommitted changes. Commit or discard them.";
+  const n = handOffNote({ step: "tree-status", error });
+  assert.equal(n.detail, error);
+  assert.match(n.text, /^Merge stopped: .*uncommitted changes/);
+  assert.match(n.text, /The orchestrator is fixing it; press Merge again once it reports\.$/);
+  assert.match(handOffNote({ step: "ahead", error }).text, /commits origin doesn't have/);
 });

@@ -16,12 +16,13 @@ function fakes(over = {}) {
     repo: { code: 0, stdout: JSON.stringify({ nameWithOwner: "me/app" }), stderr: "" },
     projects: { code: 0, stdout: JSON.stringify({ data: { repository: { projectsV2: { nodes: [PROJECT] } } } }), stderr: "" },
     field: { code: 0, stdout: JSON.stringify({ data: { node: { field: { id: "F", options: ALL.map((name, i) => ({ id: String(i), name })) } } } }), stderr: "" },
+    labels: { code: 0, stdout: JSON.stringify([{ name: "bug", color: "d73a4a" }]), stderr: "" },
     ...over,
   };
   const calls = [];
   const gh = async (args) => {
     const a = args.join(" ");
-    const name = args[0] === "auth" ? "auth" : a.startsWith("repo view") ? "repo" : a.includes("projectsV2") ? "projects" : a.includes("field(name") ? "field" : "other";
+    const name = args[0] === "auth" ? "auth" : a.startsWith("repo view") ? "repo" : a.includes("projectsV2") ? "projects" : a.includes("field(name") ? "field" : a.startsWith("label list") ? "labels" : "other";
     calls.push(name);
     const answer = typeof answers[name] === "function" ? answers[name]() : answers[name];
     if (answer instanceof Error) throw answer;
@@ -125,6 +126,49 @@ test("agents the host does not know are not flagged, ones it reports uninstalled
 test("a failed agent or workflow read is unknown", async () => {
   const deps = fakes({ deps: { knownAgents: async () => { throw new Error("no"); }, loadWorkflows: async () => { throw new Error("no"); }, groomerAgent: () => "gemini" } });
   assert.deepEqual((await check(place, deps)).issues, []);
+});
+
+const story = (...labels) => ({ items: [{ name: "Story", trigger: { labels, match: "any" } }], errors: [] });
+
+test("a label a saved workflow triggers on and the repo lacks is reported", async () => {
+  const deps = fakes({ deps: { loadWorkflows: async () => story("bug", "feature") } });
+  const found = await check(place, deps);
+  assert.deepEqual(found.issues.map((i) => [i.kind, i.label]), [["label-missing", "feature"]]);
+});
+
+test("labels are not asked about without trigger labels, and a failed read flags nothing", async () => {
+  const none = fakes();
+  assert.deepEqual((await check(place, none)).issues, []);
+  assert.ok(!none.calls.includes("labels"));
+  const failed = fakes({ labels: { code: 1, stdout: "", stderr: "HTTP 502" }, deps: { loadWorkflows: async () => story("bug") } });
+  assert.deepEqual((await check(place, failed)).issues, []);
+});
+
+test("labels are read even when the project read fails, and a failed label read keeps the last label issues", async () => {
+  const deps = fakes({ projects: { code: 1, stdout: "", stderr: "HTTP 502" }, deps: { loadWorkflows: async () => story("feature") } });
+  const first = await check(place, deps);
+  assert.deepEqual(kinds(first), ["label-missing"]);
+  const flaky = fakes({ labels: { code: 1, stdout: "", stderr: "HTTP 502" }, deps: { loadWorkflows: async () => story("feature") } });
+  assert.deepEqual((await check(place, flaky, first)).issues, first.issues);
+  const renamed = fakes({ labels: { code: 1, stdout: "", stderr: "HTTP 502" }, deps: { loadWorkflows: async () => story("bug") } });
+  assert.deepEqual((await check(place, renamed, first)).issues, [], "a label no workflow triggers on any more is not carried");
+});
+
+test("a full page of labels may be cut short, so the labels are unknown and nothing is reported", async () => {
+  const many = JSON.stringify(Array.from({ length: 200 }, (_, i) => ({ name: `l${i}`, color: "" })));
+  const deps = fakes({ labels: { code: 0, stdout: many, stderr: "" }, deps: { loadWorkflows: async () => story("bug") } });
+  assert.equal((await gather({ cwd: "/repo" }, deps)).labels, undefined);
+  assert.deepEqual((await check(place, deps)).issues, []);
+  const fewer = fakes({ labels: { code: 0, stdout: JSON.stringify(Array.from({ length: 199 }, (_, i) => ({ name: `l${i}` }))), stderr: "" }, deps: { loadWorkflows: async () => story("bug") } });
+  assert.deepEqual(kinds(await check(place, fewer)), ["label-missing"]);
+});
+
+test("a failed repo view keeps the last label issues for the same place", async () => {
+  const wf = { loadWorkflows: async () => story("feature") };
+  const first = await check(place, fakes({ deps: wf }));
+  assert.deepEqual(kinds(first), ["label-missing"]);
+  const flaky = fakes({ repo: { code: 1, stdout: "", stderr: "error connecting to api.github.com" }, deps: wf });
+  assert.deepEqual((await check(place, flaky, first)).issues, first.issues);
 });
 
 // ---- The watcher -------------------------------------------------------------------------------------

@@ -4,6 +4,7 @@
 // Not problems, because the person decided they are valid: a workflow with no labels (the fallback) and an empty prompt.
 import { STATUSES, sameStatus, REFRESH, LOGIN } from "./model.js";
 import { ROLES, ROLE_LABELS, CUSTOM } from "./workflow-model.js";
+import { hasLabel } from "./labels.js";
 
 export const DOCTOR_KEY = "github-tasks.doctor"; // { issues, repo, project }: what the last check found, for the settings and the sidebar
 
@@ -11,19 +12,22 @@ export const DOCTOR_KEY = "github-tasks.doctor"; // { issues, repo, project }: w
 //   repo           "owner/name"; null when the space is not in a GitHub repo (no project or status checks then); undefined when not known
 //   project        { id, title, url } | null (the repo has no linked project) | undefined (not known: gh could not answer)
 //   statuses       the project's Status field options [{ name }] ([] with no such field) | undefined (not known)
-//   carried        the project and status issues of the last check of this same place, kept for whatever above is not known
+//   labels         the repo's labels [{ name }] | undefined (not known: no repo, or gh could not list them)
+//   carried        the project, status and label issues of the last check of this same place, kept for whatever above is not known
 //   auth           { installed, signedIn: true | false | null (not known), scopes: [string] | null (gh did not list them) } | undefined
 //   agents         what knownAgents() knows: [{ key, installed }] | null (not known)
 //   groomerAgent   the task agent saved on the settings page, or null
-//   source         "local" when the repo's tasks are local files: no project or status checks, no gh-scope, and gh-auth only
+//   source         "local" when the repo's tasks are local files: no project, status or label checks, no gh-scope, and gh-auth only
 //                  when githubRemote (the repo's origin is on GitHub); anything else is github, as it always was
 //   workflows      { items: [workflow], errors: ["file.yaml: why"] } as store.loadAll gives them
-// Kinds: no-project, status-missing, status-misnamed, gh-auth, gh-scope, agent-missing, workflow-invalid.
-export function diagnose({ repo, project, statuses, carried = [], auth, agents = null, groomerAgent = null, workflows, source, githubRemote = false } = {}) {
+// Kinds: no-project, status-missing, status-misnamed, label-missing, gh-auth, gh-scope, agent-missing, workflow-invalid.
+// Local tasks have no project and free-typed labels, so the project, status and label checks are left out.
+export function diagnose({ repo, project, statuses, labels, carried = [], auth, agents = null, groomerAgent = null, workflows, source, githubRemote = false } = {}) {
   const local = source === "local";
   return [
     ...(local ? checkAuth(githubRemote ? auth : undefined).filter((i) => i.kind === "gh-auth") : checkAuth(auth)),
     ...(local ? [] : checkProject({ repo, project, statuses, carried })),
+    ...(local ? [] : checkLabels({ repo, labels, carried }, workflows?.items ?? [])),
     ...checkAgents(agents, groomerAgent, workflows?.items ?? []),
     ...(workflows?.errors ?? []).map((error) => ({ kind: "workflow-invalid", message: `A workflow file can't be read: ${error}`, file: error })),
   ];
@@ -55,6 +59,33 @@ function checkProject({ repo, project, statuses, carried }) {
       : { kind: "status-misnamed", status, found, message: `The project calls the "${status}" status "${found}"; it should be named "${status}".` });
   }
   return issues;
+}
+
+// One issue per label that a saved workflow triggers on and the repo does not have (compared without regard to case, as GitHub
+// does), listing the workflows. With the repo's labels unknown the last check's label issues are kept, for the labels still
+// triggered on.
+function triggerLabels(items) {
+  const found = new Map(); // lower-case name -> { label, usedBy }, in the order found
+  for (const w of items) {
+    for (const raw of w?.trigger?.labels ?? []) {
+      const label = String(raw ?? "").trim();
+      if (!label) continue;
+      const entry = found.get(label.toLowerCase()) ?? { label, usedBy: [] };
+      if (!entry.usedBy.includes(w.name)) entry.usedBy.push(w.name);
+      found.set(label.toLowerCase(), entry);
+    }
+  }
+  return [...found.values()];
+}
+function checkLabels({ repo, labels, carried }, items) {
+  if (repo === null) return [];
+  const wanted = triggerLabels(items);
+  if (typeof repo !== "string" || !Array.isArray(labels)) {
+    return (carried ?? []).filter((i) => i.kind === "label-missing" && wanted.some((w) => hasLabel([{ name: w.label }], i.label)));
+  }
+  return wanted.filter((w) => !hasLabel(labels, w.label)).map(({ label, usedBy }) => ({
+    kind: "label-missing", label, usedBy, message: `The label "${label}" isn't in ${repo} (the trigger of ${usedBy.join(", ")}).`,
+  }));
 }
 
 // One issue per agent that knownAgents() knows and reports as not installed, listing everything that uses it. A custom agent
@@ -140,6 +171,12 @@ export function fixPrompt(issues, { repo = null, project = null, source } = {}) 
         : `Rename the status "${i.found}" to "${i.status}". Rename it in place, so the tickets keep their status: don't delete the option and recreate it. The project's Settings page on GitHub can do this.`);
     }
     steps.push("Existing tickets must keep their statuses. Don't remove or reorder the other options.");
+  }
+  for (const i of by("label-missing")) {
+    const name = /^[\w.:-]+$/.test(i.label) ? i.label : `'${i.label.replace(/'/g, `'\\''`)}'`;
+    // A name starting with "-" would be read as a flag, even quoted, so it goes after "--".
+    const into = repo ?? "<owner/repo>", create = i.label.startsWith("-") ? `-R ${into} -- ${name}` : `${name} -R ${into}`;
+    steps.push(`Label: ${i.message} Create it with \`gh label create ${create}\`, so the workflow starts for tickets that have it.`);
   }
   for (const i of by("agent-missing")) steps.push(`Agent: ${i.message} Install it, or open the Tasks settings and the workflows that use it and choose an installed agent instead.`);
   for (const i of by("workflow-invalid")) {

@@ -1,7 +1,7 @@
-// New Task and Set Up Project: each opens an agent in a tab of its own, in the repo's folder, told what
-// to do (the prompts are in model.js).
+// New Task: opens an agent in a tab of its own, in the repo's folder, told what to do (the prompts are in model.js and,
+// for local tasks, local-ui.js).
 import { home, knownAgents, spaces } from "herdr";
-import { newTaskPrompt, groomArgv, setupPrompt } from "./model.js";
+import { newTaskPrompt, groomArgv } from "./model.js";
 import { app } from "./ui.js";
 import { localTasks } from "./local-tasks-env.js";
 import { statusDir } from "./local-tasks.js";
@@ -25,12 +25,6 @@ async function openAgent({ agent, name, task, groomer, where }) {
 export async function startNewTask({ agent, repo, project, settings, groomer, where }) {
   const name = `New task ${String(repo).split("/").pop()}`;
   await openAgent({ agent, name, task: newTaskPrompt({ repo, project, backlog: settings.backlog, groomed: settings.groomed }), groomer, where });
-}
-
-// Set Up Project: the agent looks through the installed modules and asks how the new project should be set up.
-export async function startProjectSetup({ agent, repo, project, groomer, where }) {
-  const name = `Set up ${String(repo).split("/").pop()}`;
-  await openAgent({ agent, name, task: setupPrompt({ repo, project }), groomer, where });
 }
 
 // New Task in local mode: the agent is told the task folders, the next id and the file format, and writes one file.

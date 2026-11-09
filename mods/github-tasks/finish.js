@@ -111,7 +111,7 @@ export const shouldAutoPr = ({ ready, pr, tried, busy }) => Boolean(ready) && !p
 export async function runSteps(steps, exec) {
   const done = [], warnings = [];
   const text = (r) => String(r.stderr || r.stdout || "").trim();
-  const stop = (message) => { throw new Error(done.length ? `${message} Already done: ${done.join(", ")}.` : message); };
+  const stop = (message, step) => { throw Object.assign(new Error(done.length ? `${message} Already done: ${done.join(", ")}.` : message), step ? { step } : {}); };
   const go = async (list) => {
     for (const st of list) {
       if (st.warn) { warnings.push(st.warn); continue; }
@@ -119,7 +119,7 @@ export async function runSteps(steps, exec) {
       if (st.run) { let said; try { said = await st.run(exec); } catch (e) { stop(String(e?.message ?? e)); } const d = typeof said === "string" ? said : st.done; if (d) done.push(d); continue; }
       const r = await exec(st.cmd, st.args, st.cwd ? { cwd: st.cwd } : undefined);
       if (st.check) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim()); const bad = st.check(String(r.stdout ?? "")); if (bad) stop(bad); continue; } // check: stdout -> what to stop with, or null
-      if (st.dirty) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim()); if (String(r.stdout ?? "").trim()) stop(st.dirty); continue; }
+      if (st.dirty) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim()); if (String(r.stdout ?? "").trim()) stop(st.dirty, st.name); continue; }
       if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim());
       if (st.done) done.push(st.done);
     }
@@ -127,6 +127,26 @@ export async function runSteps(steps, exec) {
   await go(steps);
   return { done, warnings };
 }
+
+// A Merge that stops at one of these checks has something the orchestrator can fix: leftover changes, or commits origin lacks.
+// runSteps puts the stopping check's name on the error (error.step) when the check found something (not when it couldn't run).
+const HAND_OFF = {
+  "tree-status": { what: "uncommitted changes in the ticket worktree", why: "there are uncommitted changes in the worktree" },
+  ahead: { what: "commits on the ticket branch that origin doesn't have", why: "the branch has commits origin doesn't have" },
+};
+export const handOffStep = (error) => (Object.hasOwn(HAND_OFF, error?.step) ? error.step : null);
+
+// What the run page sends the orchestrator (one line, no double quotes: it is one argument of `hc send`).
+export function handOffMessage({ step, error, branch, workDir }) {
+  const quoted = String(error ?? "").replace(/\s+/g, " ").replace(/"/g, "'").trim();
+  return `Merge stopped on the run page: ${HAND_OFF[step].what}. It said: ${quoted} Please fix it: commit what is left in ${workDir} (have a reviewer check it first if it is new work), then push the ticket branch to origin with a plain \`git -C ${workDir} push origin ${branch}\` (never force), and report back when it is pushed. If the push is rejected because the branch was rebased, stop and ask the person; do not force-push.`;
+}
+
+// What the page shows in place of the red error once the orchestrator has the message: text, with the original error as detail.
+export const handOffNote = ({ step, error }) => ({
+  text: `Merge stopped: ${HAND_OFF[step].why}. The orchestrator is fixing it; press Merge again once it reports.`,
+  detail: String(error ?? ""),
+});
 
 // gh args for the pull request; the body links the ticket when it has a number. body: replaces that (a local task has no GitHub issue to close).
 export function prArgs({ branch, title, number, body }) {

@@ -9,7 +9,7 @@ import { exec, hc, home, notify, run, setShared, shared, terminals, theme } from
 import { S, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
 import { agentsFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
-import { branchArgs, canMerge, finalSeen, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
+import { branchArgs, canMerge, finalSeen, handOffMessage, handOffNote, handOffStep, mergeSteps, optionFor, parsePr, prArgs, prViewArgs, parsePrUrl, prNumber, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
 import { defaultBranchOf, localMergeSteps, localPrBody, moveToStage, squashMessage } from "./local-runs.js";
 import { localTasks, repoHasGithubRemote } from "./local-tasks-env.js";
 
@@ -45,6 +45,7 @@ export class RunPage {
     this.autoPrTried = Boolean(Number(shared(autoPrKey(this.id))));
     this.busy = null; // "pr" | "merge" while one runs
     this.error = null;
+    this.note = null; // { text, detail }: Merge stopped and the orchestrator has been asked to fix it (not an error)
     this.polling = false;
     const saved = shared(agentsKey(this.id));
     this.saved = Array.isArray(saved) ? saved : []; // the rows kept from before (runview.js keep)
@@ -186,7 +187,9 @@ export class RunPage {
     else row.child(h_flex().id("run-pr-link").h(26).px(10).gap(6).items_center().rounded(6).cursor_pointer().bg(t.selected).hover((s) => s.bg(t.hover))
       .text_size(S().secondary).font_medium().on_mouse_down("left", stop).on_click((_e, cx) => cx.open_url(this.pr.url))
       .child(`PR #${this.pr.number}${this.pr.state === "MERGED" ? " · merged" : ""}`).child(icon("external", 12, t.muted)));
-    return v_flex().gap(4).child(row).when(Boolean(this.error), (el) => el.child(div().text_size(S().secondary).text_color(t.blocked).child(this.error)));
+    return v_flex().gap(4).child(row)
+      .when(Boolean(this.note), (el) => el.child(div().id("run-merge-note").text_size(S().secondary).text_color(t.muted).tooltip(this.note.detail).child(this.note.text)))
+      .when(Boolean(this.error), (el) => el.child(div().text_size(S().secondary).text_color(t.blocked).child(this.error)));
   }
 
   // quiet: called from render, which is drawing right now, so the first redraw waits until the async part starts.
@@ -219,7 +222,7 @@ export class RunPage {
   merge(cx) {
     if (this.noPr()) return this.mergeLocal(cx);
     if (this.busy || !this.pr) return;
-    this.busy = "merge"; this.error = null; cx.notify();
+    this.busy = "merge"; this.error = null; this.note = null; cx.notify();
     cx.spawn(async (cx) => {
       try {
         // A Merge that stopped part way can be pressed again: leave out what is already gone (the folder, the branch).
@@ -240,7 +243,10 @@ export class RunPage {
           this.error = "Merged. This tab couldn't be closed for you: close it yourself.";
           this.busy = null; cx.notify();
         }
-      } catch (e) { this.error = String(e?.message ?? e); this.busy = null; cx.notify(); }
+      } catch (e) {
+        if (!(await this.handOff(e))) this.error = String(e?.message ?? e);
+        this.busy = null; cx.notify();
+      }
     });
   }
 
@@ -267,6 +273,19 @@ export class RunPage {
         }
       } catch (e) { this.error = String(e?.message ?? e); this.busy = null; cx.notify(); }
     });
+  }
+
+  // A Merge that stopped at the ahead or tree-status check goes to the run's orchestrator, once per press (this runs from
+  // merge's catch, never from a render). True when it was sent: the page then shows a note, not the error. False (not one of
+  // those stops, the orchestrator ended, or the send failed) leaves the error to show as before.
+  async handOff(e) {
+    const step = handOffStep(e);
+    if (!step || !orchestratorOf(terminals(), this.orchestrator)?.live) return false;
+    const error = String(e?.message ?? e);
+    const sent = await hc(["send", this.orchestrator, handOffMessage({ step, error, branch: this.branch, workDir: this.folder })]).catch(() => null);
+    if (sent?.code !== 0) return false;
+    this.note = handOffNote({ step, error });
+    return true;
   }
 
   // How Merge sets the ticket Done: the gh call, a warning when the project has no such option, or null when the run has no project.
