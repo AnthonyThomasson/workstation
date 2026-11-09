@@ -29,6 +29,12 @@ for (const file of ["bug.yaml", "story.yaml"]) {
     }
   });
 
+  test(`${file} retro proposes follow-up tickets with the question tool and adds the picked ones to To Do`, () => {
+    const retro = load(file).orchestrator.retro;
+    assert.match(retro, /propose follow-up tickets with the question tool/);
+    assert.match(retro, /add the ones the person picks to To Do/);
+  });
+
   test(`${file} prompts do not mention a skill`, () => {
     const data = load(file);
     for (const [role, key] of PROMPTS) assert.doesNotMatch(data[role][key], /skill|mattpocock/i, `${file} ${role}.${key}`);

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { ASK_WITH_TOOL } from "./model.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -754,7 +755,7 @@ test("with no GitHub remote the orchestrator isn't told to fetch or rebase onto 
 
 test("the orchestrator is told to ask its questions with the built-in question tool", () => {
   const text = prompt("orchestrator");
-  assert.ok(text.includes("Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text."));
+  assert.ok(text.includes(ASK_WITH_TOOL));
 });
 
 test("the orchestrator may fix any stopped Merge the run page reports, through a worker and a reviewer, and push the ticket branch", () => {

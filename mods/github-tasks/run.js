@@ -2,6 +2,7 @@
 // start.js writes these out and opens the tab; the agents do the rest. The "run" role (run-page.js) shows them.
 
 import { slug } from "./workflow-model.js";
+import { ASK_WITH_TOOL } from "./model.js";
 
 export const TOKEN_LIMIT = "120k";
 export const SKILL = "hc --skill"; // the manual for the desktop app's herdr-core; the `herdr` skill is the older CLI's
@@ -122,7 +123,7 @@ export function orchestratorPrompt({ id, workflow, ticket, repo, runDir, workDir
       : `- About hourly, run \`git -C ${workDir} fetch origin\` and, between merges, rebase the ticket branch (in ${workDir}) onto \`origin/<main-branch>\` with \`git -C ${workDir} rebase origin/<main-branch>\`.`,
     `- The main checkout ${repoRoot} is never touched; live-environment steps (${LIVE_ENV}) never run from a worktree and go in your final report for the person to approve.`,
     `- ${runPage(noRemote)}`,
-    "- Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text.",
+    `- ${ASK_WITH_TOOL}`,
     noRemote
       ? `- One exception: when the run page reports a stopped Merge (leftover changes in ${workDir}, a conflict with the default branch, or another failure), you may fix it, through a worker and a reviewer for any code change, then report back; never commit to or push the default branch.`
       : `- One exception: when the run page reports a stopped Merge (leftover changes in ${workDir}, commits origin lacks, a conflict with the default branch, failing checks or another failure), you may fix it, through a worker and a reviewer for any code change, and push the ticket branch with \`git -C ${workDir} push origin ${branch}\` (with \`--force-with-lease\` after a rebase), then report back; never commit to or push the default branch.`,

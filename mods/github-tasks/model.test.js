@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { normalizeItems, groupTickets, chooseProject, classifyError, age, ticketLine, signInFrom, snapshot, labelDiff, changes, isDirty, checkTask } from "./model.js";
+import { ASK_WITH_TOOL, normalizeItems, groupTickets, chooseProject, classifyError, age, ticketLine, signInFrom, snapshot, labelDiff, changes, isDirty, checkTask } from "./model.js";
 
 test("reads gh's one-time code and page from its sign-in output", () => {
   const out = "\n! One-time code (AA8B-5FB7) copied to clipboard\nOpen this URL to continue in your web browser: https://github.com/login/device\n";
@@ -222,8 +222,12 @@ test("groupByStage finds In review whatever its spelling", () => {
   assert.deepEqual(g.inProgress.map((t) => t.key), ["p"]);
 });
 
+test("the shared question-tool sentence says what to do with and without the tool", () => {
+  assert.equal(ASK_WITH_TOOL, "Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text.");
+});
+
 test("the New Task prompt asks questions with the built-in question tool, one at a time", () => {
   const text = newTaskPrompt({ repo: "o/r" });
-  assert.ok(text.includes("Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text."));
+  assert.ok(text.includes(ASK_WITH_TOOL));
   assert.ok(text.includes("Ask one question at a time, say what you would pick and why"));
 });
