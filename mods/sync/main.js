@@ -11,7 +11,7 @@
 // (the panel the button shows). The panel is a separate view whose tasks end when it hides, so it hands work to the
 // button through channel.js; results come back as shared state (link, pick, run).
 import { View, div } from "gpui-kit";
-import { h_flex } from "gpui-base";
+import { h_flex, InputState } from "gpui-base";
 import { exec, run, layout, shared, setShared, theme, notify, readTextFile, watchFolder, appHome, home, props as blockProps } from "herdr";
 import { parseSyncJson, nextPick, viewState, statusLine, relativeTo } from "./model.js";
 import { readLink, syncFolder, snapshot, unignored, listTargets, switchBranch, PATHS } from "./ops.js";
@@ -239,12 +239,14 @@ export default class Sync extends View {
   // ================= The Details panel =================
 
   initDetails(cx) {
-    this.where = null; this.whereAt = 0; this.whereKey = ""; this.reading = false; this.open = false;
+    this.where = null; this.whereAt = 0; this.whereKey = ""; this.reading = false; this.open = false; this.query = "";
+    this.search = InputState.new({ placeholder: "Search worktrees and branches" });
+    this.search.on("change", (_e, cx) => { this.query = this.search.value(); cx.notify(); });
     // A shown panel renders this often, which keeps "Synced 12s ago" and the branch list fresh; a hidden panel reads nothing.
     cx.timer.every(LABEL_EVERY, (cx) => cx.notify());
   }
 
-  // Reads the repo's worktrees and branches (from the linked repo, so every worktree stays listed).
+  // Reads the repo's worktrees and branches, most recently checked out first (from the linked repo, so every worktree stays listed).
   readWhere(cx, repo) {
     if (this.reading || !repo) return;
     this.reading = true;
@@ -264,7 +266,7 @@ export default class Sync extends View {
       }
     }
     return renderDetails({
-      t, kind, link, run: runState, now: Date.now(), home: home(), where: this.where, open: this.open,
+      t, kind, link, run: runState, now: Date.now(), home: home(), where: this.where, search: this.search, query: this.query, open: this.open,
       toggle: (cx) => { this.open = !this.open; cx.notify(); },
       request: (op) => channel.request(op),
       close: find(layout(), PANEL) ? () => run("layout.hide", { id: PANEL }) : null,

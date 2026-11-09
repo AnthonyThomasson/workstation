@@ -25,7 +25,7 @@ The tab-bar icon is a circular arrow: dim with no repo linked, muted normally, r
 
 With no `sync.json`, or when the folder it names is gone, the panel is one line, "No repo linked. Run mods/sync/sync.sh from your clone.", and nothing syncs.
 
-- **Branch row**: the branch and folder being synced. Expand it to pick another worktree of the repo, or to switch the folder to another local branch (a branch checked out in another worktree is greyed out). Picking either syncs that checkout. The picked worktree is remembered and forgotten when the linked repo changes.
+- **Branch row**: the branch and folder being synced. Expand it to pick another worktree of the repo, or to switch the folder to another local branch (a branch checked out in another worktree is greyed out). It lists the 5 most recently checked-out worktrees (newest entry in each one's HEAD reflog first) and the 5 most recently checked-out local branches (by checkout order in the reflogs); the search box above them filters all worktrees (by branch or folder name) and all local branches as you type. Picking either syncs that checkout. The picked worktree is remembered and forgotten when the linked repo changes.
 - **Force sync**: syncs the picked folder right away. Pressed during a sync, it runs one more sync straight after it, never two at once.
 - **Origin**: the remote from `sync.json`, for information.
 
@@ -44,8 +44,9 @@ The mod never fetches, pulls, pushes or commits. Edits made on the Herdr side ar
 - `sync.sh` the script (`sync.test.sh` is its test); `RECIPE.md` has its contract
 - `model.js` pure logic: `sync.json`, what the scripts print, what the panel shows
 - `queue.js` pure logic: when to sync (the 3 s quiet period, follow-ups, Force sync)
+- `targets.js` pure logic: how the picker orders worktrees and branches and what a search keeps
 - `ops.js` the shell scripts the mod runs (link, sync, snapshot, ignore check, list, switch) and the functions that run them
 - `channel.js` how the panel hands work to the button; `jobs.js` runs the sync as a detached, polled job
-- `details.js` the panel frame; `repo-ui.js` the panel content; `picker-ui.js` the branch / worktree list; `ui.js` the shared look
+- `details.js` the panel frame; `repo-ui.js` the panel content; `picker-ui.js` the branch / worktree list and its search box; `ui.js` the shared look
 - `main.js` the views: the button (link, watcher, syncs) and the Details panel
 - `*.test.js` run with `node --test mods/sync` (`ops.test.js` uses throwaway git repositories from `scratch-repos.js`, the real `sync.sh` and a stub `herdr-app`)

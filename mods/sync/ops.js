@@ -2,6 +2,7 @@
 // run them through io.sh(script, args) and read what they print (model.js). No Herdr imports, so the tests
 // (ops.test.js) run them against real git repositories. There is no git network call anywhere in here.
 import { parseLinkInfo, parseOutcome, parseTargets, SCRIPT } from "./model.js";
+import { orderTargets } from "./targets.js";
 
 export const PATHS = 'PATH="$HOME/.local/bin:$HOME/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH';
 
@@ -90,17 +91,33 @@ for p in "$@"; do
 done
 `;
 
-// The worktrees and local branches of the repo ($1), for the picker.
+// The worktrees and local branches of the repo ($1), for the picker, with what ordering them needs (targets.js does the
+// ordering). One pass, no per-branch git calls:
+//   "@worktree<TAB>path<TAB>branch<TAB>time of the newest entry in its HEAD reflog" (empty = no reflog; read from the
+//   reflog file, because `git reflog` makes up a current entry when a HEAD has none)
+//   "@branch<TAB>name<TAB>committer date of its tip"
+//   "@checkout<TAB>time<TAB>position in that reflog (0 = newest)<TAB>branch" for each "checkout: moving from X to <branch>"
+//   entry of each worktree's HEAD reflog (the repo's own included), the newest 300 entries, one line per branch per worktree.
+// A branch name has no spaces, so the last word of the entry is the branch moved to (or a commit, which is not a branch).
 export const LIST = `${PATHS}
 cd "$1" 2>/dev/null && git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 git worktree list --porcelain 2>/dev/null | awk '
-  /^worktree /{ if (p != "") printf "@worktree\\t%s\\t%s\\n", p, b; p = substr($0, 10); b = "" }
+  /^worktree /{ if (p != "") printf "%s\\t%s\\n", p, b; p = substr($0, 10); b = "" }
   /^branch /{ b = $2; sub(/^refs\\/heads\\//, "", b) }
-  END { if (p != "") printf "@worktree\\t%s\\t%s\\n", p, b }'
-git for-each-ref refs/heads --format='%(refname:short)' | while IFS= read -r b; do
-  w=$(git worktree list --porcelain | awk -v want="refs/heads/$b" '/^worktree /{ p = substr($0, 10) } $1 == "branch" && $2 == want { print p; exit }')
-  printf '@branch\\t%s\\t%s\\n' "$b" "$w"
+  END { if (p != "") printf "%s\\t%s\\n", p, b }' | while IFS="$(printf '\\t')" read -r p b; do
+  log=$(git -C "$p" rev-parse --absolute-git-dir 2>/dev/null)/logs/HEAD
+  { [ -f "$log" ] && tail -n 300 "$log"; true; } | awk -F '\\t' -v p="$p" -v b="$b" '
+    { if (match($1, /> [0-9]+ [+-][0-9][0-9][0-9][0-9]$/)) { ts[NR] = substr($1, RSTART + 2); sub(/ .*/, "", ts[NR]) } msg[NR] = $2 }
+    END {
+      printf "@worktree\\t%s\\t%s\\t%s\\n", p, b, NR ? ts[NR] : ""
+      for (i = NR; i >= 1; i--) {
+        if (msg[i] !~ /^checkout: moving from [^ ]+ to [^ ]+$/ || ts[i] == "") continue
+        n = split(msg[i], w, " ")
+        if (!(w[n] in seen)) { seen[w[n]] = 1; printf "@checkout\\t%s\\t%d\\t%s\\n", ts[i], NR - i, w[n] }
+      }
+    }'
 done
+git for-each-ref refs/heads --format='@branch%09%(refname:lstrip=2)%09%(committerdate:unix)'
 `;
 
 // Check out branch $2 in the folder $1. Uncommitted edits come along when they do not clash; otherwise git says no.
@@ -147,8 +164,9 @@ export async function unignored(io, dir, paths) {
   return kept;
 }
 
+// { worktrees, branches }, every one, most recently checked out first (targets.js); { path, branch, at } and { name, at, path }.
 export async function listTargets(io, repo) {
-  return parseTargets((await settle(io, LIST, [repo])).stdout);
+  return orderTargets(parseTargets((await settle(io, LIST, [repo])).stdout));
 }
 
 export async function switchBranch(io, dir, branch) {

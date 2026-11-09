@@ -1,7 +1,7 @@
 // The panel's content: the branch row (with Force sync on its right), the picked folder, the linked remote and the sync
 // status. Expanding the branch row shows the picker (picker-ui.js). It only draws; work goes through ctx.request (the
 // button role runs it).
-//   ctx: { t, kind (viewState), link, run, now, home, open, toggle(cx), where, request(op) } (see details.js)
+//   ctx: { t, kind (viewState), link, run, now, home, open, toggle(cx), where, search (InputState), query, request(op) } (see details.js)
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { S, icon, stop, note, primary } from "./ui.js";
@@ -24,5 +24,5 @@ export function renderRepo(ctx) {
           .when(Boolean(link.remote), (el) => el.child(line(`origin: ${link.remote}`)))
           .child(line(statusLine(run, ctx.now), status))))
       .child(primary("force-sync", "Force sync", t, (_e, cx) => { ctx.request({ op: "force" }); cx.notify(); })))
-    .when(ctx.open, (el) => el.child(renderPicker({ t, here: link.dir, branch: link.branch, where: ctx.where, request: ctx.request })));
+    .when(ctx.open, (el) => el.child(renderPicker({ t, here: link.dir, branch: link.branch, where: ctx.where, search: ctx.search, query: ctx.query, request: ctx.request })));
 }

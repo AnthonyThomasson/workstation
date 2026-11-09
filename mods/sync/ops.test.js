@@ -3,6 +3,7 @@
 // real sync.sh as the sync script and a stub herdr-app. Nothing outside the scratch folder is touched.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, utimesSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { syncFolder, readLink, snapshot, unignored, listTargets, switchBranch, SYNC } from "./ops.js";
@@ -282,5 +283,63 @@ test("worktrees and local branches are listed, and a branch in another worktree 
     assert.equal(ok.result, "ok", ok.message);
     assert.equal(w.git(w.a, "symbolic-ref", "--short", "HEAD").trim(), "other");
     assert.deepEqual(await listTargets(w.io, join(w.base, "nowhere")), { worktrees: [], branches: [] });
+  } finally { clean(w); }
+});
+
+// ---- the picker's order ----
+
+test("the picker lists worktrees by their newest HEAD reflog entry and branches by checkout order, from the repo's reflogs", async () => {
+  const w = world("recent");
+  try {
+    // Reflog entries are stamped with the real clock whatever GIT_COMMITTER_DATE says, so each step's new HEAD reflog
+    // lines (the repo's and every worktree's) are re-stamped to a time the test chooses.
+    const T = Math.floor(Date.now() / 1000) + 10000; // after every real reflog entry the scratch repo already has
+    const common = join(w.a, ".git");
+    const logs = () => [join(common, "logs/HEAD"), ...(existsSync(join(common, "worktrees")) ? readdirSync(join(common, "worktrees")).map((n) => join(common, "worktrees", n, "logs/HEAD")) : [])].filter(existsSync);
+    const lines = (f) => readFileSync(f, "utf8").split("\n").filter(Boolean);
+    const git = (cwd, when, ...args) => {
+      const before = new Map(logs().map((f) => [f, lines(f).length]));
+      const out = execFileSync("git", args, { cwd, encoding: "utf8", env: w.env });
+      for (const f of logs()) {
+        const all = lines(f);
+        writeFileSync(f, all.map((l, i) => (i < (before.get(f) ?? 0) ? l : l.replace(/(> )\d+( [+-]\d{4})/, (_m, a, b) => `${a}${T + when}${b}`))).join("\n") + "\n");
+      }
+      return out;
+    };
+    const wts = {};
+    [["wa", 100], ["wb", 200], ["wc", 300], ["wd", 400], ["we", 500], ["wf", 600], ["wg", 700]].forEach(([n, when]) => {
+      wts[n] = join(w.base, n);
+      git(w.a, when, "worktree", "add", "-q", "-b", n, wts[n]);
+    });
+    ["b1", "b2", "b3", "b4"].forEach((b) => git(w.a, 0, "branch", b));
+    // The repo's own checkouts: main -> b1 -> b2 -> b1 -> main.
+    git(w.a, 800, "switch", "-q", "b1"); git(w.a, 810, "switch", "-q", "b2"); git(w.a, 820, "switch", "-q", "b1"); git(w.a, 830, "switch", "-q", "main");
+    writeFileSync(join(wts.wb, "note.txt"), "x\n"); git(wts.wb, 890, "add", "note.txt"); git(wts.wb, 900, "commit", "-q", "-m", "note");
+    git(wts.wa, 950, "switch", "-q", "-c", "a2"); // a checkout made inside a worktree counts too
+    rmSync(join(w.git(wts.wf, "rev-parse", "--absolute-git-dir").trim(), "logs/HEAD")); // no reflog at all: sorts last
+
+    const list = await listTargets(w.io, w.a);
+    const folder = (p) => p.split("/").pop();
+    assert.deepEqual(list.worktrees.map((x) => folder(x.path)), ["wa", "wb", "a", "wg", "we", "wd", "wc", "wf"], "newest reflog entry first, no reflog last");
+    assert.deepEqual(list.worktrees.slice(0, 3).map((x) => x.at), [T + 950, T + 900, T + 830]);
+    assert.equal(list.worktrees.at(-1).at, null);
+    assert.deepEqual(list.branches.map((b) => b.name), ["a2", "wb", "main", "b1", "b2", "wg", "we", "wd", "wc", "b3", "b4", "wa", "wf"],
+      "a2 (checked out in wa at +950), wb (+900), main (+830), b1 (+820), b2 (+810), then the other worktrees' branches by their newest entry, then branches never checked out by tip date and name");
+    assert.equal(list.branches.find((b) => b.name === "b1").path, "", "b1 is not checked out anywhere now");
+    assert.equal(folder(list.branches.find((b) => b.name === "a2").path), "wa");
+    assert.equal(folder(list.branches.find((b) => b.name === "main").path), "a");
+  } finally { clean(w); }
+});
+
+test("the picker's list is read in one short pass, even with many worktrees and branches", async () => {
+  const w = world("many");
+  try {
+    for (let i = 0; i < 12; i++) w.git(w.a, "worktree", "add", "-q", "-b", `wt-${i}`, join(w.base, `wt-${i}`));
+    for (let i = 0; i < 80; i++) w.git(w.a, "branch", `topic-${i}`);
+    const t0 = Date.now();
+    const list = await listTargets(w.io, w.a);
+    assert.equal(list.worktrees.length, 13);
+    assert.equal(list.branches.length, 93);
+    assert.ok(Date.now() - t0 < 10000, "well inside Herdr's 30 s exec limit");
   } finally { clean(w); }
 });

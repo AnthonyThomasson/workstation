@@ -92,9 +92,11 @@ test("small helpers", () => {
   assert.equal(shortError(""), "");
 });
 
-test("the worktree and branch lists", () => {
-  const t = parseTargets("@worktree\t/r\tmain\n@worktree\t/r-wt\tfeature/x\n@branch\tmain\t/r\n@branch\told\t\n");
-  assert.deepEqual(t.worktrees, [{ path: "/r", branch: "main" }, { path: "/r-wt", branch: "feature/x" }]);
-  assert.deepEqual(t.branches, [{ name: "main", path: "/r" }, { name: "old", path: "" }]);
-  assert.deepEqual(parseTargets(""), { worktrees: [], branches: [] });
+test("the worktree, branch and checkout lists", () => {
+  const t = parseTargets("@worktree\t/r\tmain\t1700\n@worktree\t/r-wt\tfeature/x\t\n@worktree\t/r-det\t\t5\n@branch\tmain\t1690\n@branch\told\t\n@checkout\t1700\t0\tmain\n@checkout\t1650\t3\tfeature/x\n");
+  assert.deepEqual(t.worktrees, [{ path: "/r", branch: "main", at: 1700 }, { path: "/r-wt", branch: "feature/x", at: null }, { path: "/r-det", branch: "", at: 5 }]);
+  assert.deepEqual(t.branches, [{ name: "main", at: 1690 }, { name: "old", at: null }]);
+  assert.deepEqual(t.checkouts, [{ at: 1700, idx: 0, branch: "main" }, { at: 1650, idx: 3, branch: "feature/x" }]);
+  assert.deepEqual(parseTargets(""), { worktrees: [], branches: [], checkouts: [] });
+  assert.deepEqual(parseTargets("@checkout\tnot-a-time\t0\tx\n@checkout\t5\t0\t\n").checkouts, [], "unusable checkout lines are dropped");
 });

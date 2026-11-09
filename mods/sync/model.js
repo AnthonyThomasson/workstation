@@ -96,14 +96,19 @@ export function tildePath(path, home) {
   return path.startsWith(`${h}/`) ? `~${path.slice(h.length)}` : path;
 }
 
-// What the list script printed: "@worktree\t<path>\t<branch>" and "@branch\t<name>\t<path where it is checked out>".
+// What the list script printed, raw (targets.js orders it):
+//   "@worktree\t<path>\t<branch>\t<newest HEAD reflog time>"  "@branch\t<name>\t<committer date of the tip>"
+//   "@checkout\t<time>\t<position in that reflog>\t<branch checked out>"
+// A missing or unreadable time is null.
+const time = (v) => { const n = Number.parseInt(v ?? "", 10); return Number.isFinite(n) ? n : null; };
 export function parseTargets(text) {
-  const out = { worktrees: [], branches: [] };
+  const out = { worktrees: [], branches: [], checkouts: [] };
   for (const line of String(text ?? "").split("\n")) {
     if (!line.startsWith("@")) continue;
-    const [tag, a, b] = line.slice(1).split("\t");
-    if (tag === "worktree") out.worktrees.push({ path: a, branch: b ?? "" });
-    else if (tag === "branch") out.branches.push({ name: a, path: b ?? "" });
+    const [tag, a, b, c] = line.slice(1).split("\t");
+    if (tag === "worktree") out.worktrees.push({ path: a, branch: b ?? "", at: time(c) });
+    else if (tag === "branch") out.branches.push({ name: a, at: time(b) });
+    else if (tag === "checkout" && c && time(a) !== null) out.checkouts.push({ at: time(a), idx: time(b) ?? 0, branch: c });
   }
   return out;
 }
