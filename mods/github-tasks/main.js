@@ -372,8 +372,8 @@ export default class GitHubTasks extends View {
         const at = this.token;
         this.refresh(cx);
         // The project exists by now, so a failure to set it up is shown apart from the list's errors.
-        const { problems } = await setupProject(gh, { repo, project, loadWorkflows, where });
-        if (at === this.token) this.setupError = setupNote(problems);
+        const { problems, doctorFixes } = await setupProject(gh, { repo, project, loadWorkflows, where });
+        if (at === this.token) this.setupError = setupNote(problems, doctorFixes);
       } catch (e) {
         this.error = e instanceof GitHubError ? e : { kind: "other", message: String(e?.message ?? e) };
       } finally {

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { setupProject, setupNote, STATUS_FIELD_MUTATION, statusOptionsMutation } from "./project-setup.js";
 import { STATUSES } from "./model.js";
+import { LABEL_LIMIT } from "./labels.js";
 
 const ok = (data) => ({ code: 0, stdout: JSON.stringify(data), stderr: "" });
 const fail = (stderr) => ({ code: 1, stdout: "", stderr });
@@ -95,6 +96,29 @@ test("failing to list the repo's labels or to read the workflows creates nothing
   assert.match(b.problems[0], /workflows/i);
 });
 
+test("a repo with LABEL_LIMIT or more labels gets no label created, and a problem says they couldn't all be read", async () => {
+  const labels = Array.from({ length: LABEL_LIMIT }, (_, i) => `l${i}`);
+  const fake = fakeGh({ labels });
+  const result = await run(fake, [wf("zzz-late", "bug")]);
+  assert.deepEqual(created(fake.calls), []);
+  assert.deepEqual(result.created, []);
+  assert.equal(result.problems.length, 1);
+  assert.match(result.problems[0], /couldn't all be read/);
+  assert.match(result.problems[0], /zzz-late/);
+  assert.equal(result.doctorFixes, false);
+  const below = fakeGh({ labels: labels.slice(1) });
+  await run(below);
+  assert.equal(created(below.calls).length, 1);
+});
+
+test("doctorFixes is true for a statuses failure or a label that failed to create, false for unreadable workflows or labels", async () => {
+  assert.equal((await run(fakeGh())).doctorFixes, false);
+  assert.equal((await run(fakeGh({ failing: { statuses: true } }))).doctorFixes, true);
+  assert.equal((await run(fakeGh({ failing: { create: "bug" } }))).doctorFixes, true);
+  assert.equal((await run(fakeGh({ failing: { list: true } }))).doctorFixes, false);
+  assert.equal((await run(fakeGh(), [], { loadWorkflows: async () => { throw new Error("no folder"); } })).doctorFixes, false);
+});
+
 test("setupProject never throws, even when gh does", async () => {
   const result = await setupProject(async () => { throw new Error("gh is gone"); }, { repo: "a/b", project, loadWorkflows: async () => ({ items: [wf("bug")], errors: [] }), where: {} });
   assert.equal(result.problems.length, 2);
@@ -102,8 +126,11 @@ test("setupProject never throws, even when gh does", async () => {
 
 test("setupNote is empty when all went well, and otherwise says what failed and points at the Doctor", () => {
   assert.equal(setupNote([]), null);
-  const text = setupNote(["The statuses weren't set: nope."]);
+  const text = setupNote(["The statuses weren't set: nope."], true);
   assert.match(text, /project was made/i);
   assert.match(text, /statuses weren't set/);
   assert.match(text, /Doctor/);
+  const unreadable = setupNote(["The saved workflows couldn't be read, so their labels weren't checked: x."], false);
+  assert.match(unreadable, /couldn't be read/);
+  assert.doesNotMatch(unreadable, /Doctor/);
 });
