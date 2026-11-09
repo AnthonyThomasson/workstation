@@ -224,6 +224,7 @@ export class RunPage {
     if (this.noPr()) return this.mergeLocal(cx);
     if (this.busy || !this.pr) return;
     this.busy = "merge"; this.error = null; this.note = null; cx.notify();
+    const ticketSpace = this.rememberTicketSpace(); // found now, while the worktree is there: the steps below remove it
     cx.spawn(async (cx) => {
       try {
         // A Merge that stopped part way can be pressed again: leave out what is already gone (the folder, the branch).
@@ -240,7 +241,7 @@ export class RunPage {
           status: await this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
         }), exec);
         for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
-        if (!(await this.closeSession())) { this.busy = null; cx.notify(); } // the page is still there: say what is left to do
+        if (!(await this.closeSession(ticketSpace))) { this.busy = null; cx.notify(); } // the page is still there: say what is left to do
       } catch (e) {
         if (!(await this.handOff(e))) this.error = String(e?.message ?? e);
         this.busy = null; cx.notify();
@@ -254,6 +255,7 @@ export class RunPage {
   mergeLocal(cx) {
     if (this.busy) return;
     this.busy = "merge"; this.error = null; this.note = null; cx.notify();
+    const ticketSpace = this.rememberTicketSpace(); // found now, while the worktree is there: the steps below remove it
     cx.spawn(async (cx) => {
       try {
         const workDirExists = (await exec("git", worktreeArgs(this.folder))).code === 0;
@@ -265,7 +267,7 @@ export class RunPage {
           message: squashMessage(title, this.ticket?.number), status: await this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
         }), exec);
         for (const body of warnings) notify({ title: "The task didn't move", body, level: "warning" });
-        if (!(await this.closeSession())) { this.busy = null; cx.notify(); } // the page is still there: closeSession said what is left to do
+        if (!(await this.closeSession(ticketSpace))) { this.busy = null; cx.notify(); } // the page is still there: closeSession said what is left to do
       } catch (e) { this.error = String(e?.message ?? e); this.busy = null; cx.notify(); }
     });
   }
@@ -298,7 +300,10 @@ export class RunPage {
   }
 
 
-  // The ticket's space: its first terminal is in the ticket's worktree (also once that is removed).
+  // The ticket's space, found by its worktree. Merge looks before it removes the worktree, and keeps the id for a press that
+  // follows a failure, as once the folder is gone Herdr may report another cwd for it.
+  rememberTicketSpace() { this.foundSpace = this.ticketSpace() ?? this.foundSpace ?? null; return this.foundSpace; }
+
   ticketSpace() { return findTicketSpace({ spaces: spaces(), panes: panes(), folder: this.folder, repoRoot: this.repoRoot }); }
 
   // Looks in on a worker or reviewer. From the ticket's space first, so that keeping its terminal as a tab puts it there and
@@ -312,10 +317,10 @@ export class RunPage {
   // Ends the run: its orchestrator, workers and reviewers are killed on purpose (a background run ends no other way), then
   // the ticket's space is closed, with this page in it: the very last thing Merge does. Says what to do when something couldn't
   // be ended or the space couldn't be found: it never leaves the page on "Merging…". Resolves true when the space was closed.
-  async closeSession() {
+  async closeSession(ticketSpace = this.ticketSpace()) {
     const ended = await endRun({
       id: this.id, orchestrator: this.orchestrator, hc, terminals, run, slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes(),
-      ticketSpace: this.ticketSpace(), clearSlot: () => setShared(slotKey(this.id), null),
+      ticketSpace, clearSlot: () => setShared(slotKey(this.id), null),
     });
     const outcome = mergeOutcome(ended);
     if (outcome.error) this.error = outcome.error;

@@ -101,6 +101,14 @@ test("the repo's space whose folder drifted into the worktree is not the ticket'
   assert.deepEqual(calls, [["tab.close", { id: "tB" }]]);
 });
 
+test("with no first terminal known (no panes, or none with a cwd) the space's own folder decides", () => {
+  assert.equal(findTicketSpace({ spaces: TICKET, panes: [], ...where }), "sT");
+  assert.equal(findTicketSpace({ spaces: TICKET, panes: [{ pane: "pT", tab: "tT" }], ...where }), "sT");
+  const elsewhere = TICKET.map((s) => (s.id === "sT" ? { ...s, folder: "/wt/other" } : s));
+  assert.equal(findTicketSpace({ spaces: elsewhere, panes: [], ...where }), null);
+  assert.equal(findTicketSpace({ spaces: [TICKET[0]], panes: [], ...where }), null, "the repo's space still never matches");
+});
+
 test("a space on another machine is never the ticket's", () => {
   const remote = TICKET.map((s) => (s.id === "sT" ? { ...s, machine: "box" } : s));
   assert.equal(findTicketSpace({ spaces: remote, panes: TPANES, ...where }), null);
