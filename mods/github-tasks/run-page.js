@@ -6,7 +6,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, notify, panes, run, setShared, shared, spaces, terminals, theme } from "herdr";
-import { endRun, slotKey } from "./bgrun.js";
+import { endRun, mergeOutcome, slotKey } from "./bgrun.js";
 import { S, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
 import { agentsFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
@@ -240,7 +240,7 @@ export class RunPage {
           status: await this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
         }), exec);
         for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
-        await this.closeSession();
+        if (!(await this.closeSession())) { this.busy = null; cx.notify(); } // the page is still there: say what is left to do
       } catch (e) {
         if (!(await this.handOff(e))) this.error = String(e?.message ?? e);
         this.busy = null; cx.notify();
@@ -300,14 +300,19 @@ export class RunPage {
     return { args: statusArgs({ projectId: this.projectId, itemId: this.ticket.key, fieldId: this.statusField.id, optionId: option.id }) };
   }
 
-  // Ends the run: its workers and reviewers and then its orchestrator are killed on purpose (a background run ends no
-  // other way), then its tab is closed if it is open. A tab already closed is fine. Resolves true once they are ended.
+
+  // Ends the run: its orchestrator, workers and reviewers are killed on purpose (a background run ends no other way), then
+  // its tab is closed if it is open. Says what to do when something couldn't be ended or the tab couldn't be found: it
+  // never leaves the page on "Merging…". Resolves true when the tab (and so this page) was closed.
   async closeSession() {
-    await endRun({
-      id: this.id, orchestrator: this.orchestrator, terminals: terminals(), hc, run, slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes(),
+    const ended = await endRun({
+      id: this.id, orchestrator: this.orchestrator, hc, terminals, run, slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes(),
       clearSlot: () => setShared(slotKey(this.id), null),
     });
-    return true;
+    const outcome = mergeOutcome(ended);
+    if (outcome.error) this.error = outcome.error;
+    if (outcome.note) this.note = outcome.note;
+    return outcome.done;
   }
 
   renderSection(t, title, rows, empty) {

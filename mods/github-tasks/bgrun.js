@@ -19,15 +19,33 @@ export function parseStarted(stdout) {
 }
 
 // The program the tab's own terminal runs: a note, then it waits for ever (a program that exits closes its pane).
-// The orchestrator is shown over it, so the note only reads when the connection is lost.
-export const placeholderArgv = (orchestrator) => ["sh", "-c", `printf '%s\\n' ${shQuote(`Connecting to the orchestrator ${orchestrator}... View reconnects it.`)}; exec tail -f /dev/null`];
+// The orchestrator is shown over it, so the note only reads when the connection is lost; it says nothing about the run's
+// state, which may well have ended by then.
+export const placeholderArgv = (orchestrator) => ["sh", "-c", `printf '%s\\n' ${shQuote(`This tab shows orchestrator ${orchestrator} of the run. When it is not showing, View reconnects it.`)}; exec tail -f /dev/null`];
 
-// The run's open tab: the saved slot, while its tab and its left pane still exist. Else null.
-export function findRunTab({ slot, spaces, panes }) {
-  if (!slot?.tab || !slot?.left) return null;
+// What is left of the run's tab, from the saved slot: { tab, space, left, page } with left (the pane the orchestrator is
+// shown in) or page (the run page) null when closed, or null when the tab is gone or has neither.
+export function runTabParts({ slot, spaces, panes }) {
+  if (!slot?.tab) return null;
   const space = (spaces ?? []).find((s) => (s.tabs ?? []).some((t) => t.id === slot.tab));
-  if (!space || !(panes ?? []).some((p) => p.pane === slot.left && p.tab === slot.tab)) return null;
-  return { tab: slot.tab, left: slot.left, space: space.id };
+  if (!space) return null;
+  const inTab = (panes ?? []).filter((p) => p.tab === slot.tab);
+  const left = inTab.some((p) => p.pane === slot.left) ? slot.left : null;
+  const page = inTab.find((p) => p.mod === "github-tasks")?.pane ?? null;
+  return left || page ? { tab: slot.tab, space: space.id, left, page } : null;
+}
+
+// The run's open tab, whole enough to show the orchestrator: the saved slot, while its tab and its left pane exist.
+export function findRunTab({ slot, spaces, panes }) {
+  const parts = runTabParts({ slot, spaces, panes });
+  return parts?.left ? { tab: parts.tab, left: parts.left, space: parts.space } : null;
+}
+
+// Runs fn unless one for this id is going already (then false); the id is free again when it ends, or throws.
+export async function guarded(busy, id, fn) {
+  if (busy.has(id)) return false;
+  busy.add(id);
+  try { return await fn(); } finally { busy.delete(id); }
 }
 
 // The space View opens a tab in: the one the run started in, or the current one when that is closed.
@@ -36,46 +54,79 @@ export const viewTarget = ({ started, spaces, current }) => ((spaces ?? []).some
 const why = (e) => String(e?.message ?? e);
 
 // Opens a tab connected to the orchestrator: placeholder on the left, orchestrator shown over it, run page on the right,
-// the left focused. Throws with the reason; a tab it made is closed again then, so a retry never leaves two.
-//   deps: { app(name, args) -> made, paneOf(made) -> pane id | null, run(name, args), setSlot(id, slot) }
-export async function connectRun(deps, { id, orchestrator, name, space, folder, props }) {
-  let made;
+// the left focused. With `existing` ({ tab, space, left, page }, from runTabParts) it makes good what that tab lacks (a
+// left placeholder, or the run page) instead of opening another tab. Throws with the reason; a tab it made itself is closed
+// again then, so a retry never leaves two. A tab that was already there is left alone.
+//   deps: { app(name, args) -> made, paneOf(made) -> pane id | null, run(name, args), setSlot(id, slot), sleep(ms),
+//           isShown?(orchestrator, left), warn?(message) }
+export async function connectRun(deps, { id, orchestrator, name, space, folder, props, existing = null }) {
+  let made = null, tab = existing?.tab, left = existing?.left ?? null, page = existing?.page ?? null;
   try {
-    made = await deps.app("tab.new", { name, ...(folder ? { folder } : {}), argv: placeholderArgv(orchestrator), ...(space ? { space } : {}) });
-  } catch (e) { throw new Error(`the tab couldn't be made (${why(e)})`); }
-  try {
-    const left = await deps.paneOf(made);
-    if (!left) throw new Error("the tab's pane didn't appear");
-    deps.run("space.select", { id: made.space ?? space });
-    deps.run("tab.select", { id: made.tab });
+    if (!existing) {
+      try { made = await deps.app("tab.new", { name, ...(folder ? { folder } : {}), argv: placeholderArgv(orchestrator), ...(space ? { space } : {}) }); }
+      catch (e) { throw new Error(`the tab couldn't be made (${why(e)})`); }
+      tab = made.tab;
+      left = await deps.paneOf(made);
+      if (!left) throw new Error("the tab's pane didn't appear");
+    } else if (!left) {
+      if (!page) throw new Error("the run's tab has nothing left to attach to");
+      let fresh;
+      try { fresh = await deps.app("pane.split", { pane: page, direction: "right", argv: placeholderArgv(orchestrator) }); }
+      catch (e) { throw new Error(`the tab's left pane couldn't be made again (${why(e)})`); }
+      left = await deps.paneOf({ ...fresh, tab });
+      if (!left) throw new Error("the tab's new pane didn't appear");
+      try { await deps.app("pane.swap", { pane: left, target: page }); } catch { /* it stays on the right: still works */ }
+    }
+    const where = existing?.space ?? made?.space ?? space;
+    deps.run("space.select", { id: where });
+    deps.run("tab.select", { id: tab });
     const show = async () => {
       try { await deps.app("terminal.show", { terminal: orchestrator, pane: left }); }
       catch (e) { throw new Error(`the orchestrator ${orchestrator} couldn't be shown (${why(e)})`); }
     };
     await show(); // fails here, before the page opens, when the orchestrator can't be shown at all
-    try { await deps.app("pane.split", { pane: left, direction: "right", mod: "github-tasks", props }); }
-    catch (e) { throw new Error(`the run page couldn't open (${why(e)})`); }
-    const slot = { tab: made.tab, left, space: made.space ?? space ?? null };
+    if (!page) {
+      try { await deps.app("pane.split", { pane: left, direction: "right", mod: "github-tasks", props }); }
+      catch (e) { throw new Error(`the run page couldn't open (${why(e)})`); }
+    }
+    const slot = { tab, left, space: where ?? null };
     deps.setSlot(id, slot);
     deps.run("pane.focus", { pane: left });
-    await holdShown(deps, { orchestrator, left, show });
+    const held = await holdShown(deps, { orchestrator, left, show });
+    if (held === false) deps.warn?.(`The orchestrator ${orchestrator} may not be showing in its tab yet. Press View on the ticket to show it again; the run itself is going.`);
     return slot;
   } catch (e) {
-    try { deps.run("tab.close", { id: made.tab }); } catch { /* it stays; View finds nothing saved and makes another */ }
+    if (made) { try { deps.run("tab.close", { id: made.tab }); } catch { /* it stays; View repairs it */ } }
     throw e;
   }
 }
 
 // A terminal.show made while the new tab is settling is lost (found out live: the placeholder stayed on screen until a
 // later show), so it is repeated until the app says it holds (focused().shown, via deps.isShown), or a few times when
-// it can't say. A show that keeps failing is left: the tab is there, and View connects again.
+// it can't say. Resolves true (it holds), false (the app says it doesn't), or null (the app can't say). A show that keeps
+// failing is left to the caller's warning: the tab is there, and View shows it again.
 export async function holdShown(deps, { orchestrator, left, show, tries = 10, wait = 300 }) {
   for (let i = 0; i < tries; i++) {
     await deps.sleep(wait);
     if (deps.isShown?.(orchestrator, left)) return true;
     try { await show(); } catch { /* tried again next time round */ }
   }
-  return Boolean(deps.isShown?.(orchestrator, left));
+  return deps.isShown ? Boolean(deps.isShown(orchestrator, left)) : null;
+}
+
+// Waits for the orchestrator's agent to be ready for its first task: the core says so when it reports idle, done or blocked.
+// A terminal that has ended, or `hc` failing, is a failure with the reason. An agent that never reports (a custom command)
+// is waited on for the whole budget and then let through, as spawn does, flagged `unconfirmed`.
+export async function waitReady({ hc, orchestrator, tries = 3, timeout = 20 }) {
+  for (let i = 0; i < tries; i++) {
+    const r = await hc(["wait", orchestrator, "--timeout", String(timeout)]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+    if (r.code !== 0) return { ok: false, why: String(r.stderr || r.stdout || "hc wait failed").trim() };
+    let got = null;
+    try { got = JSON.parse(r.stdout); } catch { /* no answer to read: wait again */ }
+    if (["idle", "done", "blocked"].includes(got?.status)) return { ok: true };
+    if (got && (got.exit_code != null || ["exit", "exited", "killed", "ended"].includes(got.reason))) return { ok: false, why: `the orchestrator ended while starting (${got.reason ?? "exit"})` };
+  }
+  return { ok: true, unconfirmed: true };
 }
 
 // After a Herdr restart a terminal.show is gone: show each live orchestrator again over the left pane of the one tab its
@@ -92,19 +143,62 @@ export async function reapplyRuns({ terminals, slot, spaces, panes, show }) {
   return shown;
 }
 
-// Merge's end of a run: the workers and reviewers, then the orchestrator, are killed on purpose (nothing else ends a
-// background run), then the run's tab is closed if it is open. A closed tab is not a failure.
-//   deps: { hc(args), run(name, args), terminals, slot, spaces, panes, clearSlot() }. Resolves with { tabClosed }.
-export async function endRun({ id, orchestrator, terminals, hc, run, slot, spaces, panes, clearSlot }) {
-  const others = (terminals ?? []).filter((k) => k.labels?.[RUN_LABEL] === id && k.address !== orchestrator);
-  for (const address of [...others.map((k) => k.address), orchestrator]) {
-    if (!address) continue;
-    await hc(["kill", address]).catch(() => {});
+// Merge's end of a run: the orchestrator is killed on purpose first (nothing else ends a background run, and it would
+// start more workers meanwhile), then the terminals of the run that are left, read again; then the run's tab is closed if it
+// is open. A terminal that is still live after its kill is an error: the tab and slot are kept and the error says which, so
+// the person can end it by hand. A closed tab is not a failure; `tabFound` false tells the page nothing was there to close.
+//   deps: { hc(args) -> { code, stderr }, terminals() (read again as needed), run(name, args), slot, spaces, panes, clearSlot() }.
+//   Resolves with { tabClosed, error } (+ tabFound: false when no tab was found).
+export async function endRun({ id, orchestrator, hc, terminals, run, slot, spaces, panes, clearSlot }) {
+  const live = () => (terminals() ?? []).filter((k) => k.state === "live" && (k.address === orchestrator || k.labels?.[RUN_LABEL] === id));
+  const stuck = [];
+  const kill = async (address) => {
+    const r = await hc(["kill", address]).catch((e) => ({ code: 1, stderr: String(e?.message ?? e), stdout: "" }));
+    if (r.code !== 0 && live().some((k) => k.address === address)) stuck.push(`${address}: ${String(r.stderr || r.stdout || "kill failed").trim()}`);
     await hc(["rm", address]).catch(() => {});
-  }
-  const open = findRunTab({ slot, spaces, panes });
+  };
+  if (orchestrator) await kill(orchestrator);
+  for (const k of live().filter((k) => k.address !== orchestrator)) await kill(k.address);
+  if (stuck.length) return { tabClosed: false, error: `couldn't end ${stuck.join("; ")}. Its tab was kept; end it with hc kill.` };
+  const parts = runTabParts({ slot, spaces, panes });
   clearSlot();
-  if (!open) return { tabClosed: false };
-  run("tab.close", { id: open.tab });
-  return { tabClosed: true };
+  if (!parts) return { tabClosed: false, error: null, tabFound: false };
+  run("tab.close", { id: parts.tab });
+  return { tabClosed: true, error: null };
+}
+
+// Starts a run's orchestrator and opens its tab at once, so the person watches it boot (and View, held off by the caller's
+// guard, can't make a second tab): hc run, pane.json, the tab, then the wait for the agent, then its first task.
+// A failure after the orchestrator exists ends it again (kill and rm) and closes the tab, then throws. A tab that can't open
+// is only a problem to say: the run is going and View connects it.
+//   deps: { hc(args), writePaneJson(props), connect(props) -> slot (throws), closeTab() }
+//   Resolves with { orchestrator, problems }.
+export async function launchRun(deps, { id, key, workDir, space, argv, task, props }) {
+  const started = await deps.hc(orchestratorRunArgs({ id, key, workDir, space, argv })).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+  const orchestrator = started.code === 0 ? parseStarted(started.stdout) : null;
+  if (!orchestrator) throw new Error(`The orchestrator didn't start: ${String(started.stderr || started.stdout || "").trim() || "hc gave no address"}`);
+  const full = { ...props, orchestrator };
+  const problems = [];
+  await deps.writePaneJson(full).catch(() => {}); // View reconnects from this, so it is there before anything else can look
+  try { await deps.connect(full); }
+  catch (e) { problems.push(`Its tab didn't open: ${why(e)}. It is running; View connects to it.`); }
+  const abort = async (message) => {
+    await deps.hc(["kill", orchestrator]).catch(() => {});
+    await deps.hc(["rm", orchestrator]).catch(() => {});
+    try { deps.closeTab(); } catch { /* nothing to close */ }
+    throw new Error(message);
+  };
+  const ready = await waitReady({ hc: deps.hc, orchestrator });
+  if (!ready.ok) await abort(`The orchestrator didn't start properly, so it was ended: ${ready.why}`);
+  const sent = await deps.hc(["send", orchestrator, task]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+  if (sent.code !== 0) await abort(`The orchestrator didn't take its task, so it was ended: ${String(sent.stderr || sent.stdout || "").trim() || "hc send failed"}`);
+  return { orchestrator, problems };
+}
+
+// What the run page shows once Merge has ended the run: done (its tab, and so the page, is closed), an error naming what
+// couldn't be ended, or a note that the tab couldn't be found. Anything but done frees the page from "Merging…".
+export function mergeOutcome(ended) {
+  if (ended.tabClosed) return { done: true, error: null, note: null };
+  if (ended.error) return { done: false, error: `Merged, but ${ended.error}`, note: null };
+  return { done: false, error: null, note: { text: "Merged. This run's tab couldn't be found to close: close it yourself.", detail: "The run has ended; only its tab is left." } };
 }
