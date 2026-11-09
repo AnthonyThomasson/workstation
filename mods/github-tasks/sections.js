@@ -29,8 +29,8 @@ export function sectionPlan(lists, open = {}) {
 // Which sections start expanded: { next: true, investigations: true, ..., backlog: false }.
 export const initialOpen = () => Object.fromEntries(SECTIONS.map((x) => [x.id, x.open]));
 
-// The Investigations section alone, for when the ticket list can't be drawn (no project, a first-load error, still loading, a remote
-// space): their rows are the way back to a session (and its Done button), so they stay. [] when no repo is known to look under (no
+// The Investigations section alone, for when the ticket list can't be drawn (no project, a first-load error, still loading, a local
+// error): their rows are the way back to a session (and its Done button), so they stay. [] when no repo is known to look under (no
 // context) or none of the places investigationList looks in: the place's main checkout (not on another machine) in local mode, that
 // or the GitHub name in GitHub mode. Else sectionPlan's Investigations entry, with its own collapse state.
 export function investigationsAlone({ ctx, local, remote, mainRoot, repo, items }, open = {}) {
