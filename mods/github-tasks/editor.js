@@ -17,8 +17,7 @@ import { loadWorkflows } from "./workflow-env.js";
 import { startRun } from "./start.js";
 import { markdownLiteral } from "./settings-model.js";
 import { panelSize, panelAppeared, closeStep, escStep, afterSave, PRESS_BUTTONS } from "./popup.js";
-import { wontDoFooter, wontDoPrompt, windowSubject, retryAfterSignIn } from "./wontdo.js";
-import { closeOpen, ticketSubject } from "./open-tabs.js";
+import { wontDoFooter, wontDoPrompt, retryAfterSignIn } from "./wontdo.js";
 
 // Set to the time of each save, so the panel's list refreshes.
 export const CHANGED = "github-tasks.changed";
@@ -195,15 +194,18 @@ export class TaskEditor {
   // something is, and waits for a save that is running: overlay tasks end with the popup, so a save is never cut off.
   requestClose(cx) {
     if (!this.popup) return;
-    const step = closeStep({ dirty: this.dirty(), saving: this.saving, starting: this.start?.phase === "starting" });
+    const step = closeStep({ dirty: this.dirty(), saving: this.saving, starting: this.start?.phase === "starting", wontDoing: this.wontDoing });
     if (step === "close") this.closeNow();
     else if (step === "prompt") this.showPrompt(cx);
     else if (step === "wait") this.pending = this.pending ?? "close";
     cx.notify();
   }
 
+  // Closes the popup. False when there is no popup to close (an editor tab from before the popup).
   closeNow() {
-    if (this.props.overlay) closeOverlay(this.props.overlay);
+    if (!this.props.overlay) return false;
+    closeOverlay(this.props.overlay);
+    return true;
   }
 
   showPrompt(cx) {
@@ -275,8 +277,8 @@ export class TaskEditor {
     await markWontDo(gh, { repo, ticket, project, statusField }, where);
   }
 
-  // Confirmed. On success the sidebar drops the ticket and this window closes; on failure the error shows in the footer
-  // like Save's and the window stays.
+  // Confirmed. On success the sidebar drops the ticket and the popup closes; on failure the error shows in the footer
+  // like Save's and the popup stays. A close request meanwhile is ignored (popup.js closeStep).
   wontDo(cx) {
     if (this.wontDoing || !this.confirming) return;
     this.wontDoing = true;
@@ -284,7 +286,6 @@ export class TaskEditor {
     this.retry = null;
     cx.notify();
     cx.spawn(async (cx) => {
-      let inert = false; // a success that left the window open: its buttons stay off
       try {
         await this.sendWontDo();
         this.confirming = false;
@@ -299,17 +300,13 @@ export class TaskEditor {
         cx.notify();
         return;
       }
-      // It is done. Closing the tab is a courtesy: if it can't, the window stays, inert, and says so. Closing blind (no
-      // recorded tab) could close another tab, so that is never tried.
-      try {
-        if (!closeOpen(windowSubject(this.props, ticketSubject(this.repo, this.ticket)))) throw new Error("no recorded tab");
-      } catch {
-        inert = true;
-        this.notice = { kind: "saved", text: "Marked Won't Do. You can close this tab." };
-      } finally {
-        this.wontDoing = inert;
-        cx.notify();
-      }
+      // It is done. The popup closes itself, as it does after a save that was waited for or a Start. An editor tab from
+      // before the popup can't be closed from here (nothing recorded which tab it is, and closing blind could close
+      // another), so that window stays, inert, and says so.
+      if (this.closeNow()) return;
+      this.notice = { kind: "saved", text: "Marked Won't Do. You can close this tab." };
+      this.wontDoing = true;
+      cx.notify();
     });
   }
 
@@ -434,7 +431,7 @@ export class TaskEditor {
       .on_key_down((e, cx) => {
         if (this.prompt && (e.keystroke === "enter" || e.keystroke === "cmd-s")) { this.saveAndClose(cx); cx.stop_propagation(); return; }
         if (e.key === "escape") {
-          const step = escStep({ prompt: this.prompt, start: Boolean(this.start), picker: Boolean(this.picker), confirm: this.confirming, popup: this.popup });
+          const step = escStep({ prompt: this.prompt, start: Boolean(this.start), picker: Boolean(this.picker), confirm: this.confirming && !this.wontDoing, popup: this.popup });
           if (step === "none") return;
           if (step === "keep-editing") this.keepEditing(cx);
           else if (step === "close-start") this.closeStart(cx);

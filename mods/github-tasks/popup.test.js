@@ -51,18 +51,30 @@ test("a close request while a run is starting is ignored: it can't be called bac
   assert.equal(closeStep({ dirty: true, saving: false, starting: true }), "ignore");
 });
 
-test("Esc goes to the card first, then the Start dialog, then a picker, and only then asks to close", () => {
-  const all = { prompt: true, start: true, picker: true, popup: true };
+test("a close request while Won't Do runs is ignored: like a run being started, it can't be called back halfway, and a success closes the popup itself", () => {
+  assert.equal(closeStep({ dirty: false, saving: false, starting: false, wontDoing: true }), "ignore");
+  assert.equal(closeStep({ dirty: true, saving: false, starting: false, wontDoing: true }), "ignore");
+  assert.equal(closeStep({ dirty: false, saving: false, starting: false, wontDoing: false }), "close");
+});
+
+test("Esc goes to the card first, then the Start dialog, then a picker, then the Won't Do question, and only then asks to close", () => {
+  const all = { prompt: true, start: true, picker: true, confirm: true, popup: true };
   assert.equal(escStep(all), "keep-editing");
   assert.equal(escStep({ ...all, prompt: false }), "close-start");
   assert.equal(escStep({ ...all, prompt: false, start: false }), "close-picker");
-  assert.equal(escStep({ prompt: false, start: false, picker: false, popup: true }), "request-close");
+  assert.equal(escStep({ ...all, prompt: false, start: false, picker: false }), "cancel-confirm");
+  assert.equal(escStep({ prompt: false, start: false, picker: false, confirm: false, popup: true }), "request-close");
+  assert.equal(escStep({ prompt: false, start: false, picker: false, popup: true }), "request-close"); // confirm left out
 });
 
 test("in an old editor tab Esc only ever closes a picker or the Start dialog", () => {
   assert.equal(escStep({ prompt: false, start: false, picker: false, popup: false }), "none");
   assert.equal(escStep({ prompt: false, start: true, picker: false, popup: false }), "close-start");
   assert.equal(escStep({ prompt: false, start: false, picker: true, popup: false }), "close-picker");
+});
+
+test("in an old editor tab Esc also closes the Won't Do question", () => {
+  assert.equal(escStep({ prompt: false, start: false, picker: false, confirm: true, popup: false }), "cancel-confirm");
 });
 
 test("after a save nothing happens unless a close was waiting for it", () => {

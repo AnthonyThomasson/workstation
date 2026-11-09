@@ -1,7 +1,6 @@
 // One tab per workflow: the opener records the pane its tab.new made, and opening the same subject
 // again selects that tab instead.
 import { panes, run, shared, setShared } from "herdr";
-import { recordedTab } from "./wontdo.js";
 
 const slot = (subject) => `github-tasks.open:${subject}`;
 const modPanes = () => panes().filter((p) => p.mod === "github-tasks");
@@ -14,27 +13,16 @@ export function focusOpen(subject) {
   return true;
 }
 
-// Closes the tab open for the subject, by the id the opener recorded, so a tab the person moved to meanwhile is never the
-// one that closes. False when none is recorded (a window opened without a subject) or it has since been closed.
-export function closeOpen(subject) {
-  const tab = recordedTab(subject && shared(slot(subject)), modPanes());
-  if (!tab) return false;
-  run("tab.close", { id: tab, confirmed: true }); // confirmed: it may be the space's last tab
-  return true;
-}
-
 // Opens the tab, or selects the one already open for the subject. A subject of null always opens a new tab.
-// recordAs: the subject the new tab is recorded under (default the same), so a window that is never reused (reuse null)
-// can still be found again, to be closed.
-export function openOnce(subject, args, cx, recordAs = subject) {
+export function openOnce(subject, args, cx) {
   if (focusOpen(subject)) return;
   const before = new Set(modPanes().map((p) => p.pane));
   run("tab.new", args);
-  if (!recordAs) return;
+  if (!subject) return;
   cx.spawn(async (cx) => {
     for (let i = 0; i < 30; i++) {
       const made = modPanes().find((p) => !before.has(p.pane));
-      if (made) { setShared(slot(recordAs), { pane: made.pane, tab: made.tab }); return; }
+      if (made) { setShared(slot(subject), { pane: made.pane, tab: made.tab }); return; }
       await cx.sleep(100);
     }
   });
