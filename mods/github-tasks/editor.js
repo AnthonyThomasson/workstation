@@ -174,8 +174,8 @@ export class TaskEditor {
         this.notice = { kind: "error", text: error.message, error };
       } finally {
         this.saving = false;
-        this.settleSave(cx);
         cx.notify();
+        this.settleSave(cx); // last: it may close the popup
       }
     });
   }

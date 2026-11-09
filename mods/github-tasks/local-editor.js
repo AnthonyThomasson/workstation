@@ -93,8 +93,8 @@ export class LocalTaskEditor extends TaskEditor {
         setShared(CHANGED, Date.now()); // part of it may have been written
       } finally {
         this.saving = false;
-        this.settleSave(cx);
         cx.notify();
+        this.settleSave(cx); // last: it may close the popup
       }
     });
   }
