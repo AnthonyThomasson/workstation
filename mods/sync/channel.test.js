@@ -11,22 +11,20 @@ test("a request reaches the listener once", () => {
   const { ch, t } = make();
   const next = ch.listen();
   assert.equal(next(), null);
-  ch.request({ op: "pull", key: "" });
+  ch.request({ op: "force" });
   const r = next();
-  assert.equal(r.op, "pull");
+  assert.equal(r.op, "force");
   assert.equal(next(), null);
-  t.now++; ch.request({ op: "push", key: "" });
-  assert.equal(next().op, "push");
+  t.now++; ch.request({ op: "pick", dir: "/r-wt" });
+  const p = next();
+  assert.equal(p.op, "pick");
+  assert.equal(p.dir, "/r-wt");
 });
 
-test("one lock per machine; a stale lock is dropped", () => {
+test("a request made before listening is not replayed", () => {
   const { ch, t } = make();
-  assert.equal(ch.claim(null, "Pulling…"), true);
-  assert.equal(ch.claim(null, "Pushing…"), false);
-  assert.equal(ch.claim("vps", "Pushing…"), true);
-  assert.equal(ch.busyAt(null), true);
-  ch.release(null);
-  assert.equal(ch.busyAt(null), false);
-  t.now += 61 * 1000;
-  assert.equal(ch.busyAt("vps"), false);
+  ch.request({ op: "force" });
+  t.now++;
+  const next = ch.listen();
+  assert.equal(next(), null);
 });

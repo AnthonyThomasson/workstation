@@ -1,5 +1,5 @@
-// Runs long work on a machine: Herdr stops an exec after 30 s, so a slow git fetch, pull or push, or
-// a skillshare sync, runs as a detached job that is polled until it writes its exit code. Copied from
+// Runs long work on a machine: Herdr stops an exec after 30 s, so the sync script (it may reinstall
+// skills over the network) runs as a detached job that is polled until it writes its exit code. Copied from
 // the skills mod's job runner (not imported: mods do not import each other). No Herdr imports: main.js
 // passes Herdr's exec and file reads in, and the tests (jobs.test.js) pass real sh and fs.
 
@@ -9,19 +9,14 @@
 // terminal, but Linux has setsid). Never both: a job that already leads its group makes setsid fork
 // and exit. The job writes its own pid once detached, and the starter waits for it (up to 5 s) so it
 // is not ended before then. Herdr also hangs up programs that carry the exec's HC_SCOPE once the exec
-// returns (git and skillshare died with exit 129), so the job drops it.
+// returns (git died with exit 129), so the job drops it.
 const DETACH = 'unset HC_SCOPE; if command -v setsid >/dev/null 2>&1; then bg() { exec setsid "$@"; }; else set -m; bg() { exec "$@"; }; fi';
 // Named so SWEEP can tell our job folders from anything else in the temp folder.
 const TEMP = 'd=$(mktemp -d "${TMPDIR:-/tmp}/sync-mod-job.XXXXXX")';
 const READY = 'i=0; while [ ! -s "$d/pid" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done; printf %s "$d"';
 
-// sh -c START <name> <dir> <args...>: runs skillshare <args> in <dir>; prints the temp folder.
-export const START = `${DETACH}; ${TEMP}; dir=$1; shift
-bg sh -c 'echo $$ >"$2/pid"; cd "$1" 2>/dev/null || cd; d=$2; shift 2; skillshare "$@" >"$d/out" 2>"$d/err" </dev/null; echo $? >"$d/code"' job "$dir" "$d" "$@" >/dev/null 2>&1 </dev/null &
-${READY}`;
-
-// The same for a script of ours: sh -c START_SCRIPT <name> <script> <args...>; the script gets <args...>.
-export const START_SCRIPT = `${DETACH}; ${TEMP}; script=$1; shift
+// sh -c START <name> <script> <args...>: runs our script given <args...>; prints the temp folder.
+export const START = `${DETACH}; ${TEMP}; script=$1; shift
 bg sh -c 'echo $$ >"$1/pid"; d=$1; script=$2; shift 2; sh -c "$script" job "$@" >"$d/out" 2>"$d/err" </dev/null; echo $? >"$d/code"' job "$d" "$script" "$@" >/dev/null 2>&1 </dev/null &
 ${READY}`;
 
@@ -49,9 +44,7 @@ const lastLine = (text) => String(text ?? "").trim().split("\n").filter((l) => l
 //   readText(path, on) resolves to the file's text, or null when it can't be read.
 // The returned runner:
 //   sh(script, args, on): one exec of a script of ours. Short reads only.
-//   run(args, { on, cwd }): one exec of `skillshare args` in cwd (home when null). Short reads only.
-//   job(args, { on, cwd, script, sleep }): `skillshare args`, or with `script` a script of ours
-//     given args, run detached. Resolves when it ends to { code, stdout, stderr }; a job that
+//   job(args, { on, script, sleep }): our `script` given args, run detached. Resolves when it ends to { code, stdout, stderr }; a job that
 //     dies without an exit code, or runs past JOB_MINUTES, resolves with code 1 and the reason.
 //     `sleep(ms)` waits between polls (a Herdr view passes cx.sleep).
 // The first job on each machine also removes job folders that a closed view never collected.
@@ -59,12 +52,10 @@ export function createRunner({ exec, readText, pollMs = 500, aliveEvery = 10, bu
   const swept = new Set();
   const read = (path, on) => Promise.resolve().then(() => readText(path, on)).catch(() => null);
   const sh = (script, args = [], on = null) => exec(script, args, on);
-  const run = (args, { on = null, cwd = null } = {}) =>
-    sh('cd "$1" 2>/dev/null || cd; shift; exec skillshare "$@"', [cwd ?? "", ...args], on);
 
-  async function job(args, { on = null, cwd = null, script = null, sleep }) {
+  async function job(args, { on = null, script, sleep }) {
     if (!swept.has(on ?? "")) { swept.add(on ?? ""); sh(SWEEP, [], on); }
-    const s = script ? await sh(START_SCRIPT, [script, ...args], on) : await sh(START, [cwd ?? "", ...args], on);
+    const s = await sh(START, [script, ...args], on);
     const d = s.stdout.trim();
     if (s.code !== 0 || !d) return { code: s.code || 1, stdout: "", stderr: s.stderr || "Could not start the job" };
     const done = async (result) => { await sh('rm -rf "$1"', [d], on); return result; };
@@ -85,5 +76,5 @@ export function createRunner({ exec, readText, pollMs = 500, aliveEvery = 10, bu
     return { code: 1, stdout: "", stderr: `The job took longer than ${JOB_MINUTES} minutes` };
   }
 
-  return { sh, run, job };
+  return { sh, job };
 }

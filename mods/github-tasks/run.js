@@ -112,6 +112,7 @@ export function orchestratorPrompt({ id, workflow, ticket, repo, runDir, workDir
     `- The main checkout ${repoRoot} is never touched; live-environment steps (${LIVE_ENV}) never run from a worktree and go in your final report for the person to approve.`,
     `- ${RUN_PAGE}`,
     "- Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text.",
+    `- One exception: when the run page reports a stopped Merge (leftover changes in ${workDir}, or commits origin lacks), you may commit what is left there (a new change still gets a reviewer first) and push the ticket branch with a plain \`git -C ${workDir} push origin ${branch}\`, then report back; never force-push, push the default branch or merge, and if the push is rejected because the branch was rebased, stop and ask the person.`,
     "- Start now: run the manual, read the ticket, and plan.", "",
     ...section("How this workflow plans", own.planning),
     ...section("How this workflow looks back on the run, once it is done", own.retro),

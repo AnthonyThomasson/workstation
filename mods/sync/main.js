@@ -1,57 +1,44 @@
-// Sync: keeps Herdr's config folder and your config repo in step, from an icon in the tab bar.
-// The icon is a circular arrow; small yellow arrows at its top-right corner say files changed in Herdr (up, what Push
-// would send) or the repo is behind its remote (down). It follows the shown space's machine and uses that machine's
-// settings (repo path). Click it to open or close the Details panel in the layout's right-hand panel
-// column: Repo (the branch or worktree being synced, Sync, Push) and Settings.
-//   Sync: the repo to Herdr, one way (the repo wins), then the running Herdr is asked whether it loaded the result.
-//   Push: Herdr's changes into the repo, commit, push. Only from main.
-// Roles (props.role): the button (default), always mounted: it owns the timers, the checks and the work the panel asks
-// for; "details" (the panel the button shows). The panel is a separate view whose tasks end when it hides, so it hands
-// work to the button through channel.js, which runs it; results come back as shared state.
+// Sync: keeps Herdr's config folder in step with the repo you linked, from an icon in the tab bar. One way (the repo
+// wins), automatic, no settings. Running mods/sync/sync.sh from a clone links that clone (it writes sync.json in Herdr's
+// config folder); this mod reads that file on this computer and does the rest.
+// The icon is a circular arrow: dim with no repo linked, muted normally, foreground while its panel is open, red
+// (theme().blocked) when the last sync failed, spinning while it syncs. Click it to open or close the Details panel in
+// the layout's right-hand panel column: the branch and folder being synced, the linked remote, when it last synced, and
+// Force sync.
+// A watcher on the picked folder syncs once nothing has changed for 3 s (queue.js decides when; a sync's own writes and
+// anything git ignores are not changes). Force sync, and switching branch or worktree, sync right away.
+// Roles (props.role): the button (default), always mounted: it owns the link, the watcher and every sync; "details"
+// (the panel the button shows). The panel is a separate view whose tasks end when it hides, so it hands work to the
+// button through channel.js; results come back as shared state (link, pick, run).
 import { View, div } from "gpui-kit";
-import { v_flex, h_flex, InputState } from "gpui-base";
-import { exec, run, spaces, layout, shared, setShared, theme, pickFolder, notify, readTextFile, knownAgents, props as blockProps } from "herdr";
-import { settingsFor, normalizeSettings, badge, changedFiles, viewState, commitMessage, plural, fetchBlocksCheck } from "./model.js";
-import { checkRepo, push, syncHerdr, listTargets, switchBranch, PATHS } from "./ops.js";
+import { h_flex, InputState } from "gpui-base";
+import { exec, run, layout, shared, setShared, theme, notify, readTextFile, watchFolder, appHome, home, props as blockProps } from "herdr";
+import { parseSyncJson, nextPick, viewState, statusLine, relativeTo } from "./model.js";
+import { readLink, syncFolder, snapshot, unignored, listTargets, switchBranch, PATHS } from "./ops.js";
 import { createRunner } from "./jobs.js";
 import { createChannel } from "./channel.js";
+import { createSyncQueue, isGitInternal } from "./queue.js";
 import { renderDetails } from "./details.js";
 import { icon, stop, later } from "./ui.js";
 
-const SETTINGS = "sync.settings.v1"; // { [machine]: { repo, script (always ./scripts/sync/sync.sh), dir } }; "" is this computer
-const STATE = "sync.state.v1"; // { [machine]: what the last check read }
-const BUMP = "sync.where.bump.v1"; // changes when the branch and worktree lists should be read again
-const CHECK_EVERY = 20 * 1000, FETCH_EVERY = 5 * 60 * 1000, WHERE_EVERY = 20 * 1000;
+const LINK = "sync.link.v2"; // { linked, repo, remote, dir, branch }: what sync.json names, the picked folder and its branch
+const PICK = "sync.pick.v2"; // { repo, dir }: the picked worktree ("" = the repo itself), forgotten when the linked repo changes
+const RUN = "sync.run.v2"; // { syncing, ok, message, at, watching, watchError }: the last sync and the watcher
+const REFRESH_EVERY = 5 * 1000, LABEL_EVERY = 2 * 1000, WHERE_EVERY = 20 * 1000, WATCH_RETRY = 15 * 1000, MAX_CHECKED = 2000;
 
 const channel = createChannel({ get: (k) => shared(k), set: (k, v) => setShared(k, v) });
 const obj = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
-const activeKey = () => (spaces().find((s) => s.active) ?? null)?.machine ?? "";
-const machineName = (key) => key || "This computer";
+const setRun = (patch) => setShared(RUN, { ...obj(shared(RUN)), ...patch });
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-// Everything that can be slow (git fetch, push, the sync script) runs as a detached job that is polled (jobs.js),
-// because Herdr stops an exec after 30 s. The runner adds the usual PATH.
+// Everything that can be slow (the sync script) runs as a detached job that is polled (jobs.js), because Herdr stops an
+// exec after 30 s. The runner adds the usual PATH.
 const runner = createRunner({
-  exec: (script, args, on) => exec("sh", ["-c", `${PATHS}\n${script}`, "sync", ...args], { on: on || null })
-    .catch((e) => ({ code: 127, stdout: "", stderr: String(e?.message ?? e) })),
-  readText: (path, on) => readTextFile(path, { on: on || null }),
+  exec: (script, args) => exec("sh", ["-c", `${PATHS}\n${script}`, "sync", ...args]).catch((e) => ({ code: 127, stdout: "", stderr: String(e?.message ?? e) })),
+  readText: (path) => readTextFile(path),
 });
-const repoIO = (cx, on, { lock } = {}) => {
-  const touch = () => { if (lock !== undefined) channel.touch(lock); };
-  return {
-    sh: (script, args) => { touch(); return runner.sh(script, args, on || null); },
-    job: (script, args) => { touch(); return runner.job(args, { on: on || null, script, sleep: (ms) => { touch(); return cx.sleep(ms); } }); },
-  };
-};
-
-const sameState = (a, b) => JSON.stringify({ ...a, at: 0 }) === JSON.stringify({ ...b, at: 0 });
-const setIn = (key, name, value) => setShared(key, { ...obj(shared(key)), [name]: value });
-
-// What every view needs to draw a machine: its settings (`cfg` as saved; `rcfg` points at the picked worktree), last check and lock.
-const context = (key) => {
-  const cfg = settingsFor(shared(SETTINGS), key), state = obj(shared(STATE))[key] ?? null;
-  const busy = channel.busyAt(key || null) ? channel.busyText() : null;
-  return { key, on: key || null, cfg, rcfg: { ...cfg, repo: cfg.dir || cfg.repo }, state, busy, kind: viewState({ settings: cfg, state, busy }) };
-};
+const shortIO = { sh: (script, args) => runner.sh(script, args) };
+const jobIO = (cx) => ({ sh: shortIO.sh, job: (script, args) => runner.job(args, { script, sleep: (ms) => cx.sleep(ms) }) });
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "sync";
 const find = (node, id) => {
@@ -77,34 +64,123 @@ export default class Sync extends View {
     return this.role === "button" ? this.renderButton(cx) : this.renderDetailsTab(cx);
   }
 
-  // ================= The button: polls, runs the work the panel asks for =================
+  // ================= The button: the link, the watcher, every sync =================
 
   initButton(cx) {
-    this.key = null; this.tokens = {}; this.fetching = {}; this.nextRequest = channel.listen();
-    cx.timer.every(CHECK_EVERY, (cx) => this.check(cx));
-    cx.timer.every(FETCH_EVERY, (cx) => this.check(cx, { fetch: true }));
+    this.cx = cx; this.nextRequest = channel.listen();
+    this.dir = null; this.baseline = null; this.epoch = 0; this.watchGen = 0; this.forced = false;
+    this.incoming = []; this.draining = false; this.timers = new Set(); this.timerId = 0;
+    this.queue = createSyncQueue({
+      sync: () => this.syncNow(),
+      changed: async () => { const s = await snapshot(shortIO, this.dir); return !s || s !== this.baseline; },
+      // Herdr views have cx.sleep, not setTimeout.
+      setTimer: (fn, ms) => {
+        const id = ++this.timerId; this.timers.add(id);
+        this.cx.spawn(async (cx) => { await cx.sleep(ms); if (this.timers.delete(id)) fn(); });
+        return id;
+      },
+      clearTimer: (id) => this.timers.delete(id),
+    });
+    // A sync that copies this mod's own files makes Herdr reload the mod mid-sync; the new instance cannot see that sync's
+    // result, so it must not show "Syncing…" for ever.
+    if (obj(shared(RUN)).syncing) setRun({ syncing: false });
+    later(cx, (cx) => this.refresh(cx));
+    cx.timer.every(REFRESH_EVERY, (cx) => { this.cx = cx; this.refresh(cx); });
   }
 
-  // Reads the shown machine's repo (the picked worktree), with a git fetch when asked. A newer read wins over an older
-  // one, but a plain 20 s check never replaces a fetch that is still running: it waits for the next tick instead.
-  check(cx, { fetch = false } = {}) {
-    const key = activeKey(), c = context(key);
-    if (!c.cfg.repo || channel.busyAt(c.on)) return Promise.resolve();
-    if (!fetch && fetchBlocksCheck(this.fetching[key]?.at)) return Promise.resolve();
-    const token = this.tokens[key] = (this.tokens[key] ?? 0) + 1;
-    if (fetch) this.fetching[key] = { token, at: Date.now() };
-    return cx.spawn(async (cx) => {
+  // Reads sync.json and the repo it names (this computer only). Newer reads win over older ones. The linked repo is the
+  // one remembered, as long as sync.json names it or one of its worktrees: running the script from a worktree rewrites
+  // sync.json to that worktree and must not unlink the repo or reset the pick (ops.js LINK).
+  refresh(cx) {
+    const mine = ++this.epoch;
+    return cx.spawn(async () => {
+      let link = { linked: false };
       try {
-        const prev = c.state, at = Date.now();
-        const state = await checkRepo(repoIO(cx, c.on), c.rcfg, { fetch });
-        if (token !== this.tokens[key] || channel.busyAt(c.on)) return;
-        state.fetchedAt = fetch && !state.fetchError ? at : obj(shared(STATE))[key]?.fetchedAt ?? prev?.fetchedAt ?? null;
-        if (!sameState(prev, state)) setIn(STATE, key, state);
-      } finally {
-        if (this.fetching[key]?.token === token) this.fetching[key] = null;
-        cx.notify();
+        const file = parseSyncJson(await readTextFile(`${appHome()}/sync.json`).catch(() => null));
+        if (file) {
+          const prev = obj(shared(LINK)), stored = prev.linked ? prev.repo : "";
+          const pick = obj(shared(PICK));
+          const info = await readLink(shortIO, { file: file.repo, stored, pick: pick.repo === stored ? pick.dir ?? "" : "" });
+          if (!info.gone) {
+            link = { linked: true, repo: info.repo, remote: file.remote, dir: info.dir, branch: info.branch };
+            const next = nextPick(pick, info.repo);
+            next.dir = info.dir === info.repo ? "" : info.dir;
+            if (!same(next, pick)) setShared(PICK, next);
+          }
+        }
+      } catch { return; } // keep what we knew
+      if (mine !== this.epoch) return;
+      if (!same(link, shared(LINK))) setShared(LINK, link);
+      this.useDir(link.linked ? link.dir : null);
+    });
+  }
+
+  // The folder being synced and watched changed (or went away).
+  useDir(dir) {
+    if (dir === this.dir) return;
+    this.dir = dir; this.baseline = null; this.incoming = [];
+    this.queue.stop();
+    const gen = ++this.watchGen;
+    if (!dir) { setRun({ watching: false, watchError: "" }); return; }
+    setRun({ watching: true, watchError: "" });
+    this.cx.spawn(async (cx) => {
+      const first = await snapshot(shortIO, dir).catch(() => "");
+      if (gen === this.watchGen && this.baseline === null) this.baseline = first || null; // a sync that already started has its own
+      while (gen === this.watchGen) {
+        try {
+          const batch = await watchFolder(dir);
+          if (gen !== this.watchGen) return;
+          if (!obj(shared(RUN)).watching) setRun({ watching: true, watchError: "" });
+          this.incoming.push(...batch);
+          this.drain(dir);
+        } catch (e) {
+          if (gen !== this.watchGen) return;
+          setRun({ watching: false, watchError: String(e?.message ?? e).split("\n")[0].slice(0, 80) });
+          await cx.sleep(WATCH_RETRY);
+        }
       }
     });
+  }
+
+  // Watcher batches: drop .git/ and git-ignored paths (one git call at a time, later batches wait in `incoming`), hand the rest to the queue.
+  async drain(dir) {
+    if (this.draining) return;
+    this.draining = true;
+    try {
+      while (this.incoming.length) {
+        const rels = [...new Set(this.incoming.splice(0).map((p) => relativeTo(dir, p)))].filter((p) => !isGitInternal(p));
+        if (!rels.length || dir !== this.dir) continue;
+        const keep = rels.includes("") || rels.length > MAX_CHECKED ? rels : await unignored(shortIO, dir, rels);
+        if (dir === this.dir && keep.length) this.queue.change(keep);
+      }
+    } finally { this.draining = false; }
+  }
+
+  // One sync of the picked folder, run by the queue (never two at once). The folder's content is fingerprinted just
+  // BEFORE the script runs and that becomes the baseline the next quiet-period check compares with: whatever changes
+  // after it is news (a branch switch's files were already there; an edit made during the copy was not necessarily
+  // copied). A second fingerprint right after the script tells the queue whether the content changed while it ran; the
+  // script's own writes (skillshare/) are not in either. Resolves to that: true = sync once more.
+  syncNow() {
+    return new Promise((resolve) => this.cx.spawn(async (cx) => {
+      const dir = this.dir, forced = this.forced; this.forced = false;
+      let changedDuring = false;
+      try {
+        if (!dir) return;
+        setRun({ syncing: true });
+        const before = await snapshot(shortIO, dir).catch(() => "");
+        if (dir === this.dir) this.baseline = before || null;
+        let out;
+        try { out = await syncFolder(jobIO(cx), dir); }
+        catch (e) { out = { result: "error", message: String(e?.message ?? e) }; }
+        const after = await snapshot(shortIO, dir).catch(() => "");
+        changedDuring = Boolean(before && after && before !== after);
+        const ok = out.result === "ok", prev = obj(shared(RUN));
+        setRun({ syncing: false, ok, message: ok ? "" : out.message || "The sync script stopped.", at: ok ? Date.now() : prev.at ?? null });
+        if (!ok) notify({ title: "Sync failed", body: out.message || "The script stopped.", level: "error" });
+        else if (forced) notify({ title: "Sync done", body: out.message || "Done", level: "success" });
+      } finally { setRun({ syncing: false }); cx.notify(); resolve(dir === this.dir && changedDuring); }
+    }));
   }
 
   render_requests(cx) {
@@ -113,146 +189,87 @@ export default class Sync extends View {
   }
 
   perform(req, cx) {
-    const key = req.key ?? "", c = context(key);
-    if (req.op === "fetch") { if (key === activeKey()) this.check(cx, { fetch: true }); return; }
-    if (req.op === "pickdir") {
-      setIn(SETTINGS, key, { ...c.cfg, dir: String(req.dir ?? "") });
-      setIn(STATE, key, null);
-      setShared(BUMP, Date.now());
-      return this.check(cx, { fetch: true });
+    this.cx = cx;
+    const link = obj(shared(LINK));
+    if (!link.linked) return;
+    if (req.op === "force") { this.forced = true; this.queue.force(); return; }
+    if (req.op === "pick") {
+      const dir = String(req.dir ?? "");
+      if (!dir || dir === this.dir) return;
+      setShared(PICK, { repo: link.repo, dir: dir === link.repo ? "" : dir });
+      setShared(LINK, { ...link, dir, branch: "" });
+      this.useDir(dir);
+      this.refresh(cx);
+      this.queue.force();
+      return;
     }
-    if (req.op === "generate") return this.generateScript(key, c, cx);
-    if (!["herdrsync", "push", "switch"].includes(req.op)) return;
-    if (!c.cfg.repo) { notify({ title: "Sync", body: "Choose the config repo first: open the Sync panel and set it under Settings.", level: "warning" }); return; }
-    const busyText = { herdrsync: "Syncing Herdr…", push: "Pushing…", switch: "Switching branch…" }[req.op];
-    if (!channel.claim(c.on, busyText)) { notify({ title: "Sync", body: "Another sync is running on this machine.", level: "warning" }); return; }
-    cx.notify();
-    return cx.spawn(async (cx) => {
-      try {
-        const io = repoIO(cx, c.on, { lock: c.on });
-        let out;
-        if (req.op === "herdrsync") out = await syncHerdr(io, c.rcfg);
-        else if (req.op === "switch") out = await switchBranch(io, c.rcfg.repo, req.branch);
-        else out = await push(io, c.rcfg, req.message || commitMessage(changedFiles(c.state).length, c.state?.host));
-        const title = { herdrsync: "Sync", push: "Push", switch: "Switch" }[req.op];
-        const ok = out.result === "ok";
-        notify({ title: ok ? `${title} done` : `${title} failed`, body: out.message || (ok ? "Done" : "The script stopped."), level: ok ? "success" : "error" });
-      } catch (e) {
-        notify({ title: "Sync failed", body: String(e?.message ?? e), level: "error" });
-      } finally {
-        channel.release(c.on);
-        setShared(BUMP, Date.now());
-        cx.notify();
-        this.check(cx, { fetch: req.op !== "herdrsync" });
-      }
-    });
-  }
-
-  // scripts/sync/sync.sh is missing: the agent, in a new tab in the repo folder, writes it from scripts/sync/RECIPE.md.
-  async generateScript(key, c, cx) {
-    if (!c.cfg.repo) return;
-    const list = await knownAgents({ on: c.on }).catch(() => []);
-    const agent = list.find((a) => a.key === "claude" && a.installed) ?? list.find((a) => a.installed) ?? list.find((a) => a.key === "claude") ?? null;
-    const space = spaces().find((s) => (s.machine ?? "") === key && s.active) ?? spaces().find((s) => (s.machine ?? "") === key);
-    const task = "Read scripts/sync/RECIPE.md in this repo and write scripts/sync/sync.sh to match it exactly (POSIX sh, executable). Then run ./scripts/sync/sync.sh --check and ./scripts/sync/sync.sh --push --dry-run and fix anything that fails. Do not run it for real or commit anything.";
-    run("tab.new", { name: "Generate sync.sh", space: space?.id, folder: c.rcfg.repo, argv: agent?.run ?? ["claude"], task });
-    notify({ title: "Sync", body: "An agent is writing scripts/sync/sync.sh from scripts/sync/RECIPE.md in a new tab.", level: "info" });
+    if (req.op === "switch") {
+      return cx.spawn(async () => {
+        const out = await switchBranch(shortIO, link.dir, String(req.branch ?? ""));
+        if (out.result !== "ok") { notify({ title: "Switch failed", body: out.message || "git said no.", level: "error" }); return; }
+        this.refresh(cx);
+        this.queue.force();
+      });
+    }
   }
 
   renderButton(cx) {
-    const t = theme(), key = activeKey(), on = shownHere();
-    if (this.key !== key) { this.key = key; later(cx, (cx) => this.check(cx, { fetch: true })); }
+    this.cx = cx;
+    const t = theme(), on = shownHere();
     this.render_requests(cx);
-    const c = context(key), b = badge(c.state);
+    const link = shared(LINK), runState = shared(RUN), kind = viewState({ link, run: runState });
     const tip = {
-      unset: "Sync: set up the config repo", loading: "Sync: checking…", norepo: "Sync: the repo folder is not a git repository",
-      error: `Sync: ${c.state?.error ?? "error"}`, busy: `Sync: ${c.busy}`,
-      ok: b.text ? `Behind by ${plural(b.down, "commit")}, ${plural(b.up, "file")} changed in Herdr` : "Sync: up to date",
-    }[c.kind];
-    const tint = c.kind === "error" ? t.blocked : c.kind === "unset" || c.kind === "norepo" ? t.dim : on ? t.foreground : t.muted;
-    const arrows = c.kind === "ok" ? b : { down: 0, up: 0 };
-    const counted = arrows.down > 0 || arrows.up > 0;
+      loading: "Sync: checking…", unlinked: "Sync: no repo linked. Run mods/sync/sync.sh from your clone.",
+      busy: "Sync: syncing…", error: `Sync: ${runState?.message || "the last sync failed"}`, ok: `Sync: ${statusLine(runState)}`,
+    }[kind];
+    const tint = kind === "error" ? t.blocked : kind === "unlinked" || kind === "loading" ? t.dim : on ? t.foreground : t.muted;
     const glyph = icon("sync", 16, tint);
-    const spinning = c.kind === "busy" ? glyph.spin(900) : glyph;
+    const spinning = kind === "busy" ? glyph.spin(900) : glyph;
     return h_flex().size_full().pr(8).items_center().justify_end().bg(t.chrome).border_b(1).border_color(t.border)
       .child(h_flex().id("sync-button").tooltip(tip).h(30).w(34).flex_none().items_center().justify_center().rounded(6)
         .bg(on ? t.selected : t.chrome).hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
-        .on_click(() => {
+        .on_click((_e, cx) => {
           if (on) run("layout.hide", { id: PANEL });
-          else { showPanel(); channel.request({ op: "fetch", key }); } // opening fetches
+          else { showPanel(); this.refresh(cx); }
         })
         .child(div().relative().size_full().flex().items_center().justify_center()
-          .child(div().size(16).flex_none().child(spinning))
-          .when(counted, (e) => e.child(h_flex().absolute().top(1).right(1).gap(0)
-            .when(arrows.down > 0, (x) => x.child(icon("arrow-down", 9, t.working)))
-            .when(arrows.up > 0, (x) => x.child(icon("arrow-up", 9, t.working)))))));
+          .child(div().size(16).flex_none().child(spinning))));
   }
 
   // ================= The Details panel =================
 
   initDetails(cx) {
-    this.where = {}; this.whereAt = {}; this.whereBump = null; this.reading = {}; this.rereadAt = Date.now();
-    this.autoMessage = ""; this.edited = false; this.repoOpen = { files: false, where: false };
-    this.msg = InputState.new({ placeholder: "Commit message" });
-    this.msg.on("change", () => { this.edited = this.msg.value() !== this.autoMessage; });
-    this.settingsOpen = false; this.settingsKey = null;
-    this.repoInput = InputState.new({ placeholder: "/path/to/your/config-repo" });
-    // A shown panel renders this often, which keeps the branch list fresh; a hidden panel reads nothing.
-    cx.timer.every(WHERE_EVERY, (cx) => cx.notify());
+    this.where = null; this.whereAt = 0; this.whereKey = ""; this.reading = false; this.open = false; this.query = "";
+    this.search = InputState.new({ placeholder: "Search worktrees and branches" });
+    this.search.on("change", (_e, cx) => { this.query = this.search.value(); cx.notify(); });
+    // A shown panel renders this often, which keeps "Synced 12s ago" and the branch list fresh; a hidden panel reads nothing.
+    cx.timer.every(LABEL_EVERY, (cx) => cx.notify());
   }
 
-  // Reads the repo's worktrees and branches (from the repo as saved, so every worktree stays listed).
-  readWhere(cx, key, repo) {
-    if (this.reading[key] || !repo) return;
-    this.reading[key] = true;
+  // Reads the repo's worktrees and branches, most recently checked out first (from the linked repo, so every worktree stays listed).
+  readWhere(cx, repo) {
+    if (this.reading || !repo) return;
+    this.reading = true;
     return cx.spawn(async (cx) => {
-      try { this.where[key] = await listTargets(repoIO(cx, key || null), repo); this.whereAt[key] = Date.now(); }
+      try { this.where = await listTargets(shortIO, repo); this.whereAt = Date.now(); }
       catch { /* keep the last list */ }
-      finally { this.reading[key] = false; cx.notify(); }
+      finally { this.reading = false; cx.notify(); }
     });
   }
 
-  saveSettings(key, cx) {
-    const prev = settingsFor(shared(SETTINGS), key);
-    const cfg = normalizeSettings({ repo: this.repoInput.value(), dir: prev.repo === this.repoInput.value().trim() ? prev.dir : "" });
-    setIn(SETTINGS, key, cfg);
-    channel.request({ op: "fetch", key });
-    this.settingsOpen = false;
-    cx.notify();
-  }
-
   renderDetailsTab(cx) {
-    const t = theme(), key = activeKey(), c = context(key);
-    if (this.key !== key) { this.key = key; later(cx, () => channel.request({ op: "fetch", key })); }
-    const bump = shared(BUMP) ?? null;
-    if (c.cfg.repo && !this.reading[key] && (bump !== this.whereBump || Date.now() - (this.whereAt[key] ?? 0) > WHERE_EVERY - 3000)) {
-      this.whereBump = bump; later(cx, (cx) => this.readWhere(cx, key, c.cfg.repo));
-    }
-    // The settings fields start from the shown machine's settings, and again when the shown machine changes.
-    if (this.settingsKey !== key) {
-      this.settingsKey = key; this.settingsOpen = false;
-      later(cx, (cx) => { this.repoInput.set_value(c.cfg.repo); cx.notify(); });
-    }
-    // The commit message for Push follows the file count until the person edits it.
-    const st = c.state, auto = commitMessage(st?.repo ? changedFiles(st).length : 0, st?.host);
-    if (auto !== this.autoMessage) {
-      const wasAuto = !this.edited;
-      this.autoMessage = auto;
-      if (wasAuto) later(cx, (cx) => { this.msg.set_value(auto); this.edited = false; cx.notify(); });
+    const t = theme(), link = shared(LINK), runState = shared(RUN), kind = viewState({ link, run: runState });
+    if (link?.linked) {
+      const key = `${link.repo}|${link.dir}|${link.branch}`;
+      if (!this.reading && (key !== this.whereKey || Date.now() - this.whereAt > WHERE_EVERY - 3000)) {
+        this.whereKey = key; later(cx, (cx) => this.readWhere(cx, link.repo));
+      }
     }
     return renderDetails({
-      t, key, machine: machineName(key), on: c.on, cfg: c.cfg, state: c.state, busy: c.busy, kind: c.kind,
-      request: (op) => channel.request({ key, ...op }),
+      t, kind, link, run: runState, now: Date.now(), home: home(), where: this.where, search: this.search, query: this.query, open: this.open,
+      toggle: (cx) => { this.open = !this.open; cx.notify(); },
+      request: (op) => channel.request(op),
       close: find(layout(), PANEL) ? () => run("layout.hide", { id: PANEL }) : null,
-      msg: this.msg, auto, repoOpen: this.repoOpen, where: this.where[key] ?? null,
-      toggleRepo: (name, cx) => { this.repoOpen = { ...this.repoOpen, [name]: !this.repoOpen[name] }; cx.notify(); },
-      openSettings: (cx) => { this.settingsOpen = true; cx.notify(); },
-      settings: {
-        repo: this.repoInput, open: this.settingsOpen, forced: !c.cfg.repo,
-        browse: (cx) => cx.spawn(async (cx) => { const dir = await pickFolder({ prompt: "Use this folder" }).catch(() => null); if (dir) this.repoInput.set_value(dir); cx.notify(); }),
-        save: (cx) => this.saveSettings(key, cx),
-        toggle: (cx) => { this.settingsOpen = !this.settingsOpen; cx.notify(); },
-      },
     });
   }
 }

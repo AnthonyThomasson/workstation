@@ -707,3 +707,18 @@ test("the orchestrator is told to ask its questions with the built-in question t
   const text = prompt("orchestrator");
   assert.ok(text.includes("Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text."));
 });
+
+test("the orchestrator may commit the leftovers and plain-push the ticket branch only when the run page reports a stopped Merge", () => {
+  const text = prompt("orchestrator");
+  assert.match(text, /run page reports a stopped Merge/);
+  assert.match(text, /commit what is left/);
+  assert.ok(text.includes("`git -C /src/app-12-fix-the-login push origin workflow/12-fix-the-login`"));
+  assert.match(text, /never force-push, push the default branch or merge/);
+  assert.match(text, /rejected.*stop and ask the person/s);
+  assert.ok(text.includes("without merging into the default branch, pushing or opening a pull request yourself"));
+});
+
+test("the orchestrator gets no allow rule for git: a push or commit follows the person's permission mode", () => {
+  const argv = agentArgv("orchestrator", { agent: "claude", permissions: "ask" }, ["claude"], "/runs/1");
+  assert.ok(!argv.some((a) => /git (push|commit)/.test(a)));
+});
