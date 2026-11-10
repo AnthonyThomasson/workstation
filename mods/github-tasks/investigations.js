@@ -39,8 +39,8 @@ export const tabNameFor = (label) => String(label).slice(0, TAB_NAME_MAX).trimEn
 // investigate/fix-the-login-redirect-lq3k9f2: the slug of the first line (40 at most), then the time, so two on one subject never share a branch.
 export const investigationBranch = (description, now = Date.now()) => `investigate/${slug(firstLine(description), 40) || "investigation"}-${now.toString(36)}`;
 
-// The session's host tab name: its description's first line cut at 40 and trimmed, and " agents" (`New Task Orchestrator agents` with no description).
-export const investigationHostName = (description) => `${tabNameFor(firstLine(description) || "New Task Orchestrator")} agents`;
+// The session's host tab name: its description's first line cut at 40 and trimmed, and " agents" (`New task agents` with no description).
+export const investigationHostName = (description) => `${tabNameFor(firstLine(description) || "New task")} agents`;
 
 // `hc run` for the agent: in the background, owned by no tab (none of the herdr.space / herdr.tab labels that would adopt it into a
 // pane), labelled so it can be found again. Under `parent` (the session's host, bgrun.js) it outlives it and types no notes into it,

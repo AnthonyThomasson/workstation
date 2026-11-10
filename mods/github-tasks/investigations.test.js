@@ -69,16 +69,16 @@ test("#57 with a parent the agent outlives it, types no notes into it, and has n
 test("#57 the host tab is named for the first line of the description cut at 40, or New task", () => {
   assert.equal(investigationHostName("Fix the login redirect\nmore"), "Fix the login redirect agents");
   assert.equal(investigationHostName("  \n\n  Second line first"), "Second line first agents");
-  assert.equal(investigationHostName(""), "New Task Orchestrator agents");
-  assert.equal(investigationHostName(undefined), "New Task Orchestrator agents");
+  assert.equal(investigationHostName(""), "New task agents");
+  assert.equal(investigationHostName(undefined), "New task agents");
   const long = "Investigate why the sidebar flickers when a run ends";
   assert.equal(investigationHostName(long), `${long.slice(0, 40).trimEnd()} agents`);
 });
 
-test("#57 start with no description: the host is New Task Orchestrator agents", async () => {
+test("#57 start with no description: the host is New task agents", async () => {
   const f = fakeStart();
   await beginInvestigation(f.deps, { ...ARGS, description: "" });
-  assert.equal(f.hostCalls[0].name, "New Task Orchestrator agents");
+  assert.equal(f.hostCalls[0].name, "New task agents");
 });
 
 test("#57 the host carries its own label, never the agent's", () => {
