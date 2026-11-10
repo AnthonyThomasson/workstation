@@ -360,7 +360,7 @@ function fakeDone(s, { killed = { code: 0, stdout: "", stderr: "" }, stillLive =
     git: async (cwd, ...args) => { log.push(`git ${args.join(" ")}`.replace(s.workDir, "<wt>")); return git(cwd, ...args); },
     run: (name, args) => log.push(`${name} ${JSON.stringify(args)}`),
     load: () => saved, save: (list) => { saved = list; log.push("save"); }, clearSlot: () => log.push("clear slot"),
-    host: () => null, clearHost: () => log.push("clear host"),
+    host: () => null, clearHost: () => log.push("clear host"), clearAgents: () => log.push("clear agents"),
   };
   return { deps, log, saved: () => saved };
 }
@@ -373,7 +373,7 @@ test("Done ends the agent, removes the worktree, deletes the branch, forgets the
   assert.deepEqual(got, { done: true, error: null, closed: true });
   assert.deepEqual(f.log, [
     "git worktree list --porcelain", "git worktree list --porcelain", "git for-each-ref --format=%(refname) refs/heads/", "clear host",
-    "rm <home>/.herdr/investigations/inv-1", "hc kill t1", "hc rm t1", "git worktree remove --force <wt>", "git branch -D investigate/fix-it-abc", "save", "clear slot",
+    "rm <home>/.herdr/investigations/inv-1", "hc kill t1", "hc rm t1", "git worktree remove --force <wt>", "git branch -D investigate/fix-it-abc", "save", "clear slot", "clear agents",
     'space.close {"id":"s1","confirmed":true}',
   ]);
   assert.equal(existsSync(s.folder), false, "the session folder is gone");

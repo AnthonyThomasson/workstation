@@ -155,13 +155,13 @@ export async function beginInvestigation(deps, { agent, description, repo, groom
 // and prototype workers: found by label, so it works when the New Task agent has ended already), then its host, every prototype
 // worktree (`<workDir>--<job>` on `<branch>--<job>`), every `<branch>--*` branch and the session folder
 // (~/.herdr/investigations/<id>/). Then what Done always did: ends the agent, removes the worktree and deletes the branch, forgets
-// the entry and, as the very last step (the page lives in it), closes its space (confirmed, whatever else the person opened in it;
+// the entry, the tab's slot and the page's saved sub-agent rows and, as the very last step (the page lives in it), closes its space (confirmed, whatever else the person opened in it;
 // only the tab when it was moved to another space). Stops at the first thing that fails, with the reason and nothing after it done,
 // so Done can be pressed again: anything that is already gone (a terminal, host, worktree, branch or folder) counts as done.
 // Whatever isn't the session's own is refused before anything is ended or removed: a branch outside investigate/, the main
 // checkout, a worktree of the `<workDir>--` folders that isn't on a `<branch>--` branch.
 //   deps: { hc(args), terminals(), spaces(), panes(), slot() (the saved one), git(cwd, ...args), run(name, args), save(list), load(), clearSlot(),
-//           home, removeDir(path) -> { code, stderr } (rm -rf), host?() (the saved host record), clearHost?() }
+//           home, removeDir(path) -> { code, stderr } (rm -rf), host?() (the saved host record), clearHost?(), clearAgents?() (the page's saved sub-agent rows) }
 //   Resolves with { done, error, closed } (closed: false when no space or tab was found to close).
 export async function endInvestigation(deps, entry) {
   const { id, agent, repoRoot, workDir, branch } = entry;
@@ -216,6 +216,7 @@ export async function endInvestigation(deps, entry) {
 
   deps.save(withoutEntry(deps.load(), id));
   deps.clearSlot();
+  deps.clearAgents?.();
   if (parts && parts.space !== own) deps.run("tab.close", { id: parts.tab }); // not its own space: the person's other tabs stay
   else if (own) deps.run("space.close", { id: own, confirmed: true });
   else return { done: true, error: null, closed: false };

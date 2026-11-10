@@ -97,6 +97,7 @@ export class InvestigationPage {
           hc, terminals, spaces, panes, git, run,
           slot: () => shared(slotKey(this.id)), clearSlot: () => setShared(slotKey(this.id), null),
           load: () => shared(INVESTIGATIONS_KEY), save: (list) => setShared(INVESTIGATIONS_KEY, list),
+          clearAgents: () => setShared(agentsKey(this.id), null),
           host: () => shared(hostKey(this.id)), clearHost: () => setShared(hostKey(this.id), null),
           home: home(), removeDir: (path) => exec("rm", ["-rf", path]),
         }, { id: this.id, agent: this.agent, repoRoot: this.props.repoRoot, workDir: this.props.folder, branch: this.branch });
