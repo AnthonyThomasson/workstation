@@ -1,13 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   INVESTIGATION_LABEL, INVESTIGATIONS_KEY, beginInvestigation, checkStart, deleteBranch, endInvestigation, firstLine, investigationBranch,
   investigationId, investigationLabel, investigationRow, investigationRunArgs, investigationsFor, liveInvestigations, reapplyInvestigations, removeWorktree,
-  savedList, tabNameFor, unsafeToRemove, withEntry, withoutEntry,
+  prototypesOf, savedList, sessionFolder, tabNameFor, unsafeToRemove, withEntry, withoutEntry,
 } from "./investigations.js";
 import { placeholderArgv, slotKey } from "./bgrun.js";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
@@ -328,22 +328,39 @@ async function scratch() {
   sh(repo, "init", "-q", "-b", "main");
   sh(repo, ...ident, "commit", "-q", "--allow-empty", "-m", "first");
   const branch = "investigate/fix-it-abc";
-  const workDir = await prepareWorktree(git, repo, branch, worktreePath(repo, branch, join(dir, "home")));
-  return { dir, repo, branch, workDir };
+  const home = join(dir, "home");
+  const workDir = await prepareWorktree(git, repo, branch, worktreePath(repo, branch, home));
+  const folder = join(home, ".herdr", "investigations", "inv-1"); // the session folder: spawn script and prompts
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "spawn"), "#!/bin/sh\n");
+  return { dir, repo, branch, workDir, home, folder };
 }
 
-function fakeDone(s, { killed = { code: 0, stdout: "", stderr: "" }, stillLive = false, own = true, slot = { tab: "tA", left: "pA", space: "s1" } } = {}) {
+// A prototype worker's own worktree and branch, as `spawn worker` makes them: `<workDir>--<job>` on `<branch>--<job>`.
+const prototype = (s, job) => prepareWorktree(git, s.repo, `${s.branch}--${job}`, `${s.workDir}--${job}`);
+
+// `terms`: the live terminals of the core besides the agent (which `stillLive` keeps live); `stuck`: addresses that survive a kill.
+function fakeDone(s, { killed = { code: 0, stdout: "", stderr: "" }, stillLive = false, own = true, slot = { tab: "tA", left: "pA", space: "s1" }, terms = [], stuck = [] } = {}) {
   const log = [];
+  let ended = [];
   let saved = [{ id: "inv-1", label: "Fix it", repoRoot: s.repo, repo: "app", branch: s.branch, workDir: s.workDir, agent: "t1" }, E("other", "/r", "t5")];
   const spaces = own ? [{ id: "s1", tabs: [{ id: "tA" }] }, { id: "s0", tabs: [{ id: "tZ" }] }] : [{ id: "s0", tabs: [{ id: "tZ" }, { id: "tA" }] }];
   const panes = [{ pane: "pA", tab: "tA", terminal: "t8", cwd: s.workDir }, { pane: "pP", tab: "tA", mod: "github-tasks" }, { pane: "pZ", tab: "tZ", terminal: "t3", cwd: s.repo }];
   const deps = {
-    hc: async (a) => { log.push(`hc ${a.join(" ")}`); return a[0] === "kill" ? killed : { code: 0, stdout: "", stderr: "" }; },
-    terminals: () => (stillLive ? [{ address: "t1", state: "live" }] : []),
+    hc: async (a) => {
+      log.push(`hc ${a.join(" ")}`);
+      if (a[0] !== "kill") return { code: 0, stdout: "", stderr: "" };
+      if (stuck.includes(a[1])) return { code: 1, stdout: "", stderr: "terminal busy" };
+      if (a[1] !== "t1") ended.push(a[1]);
+      return a[1] === "t1" ? killed : { code: 0, stdout: "", stderr: "" };
+    },
+    terminals: () => [...(stillLive ? [{ address: "t1", state: "live" }] : []), ...terms.filter((k) => !ended.includes(k.address))],
+    home: s.home, removeDir: async (path) => { log.push(`rm ${path.replace(s.home, "<home>")}`); const r = spawnSync("rm", ["-rf", path]); return { code: r.status, stdout: "", stderr: String(r.stderr) }; },
     spaces: () => spaces, panes: () => panes, slot: () => slot,
     git: async (cwd, ...args) => { log.push(`git ${args.join(" ")}`.replace(s.workDir, "<wt>")); return git(cwd, ...args); },
     run: (name, args) => log.push(`${name} ${JSON.stringify(args)}`),
     load: () => saved, save: (list) => { saved = list; log.push("save"); }, clearSlot: () => log.push("clear slot"),
+    host: () => null, clearHost: () => log.push("clear host"),
   };
   return { deps, log, saved: () => saved };
 }
@@ -355,9 +372,11 @@ test("Done ends the agent, removes the worktree, deletes the branch, forgets the
   const got = await endInvestigation(f.deps, entryOf(s));
   assert.deepEqual(got, { done: true, error: null, closed: true });
   assert.deepEqual(f.log, [
-    "git worktree list --porcelain", "hc kill t1", "hc rm t1", "git worktree remove --force <wt>", "git branch -D investigate/fix-it-abc", "save", "clear slot",
+    "git worktree list --porcelain", "git worktree list --porcelain", "git for-each-ref --format=%(refname) refs/heads/", "clear host",
+    "rm <home>/.herdr/investigations/inv-1", "hc kill t1", "hc rm t1", "git worktree remove --force <wt>", "git branch -D investigate/fix-it-abc", "save", "clear slot",
     'space.close {"id":"s1","confirmed":true}',
   ]);
+  assert.equal(existsSync(s.folder), false, "the session folder is gone");
   assert.equal(existsSync(s.workDir), false, "the worktree is gone");
   assert.equal(sh(s.repo, "branch", "--list", s.branch), "", "the branch is gone");
   assert.deepEqual(f.saved().map((e) => e.id), ["other"], "only its own entry was removed");
@@ -405,7 +424,7 @@ test("Done refuses an entry that isn't an investigation's: a branch outside inve
     const got = await endInvestigation(f.deps, { ...entryOf(s), ...bad });
     assert.equal(got.done, false, JSON.stringify(bad));
     assert.match(got.error, /^Done refused: .*Nothing was ended or removed/, JSON.stringify(bad));
-    assert.deepEqual(f.log.filter((l) => !l.startsWith("git worktree list")), [], `nothing done for ${JSON.stringify(bad)}`);
+    assert.deepEqual(f.log.filter((l) => !l.startsWith("git worktree list") && !l.startsWith("git for-each-ref")), [], `nothing done for ${JSON.stringify(bad)}`);
   }
   assert.equal(existsSync(s.workDir), true, "the worktree is still there");
   assert.notEqual(sh(s.repo, "branch", "--list", s.branch), "", "the branch is still there");
@@ -427,7 +446,8 @@ test("Done stops when the agent can't be ended: nothing is removed", async () =>
   const got = await endInvestigation(f.deps, entryOf(s));
   assert.equal(got.done, false);
   assert.match(got.error, /Couldn't end the agent t1: terminal busy/);
-  assert.deepEqual(f.log, ["git worktree list --porcelain", "hc kill t1"], "the guard only reads");
+  assert.deepEqual(f.log.slice(-2), ["rm <home>/.herdr/investigations/inv-1", "hc kill t1"], "the agent is ended last of what is ended, so a stuck one leaves the rest for another try");
+  assert.equal(existsSync(s.workDir), true);
   assert.equal(existsSync(s.workDir), true);
   assert.equal(f.saved().some((e) => e.id === "inv-1"), true, "still tracked");
 });
@@ -466,6 +486,211 @@ test("Done says why when the branch can't be deleted", async () => {
   assert.equal(got.done, false);
   assert.match(got.error, /couldn't delete the branch investigate\/fix-it-abc: error: cannot delete/);
   assert.equal(f.saved().some((e) => e.id === "inv-1"), true);
+});
+
+// ---- Done discards everything the session started --------------------------------------------------------
+
+const sub = (address, role = "investigator", id = "inv-1") => ({ address, state: "live", labels: { [INVESTIGATION_LABEL]: id, "herdr.role": role } });
+
+test("Done ends every sub-agent of the session (found by label, not parentage), but no other session's and not a terminal it doesn't own", async () => {
+  const s = await scratch();
+  const terms = [sub("t2"), sub("t3", "worker"), sub("t9", "worker", "inv-other"), { address: "t7", state: "live", labels: {} }, { address: "t6", state: "ended", labels: { [INVESTIGATION_LABEL]: "inv-1" } }];
+  const f = fakeDone(s, { terms });
+  assert.equal((await endInvestigation(f.deps, entryOf(s))).done, true);
+  const kills = f.log.filter((l) => l.startsWith("hc kill"));
+  assert.deepEqual(kills, ["hc kill t2", "hc kill t3", "hc kill t1"], "sub-agents before the New Task agent");
+  assert.deepEqual(f.log.filter((l) => l.startsWith("hc rm")), ["hc rm t2", "hc rm t3", "hc rm t1"]);
+});
+
+test("Done ends the sub-agents even when the New Task agent has already ended", async () => {
+  const s = await scratch();
+  const f = fakeDone(s, { terms: [sub("t2"), sub("t3", "worker")], killed: { code: 1, stdout: "", stderr: "no such terminal" } });
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.deepEqual(got, { done: true, error: null, closed: true });
+  assert.ok(f.log.includes("hc kill t2") && f.log.includes("hc kill t3"));
+  assert.deepEqual(f.deps.terminals(), []);
+});
+
+test("Done leaves the New Task agent's own terminal to its own step: it isn't counted among the sub-agents", async () => {
+  const s = await scratch();
+  const agent = { address: "t1", state: "live", labels: { [INVESTIGATION_LABEL]: "inv-1", "herdr.role": "investigation" } };
+  const f = fakeDone(s, { terms: [agent, sub("t2")] });
+  await endInvestigation(f.deps, entryOf(s));
+  assert.equal(f.log.filter((l) => l === "hc kill t1").length, 1);
+});
+
+test("Done stops when a sub-agent won't die, naming it: nothing else is removed, and pressing again resumes", async () => {
+  const s = await scratch();
+  await prototype(s, "api");
+  const f = fakeDone(s, { terms: [sub("t2"), sub("t3", "worker")], stuck: ["t3"] });
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.equal(got.done, false);
+  assert.match(got.error, /Couldn't end t3: terminal busy/);
+  assert.ok(f.log.includes("hc kill t2"), "the other one was still ended");
+  assert.ok(!f.log.includes("hc kill t1"), "the agent is untouched");
+  assert.equal(existsSync(`${s.workDir}--api`), true);
+  assert.equal(existsSync(s.folder), true);
+  assert.equal(f.saved().some((e) => e.id === "inv-1"), true);
+  const again = fakeDone(s, { terms: [sub("t3", "worker")] }); // t3 died meanwhile; t2 is gone already
+  assert.equal((await endInvestigation(again.deps, entryOf(s))).done, true);
+  assert.equal(existsSync(`${s.workDir}--api`), false);
+});
+
+test("Done ends the session's host through endHost, and a host that is already gone is done", async () => {
+  const s = await scratch();
+  const host = { address: "th", state: "live", labels: { "herdr.workflow.host": "inv-1", "herdr.role": "host" } };
+  const f = fakeDone(s, { terms: [host, sub("t2")] });
+  f.deps.panes = () => [{ pane: "pH", tab: "tH", terminal: "th" }, ...fakeDone(s).deps.panes()];
+  f.deps.host = () => ({ tab: "tH", space: "s1", created: false });
+  assert.equal((await endInvestigation(f.deps, entryOf(s))).done, true);
+  assert.ok(f.log.indexOf("hc kill t2") < f.log.indexOf("hc kill th") && f.log.indexOf("hc kill th") < f.log.indexOf("hc kill t1"), "sub-agents, host, then the agent");
+  assert.ok(f.log.includes('tab.close {"id":"tH","confirmed":true}'), "the host's tab is closed");
+  assert.ok(f.log.includes("clear host"));
+  const none = fakeDone(s); // no host at all this time (and its folder already gone)
+  assert.equal((await endInvestigation(none.deps, entryOf(s))).done, true);
+});
+
+test("Done stops when the host won't die", async () => {
+  const s = await scratch();
+  const host = { address: "th", state: "live", labels: { "herdr.workflow.host": "inv-1" } };
+  const f = fakeDone(s, { terms: [host], stuck: ["th"] });
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.equal(got.done, false);
+  assert.match(got.error, /host th: terminal busy/);
+  assert.equal(existsSync(s.workDir), true);
+  assert.ok(!f.log.includes("clear host"));
+});
+
+test("Done removes every prototype worktree and every <branch>--* branch, leaving the session's own worktree for its usual step", async () => {
+  const s = await scratch();
+  const api = await prototype(s, "api"), ui = await prototype(s, "ui");
+  assert.equal(api, `${s.workDir}--api`);
+  assert.equal(sh(s.repo, "branch", "--list", `${s.branch}--*`).split("\n").length, 2);
+  sh(api, ...ident, "commit", "-q", "--allow-empty", "-m", "prototype work");
+  execFileSync("sh", ["-c", `echo hi > "${ui}/new.txt"`]); // uncommitted work goes too
+  const f = fakeDone(s);
+  assert.deepEqual(await endInvestigation(f.deps, entryOf(s)), { done: true, error: null, closed: true });
+  assert.equal(existsSync(api), false);
+  assert.equal(existsSync(ui), false);
+  assert.equal(sh(s.repo, "branch", "--list", "investigate/*"), "", "no investigate branch is left");
+  assert.equal(sh(s.repo, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ")).length, 1, "only the main checkout is left");
+});
+
+test("Done deletes a prototype branch whose worktree is already gone, and one that never had a worktree", async () => {
+  const s = await scratch();
+  await prototype(s, "api");
+  execFileSync("rm", ["-rf", `${s.workDir}--api`]);
+  sh(s.repo, "branch", `${s.branch}--lonely`);
+  const f = fakeDone(s);
+  assert.equal((await endInvestigation(f.deps, entryOf(s))).done, true);
+  assert.equal(sh(s.repo, "branch", "--list", "investigate/*"), "");
+});
+
+test("Done leaves other branches and worktrees alone: a lookalike branch, another session's prototypes, the main checkout", async () => {
+  const s = await scratch();
+  sh(s.repo, "branch", "investigate/fix-it-abcd"); // shares the text but not the `--`
+  sh(s.repo, "branch", "feature/keep");
+  sh(s.repo, "branch", "investigate/fix-it-abc-2"); // another session whose name starts like this one
+  const other = await prepareWorktree(git, s.repo, "investigate/other-zzz--api", `${s.dir}/other--api`);
+  const f = fakeDone(s);
+  assert.equal((await endInvestigation(f.deps, entryOf(s))).done, true);
+  const left = sh(s.repo, "branch", "--format=%(refname:short)").split("\n").sort();
+  assert.deepEqual(left, ["feature/keep", "investigate/fix-it-abc-2", "investigate/fix-it-abcd", "investigate/other-zzz--api", "main"]);
+  assert.equal(existsSync(other), true);
+  assert.equal(existsSync(s.repo), true);
+  assert.equal(sh(s.repo, "rev-parse", "--abbrev-ref", "HEAD"), "main", "the main checkout is untouched");
+});
+
+test("Done refuses a worktree in the session's prototype folders that isn't on one of its branches, and removes nothing", async () => {
+  const s = await scratch();
+  await prototype(s, "api");
+  sh(s.repo, "branch", "feature/mine");
+  sh(s.repo, "worktree", "add", "-q", `${s.workDir}--mine`, "feature/mine");
+  const f = fakeDone(s, { terms: [sub("t2")] });
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.equal(got.done, false);
+  assert.match(got.error, /^Done refused: the worktree .*--mine is on feature\/mine.*Nothing was ended or removed/);
+  assert.ok(!f.log.some((l) => l.startsWith("hc kill") || l.startsWith("rm ") || l.includes("remove") || l.includes("branch -D")), "nothing was touched");
+  assert.equal(existsSync(`${s.workDir}--api`), true);
+  assert.equal(existsSync(`${s.workDir}--mine`), true);
+  assert.equal(existsSync(s.folder), true);
+});
+
+test("Done refuses a main checkout in the prototype folders and a prototype branch outside investigate/", async () => {
+  const s = await scratch();
+  const git2 = async (cwd, ...args) => (args[0] === "worktree" && args[1] === "list" ? { code: 0, stdout: `worktree ${s.workDir}--x\nHEAD abc\nbranch refs/heads/main\n\nworktree ${s.workDir}--y\nHEAD abc\nbranch refs/heads/investigate/fix-it-abc--y\n`, stderr: "" } : git(cwd, ...args));
+  const got = await prototypesOf(git2, entryOf(s));
+  assert.match(got.refused, /--x is the repo's main checkout/);
+  const odd = async (cwd, ...args) => (args[0] === "for-each-ref" ? { code: 0, stdout: "refs/heads/investigate/fix-it-abc--y\n", stderr: "" } : git(cwd, ...args));
+  assert.deepEqual((await prototypesOf(odd, { ...entryOf(s), branch: "main" })).branches, [], "a branch that doesn't start with investigate/ is never matched as the session's");
+  const mainBranch = await prototypesOf(odd, { ...entryOf(s), branch: "investigate/fix-it-abc" });
+  assert.deepEqual(mainBranch.branches, ["investigate/fix-it-abc--y"]);
+});
+
+test("Done says why when a prototype worktree or branch can't be removed, keeps the rest for another try, and works again after", async () => {
+  const s = await scratch();
+  const api = await prototype(s, "api");
+  const ui = await prototype(s, "ui");
+  const f = fakeDone(s);
+  const real = f.deps.git;
+  f.deps.git = async (cwd, ...args) => (args[0] === "worktree" && args[1] === "remove" && args[3] === ui ? { code: 128, stdout: "", stderr: "fatal: locked" } : real(cwd, ...args));
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.equal(got.done, false);
+  assert.match(got.error, /Couldn't remove the worktree .*--ui: fatal: locked/);
+  assert.equal(existsSync(api), false, "what came first is gone");
+  assert.equal(existsSync(ui), true);
+  assert.equal(existsSync(s.workDir), true, "the session's own worktree waits");
+  assert.equal(existsSync(s.folder), true);
+  assert.equal(f.saved().some((e) => e.id === "inv-1"), true);
+  const again = fakeDone(s);
+  assert.deepEqual(await endInvestigation(again.deps, entryOf(s)), { done: true, error: null, closed: true });
+  assert.equal(sh(s.repo, "branch", "--list", "investigate/*"), "");
+});
+
+test("Done says why when a prototype branch can't be deleted", async () => {
+  const s = await scratch();
+  await prototype(s, "api");
+  const f = fakeDone(s);
+  const real = f.deps.git;
+  f.deps.git = async (cwd, ...args) => (args[0] === "branch" && args[2] === `${s.branch}--api` ? { code: 1, stdout: "", stderr: "error: cannot delete" } : real(cwd, ...args));
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.equal(got.done, false);
+  assert.match(got.error, /couldn't delete the branch investigate\/fix-it-abc--api: error: cannot delete/);
+  assert.equal(existsSync(s.folder), true);
+  assert.equal(existsSync(s.workDir), true);
+});
+
+test("Done removes the session folder, ~/.herdr/investigations/<id>/, with what is in it, and nothing outside it", async () => {
+  const s = await scratch();
+  writeFileSync(join(s.folder, "worker.md"), "x");
+  const neighbour = join(s.home, ".herdr", "investigations", "inv-2");
+  mkdirSync(neighbour, { recursive: true });
+  const f = fakeDone(s);
+  assert.equal((await endInvestigation(f.deps, entryOf(s))).done, true);
+  assert.equal(existsSync(s.folder), false);
+  assert.equal(existsSync(neighbour), true, "another session's folder is not touched");
+  assert.equal(existsSync(s.home), true);
+  assert.equal(sessionFolder("/h/", "inv-abc1"), "/h/.herdr/investigations/inv-abc1");
+  for (const bad of ["", "..", "../x", "inv-", "inv-a/b", "inv-1/..", undefined, "x"]) assert.equal(sessionFolder("/h", bad), null, String(bad));
+  assert.equal(sessionFolder("", "inv-1"), null);
+});
+
+test("Done with the session folder already gone goes on; one that can't be removed is said, with the rest kept for another try", async () => {
+  const s = await scratch();
+  execFileSync("rm", ["-rf", s.folder]);
+  assert.equal((await endInvestigation(fakeDone(s).deps, entryOf(s))).done, true, "gone counts as done");
+  const t = await scratch();
+  await prototype(t, "api");
+  const f = fakeDone(t);
+  f.deps.removeDir = async () => ({ code: 1, stdout: "", stderr: "rm: permission denied" });
+  const got = await endInvestigation(f.deps, entryOf(t));
+  assert.equal(got.done, false);
+  assert.match(got.error, /Couldn't remove the session folder .*inv-1: rm: permission denied/);
+  assert.equal(existsSync(t.workDir), true, "the session's own worktree waits");
+  assert.equal(f.saved().some((e) => e.id === "inv-1"), true);
+  const bad = await endInvestigation(fakeDone(t).deps, { ...entryOf(t), id: "../../x" });
+  assert.equal(bad.done, false);
+  assert.match(bad.error, /^Done refused: .*Nothing was ended or removed/);
 });
 
 test("removeWorktree and deleteBranch treat what is already gone as done", async () => {

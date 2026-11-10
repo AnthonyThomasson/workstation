@@ -1,12 +1,13 @@
 // An Investigation: a New Task agent that works like a workflow run. It has a branch and a git worktree of its own
 // (investigate/<what it is about>-<time>), runs in the background owned by no tab (hc run --bg, like a run's orchestrator),
 // and is shown in the first tab of a space of its own at the worktree, which the Spaces sidebar nests under the repo's.
-// Done ends the agent, closes that space, removes the worktree and deletes the branch. Pure apart from the deps it is handed
+// Done ends the agent and everything it started (investigators and prototype workers, their worktrees and branches, its host and
+// its session folder), closes that space, removes the worktree and deletes the branch. Pure apart from the deps it is handed
 // (no Herdr imports), so node --test runs it; investigate.js is Herdr's side, investigation-page.js the page in the tab.
 import { FOLDER_LABEL, ROLE_LABEL } from "./run.js";
 import { slug } from "./workflow-model.js";
 import { groomArgv } from "./model.js";
-import { findTicketSpace, launchRun, runTabParts } from "./bgrun.js";
+import { endHost, findTicketSpace, launchRun, runTabParts } from "./bgrun.js";
 import { row as terminalRow } from "./runview.js";
 
 // The list of investigations still to track (shared state): [{ id, label, repoRoot, repo, branch, workDir, agent }].
@@ -150,11 +151,17 @@ export async function beginInvestigation(deps, { agent, description, repo, groom
 
 // ---- Done ---------------------------------------------------------------------------------------------
 
-// Takes an investigation down: ends the agent, removes the worktree and deletes the branch, forgets the entry and, as the very
-// last step (the page lives in it), closes its space (confirmed, whatever else the person opened in it; only the tab when it was
-// moved to another space). Stops at the first thing that fails, with the reason and nothing after it done, so Done can be
-// pressed again: ending an agent that is gone, removing a worktree that is gone and deleting a branch that is gone all count as done.
-//   deps: { hc(args), terminals(), spaces(), panes(), slot() (the saved one), git(cwd, ...args), run(name, args), save(list), load(), clearSlot() }
+// Takes an investigation down. First everything the session started: every live terminal labelled with its id (the investigators
+// and prototype workers: found by label, so it works when the New Task agent has ended already), then its host, every prototype
+// worktree (`<workDir>--<job>` on `<branch>--<job>`), every `<branch>--*` branch and the session folder
+// (~/.herdr/investigations/<id>/). Then what Done always did: ends the agent, removes the worktree and deletes the branch, forgets
+// the entry and, as the very last step (the page lives in it), closes its space (confirmed, whatever else the person opened in it;
+// only the tab when it was moved to another space). Stops at the first thing that fails, with the reason and nothing after it done,
+// so Done can be pressed again: anything that is already gone (a terminal, host, worktree, branch or folder) counts as done.
+// Whatever isn't the session's own is refused before anything is ended or removed: a branch outside investigate/, the main
+// checkout, a worktree of the `<workDir>--` folders that isn't on a `<branch>--` branch.
+//   deps: { hc(args), terminals(), spaces(), panes(), slot() (the saved one), git(cwd, ...args), run(name, args), save(list), load(), clearSlot(),
+//           home, removeDir(path) -> { code, stderr } (rm -rf), host?() (the saved host record), clearHost?() }
 //   Resolves with { done, error, closed } (closed: false when no space or tab was found to close).
 export async function endInvestigation(deps, entry) {
   const { id, agent, repoRoot, workDir, branch } = entry;
@@ -163,10 +170,38 @@ export async function endInvestigation(deps, entry) {
 
   const refused = await unsafeToRemove(deps.git, entry);
   if (refused) return fail(`Done refused: ${refused}. Nothing was ended or removed.`);
+  const prototypes = await prototypesOf(deps.git, entry);
+  if (prototypes.refused) return fail(`Done refused: ${prototypes.refused}. Nothing was ended or removed.`);
+  const folder = sessionFolder(deps.home, id);
+  if (!folder) return fail(`Done refused: the session id ${id || "(none)"} isn't an investigation's, so its folder can't be found. Nothing was ended or removed.`);
   const live = () => (deps.terminals() ?? []).some((k) => k.state === "live" && k.address === agent);
 
+  // Everything the session started, found by label (the agent itself is ended below, as it always was).
+  const subs = () => (deps.terminals() ?? []).filter((k) => k.state === "live" && k.labels?.[INVESTIGATION_LABEL] === id && k.address !== agent && k.labels?.[ROLE_LABEL] !== INVESTIGATION_ROLE);
+  const stuck = [];
+  for (const k of subs()) {
+    const r = await deps.hc(["kill", k.address]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+    if (r.code !== 0 && subs().some((x) => x.address === k.address)) stuck.push(`${k.address}: ${said(r) || "kill failed"}`);
+    await deps.hc(["rm", k.address]).catch(() => {});
+  }
+  if (stuck.length) return fail(`Couldn't end ${stuck.join("; ")}. Nothing else was removed; end ${stuck.length > 1 ? "them" : "it"} with hc kill.`);
+  const hosted = await endHost({ id, hc: deps.hc, terminals: deps.terminals, run: deps.run, spaces: deps.spaces(), panes: deps.panes(), record: deps.host?.() ?? null });
+  if (hosted.error) return fail(`${hosted.error}. Nothing else was removed; end it with hc kill.`);
+  deps.clearHost?.();
+
+  for (const w of prototypes.worktrees) {
+    const gone = await removeWorktree(deps.git, repoRoot, w);
+    if (gone) return fail(gone);
+  }
+  for (const b of prototypes.branches) {
+    const gone = await deleteBranch(deps.git, repoRoot, b);
+    if (gone) return fail(gone);
+  }
+  const rmd = await Promise.resolve(deps.removeDir(folder)).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+  if (rmd && rmd.code !== 0) return fail(`Couldn't remove the session folder ${folder}: ${said(rmd) || "rm failed"}. Press Done again once that is fixed.`);
+
   const killed = await deps.hc(["kill", agent]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
-  if (killed.code !== 0 && live()) return fail(`Couldn't end the agent ${agent}: ${said(killed) || "kill failed"}. Nothing else was removed; end it with hc kill.`);
+  if (killed.code !== 0 && live()) return fail(`Couldn't end the agent ${agent}: ${said(killed) || "kill failed"}. Its worktree and branch were kept; end it with hc kill, then press Done again.`);
   await deps.hc(["rm", agent]).catch(() => {});
 
   // Where its tab is, read before anything is closed.
@@ -185,6 +220,45 @@ export async function endInvestigation(deps, entry) {
   else if (own) deps.run("space.close", { id: own, confirmed: true });
   else return { done: true, error: null, closed: false };
   return { done: true, error: null, closed: true };
+}
+
+// The session's folder, ~/.herdr/investigations/<id>/, which holds its spawn script and prompts: null unless the id is an
+// investigation's own (inv-<base 36>), so nothing outside ~/.herdr/investigations can ever be named.
+export function sessionFolder(home, id) {
+  if (!/^inv-[a-z0-9]+$/.test(String(id ?? "")) || !String(home ?? "").replace(/\/+$/, "")) return null;
+  return `${String(home).replace(/\/+$/, "")}/.herdr/investigations/${id}`;
+}
+
+// What the session's prototype workers made: the worktrees of `git worktree list` whose folder starts `<workDir>--` and whose
+// branch starts `<branch>--`, and every branch starting `<branch>--` (a worker's worktree may be gone while its branch isn't).
+// A worktree in those folders that is on some other branch, or none, isn't the session's: it is `refused`, with why, and so is
+// any branch that isn't an investigate/ one. The main checkout is never listed. Resolves with { worktrees, branches, refused }.
+export async function prototypesOf(git, { repoRoot, workDir, branch }) {
+  const clean = (p) => String(p ?? "").replace(/\/+$/, "");
+  const folderPrefix = `${clean(workDir)}--`, branchPrefix = `${branch}--`;
+  const out = { worktrees: [], branches: [], refused: null };
+  const list = await git(repoRoot, "worktree", "list", "--porcelain");
+  if (list.code !== 0) return { ...out, refused: `couldn't list the worktrees: ${String(list.stderr || list.stdout || "").trim() || "git failed"}` };
+  const blocks = list.stdout.split("\n\n").map((b) => b.split("\n"));
+  const main = blocks[0]?.find((l) => l.startsWith("worktree "))?.slice(9);
+  for (const lines of blocks) {
+    const path = clean(lines.find((l) => l.startsWith("worktree "))?.slice(9));
+    if (!path.startsWith(folderPrefix)) continue;
+    const ref = lines.find((l) => l.startsWith("branch "))?.slice(7) ?? "";
+    const name = ref.replace(/^refs\/heads\//, "");
+    if (path === clean(main) || path === clean(repoRoot)) return { ...out, refused: `${path} is the repo's main checkout` };
+    if (!name.startsWith("investigate/") || !name.startsWith(branchPrefix)) return { ...out, refused: `the worktree ${path} is on ${name || "no branch"}, not one of this session's ${branchPrefix}... branches` };
+    out.worktrees.push(path);
+  }
+  const refs = await git(repoRoot, "for-each-ref", "--format=%(refname)", "refs/heads/");
+  if (refs.code !== 0) return { ...out, refused: `couldn't list the branches: ${String(refs.stderr || refs.stdout || "").trim() || "git failed"}` };
+  for (const line of refs.stdout.split("\n")) {
+    const name = line.trim().replace(/^refs\/heads\//, "");
+    if (!name.startsWith(branchPrefix)) continue;
+    if (!name.startsWith("investigate/")) return { ...out, refused: `the branch ${name} isn't an investigation's (investigate/...)` };
+    out.branches.push(name);
+  }
+  return out;
 }
 
 // Done removes a worktree with --force and deletes a branch with -D, so before anything is touched it makes sure the entry points at an

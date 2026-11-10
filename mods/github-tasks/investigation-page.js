@@ -1,11 +1,11 @@
 // One Investigation, beside its agent: the mod pane investigate.js opens to the right of the agent's terminal (props.role
 // "investigation"). It looks like the run page's header (the session's title, its branch, its agent's status) with a single
-// Done button, which ends the agent, closes the space, removes the worktree and deletes the branch (investigations.js endInvestigation).
+// Done button, which ends the agent and everything it started, closes the space, removes the worktree and deletes the branch (investigations.js endInvestigation).
 // Not a View of its own: main.js builds one in init, redraws it on a timer and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, hc, panes, run, setShared, shared, spaces, terminals, theme } from "herdr";
-import { peekSpace, slotFromPage, slotKey } from "./bgrun.js";
+import { exec, hc, home, panes, run, setShared, shared, spaces, terminals, theme } from "herdr";
+import { hostKey, peekSpace, slotFromPage, slotKey } from "./bgrun.js";
 import { investigationAgentsFor, investigationQueries } from "./investigation-agents.js";
 import { INVESTIGATIONS_KEY, endInvestigation } from "./investigations.js";
 import { orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
@@ -97,6 +97,8 @@ export class InvestigationPage {
           hc, terminals, spaces, panes, git, run,
           slot: () => shared(slotKey(this.id)), clearSlot: () => setShared(slotKey(this.id), null),
           load: () => shared(INVESTIGATIONS_KEY), save: (list) => setShared(INVESTIGATIONS_KEY, list),
+          host: () => shared(hostKey(this.id)), clearHost: () => setShared(hostKey(this.id), null),
+          home: home(), removeDir: (path) => exec("rm", ["-rf", path]),
         }, { id: this.id, agent: this.agent, repoRoot: this.props.repoRoot, workDir: this.props.folder, branch: this.branch });
         if (!result.done) this.error = result.error;
       } catch (e) {
@@ -119,7 +121,7 @@ export class InvestigationPage {
     const button = h_flex().id("investigation-done").h(26).px(10).items_center().rounded(6).text_size(S().secondary).font_medium()
       .when(!this.busy, (el) => el.bg(t.selected).cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => this.done(cx)))
       .when(this.busy, (el) => el.text_color(t.muted))
-      .tooltip(`Ends the agent, closes this space, removes its worktree and deletes the branch ${this.branch}.`)
+      .tooltip(`Ends the agent and everything it started, closes this space, removes its worktrees, session folder and branches (${this.branch}).`)
       .child(this.busy ? "Finishing…" : "Done");
     return v_flex().id("investigation").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
       .child(v_flex().flex_none().px(16).py(12).gap(4).border_b(1).border_color(t.border)
