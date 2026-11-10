@@ -170,7 +170,7 @@ export function checkTask(after, statusOptions = []) {
   return null;
 }
 
-// ---- New Task Orchestrator ---------------------------------------------------------------------------------------
+// ---- New Task Orchestrator ------------------------------------------------------------------------------
 // The one sentence every prompt that asks the person questions uses.
 export const ASK_WITH_TOOL = "Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text.";
 

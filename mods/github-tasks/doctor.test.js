@@ -126,7 +126,7 @@ test("each missing workflow agent is one issue listing every role that uses it",
   ] };
   const issues = diagnose(healthy({ workflows, groomerAgent: "gemini" }));
   assert.deepEqual(issues.map((i) => i.agent), ["gemini"]);
-  assert.deepEqual(issues[0].usedBy, ["New Task Orchestrator", "Bug Task Orchestrator", "Bug reviewer", "Story worker", "Story investigator"]);
+  assert.deepEqual(issues[0].usedBy, ["New Task Orchestrator", "Task Orchestrator of Bug", "reviewer of Bug", "worker of Story", "investigator of Story"]);
 });
 
 test("an unknown project, repo or statuses carry the last check's project issues", () => {

@@ -96,7 +96,7 @@ function checkAgents(agents, groomerAgent, items) {
   const uses = new Map(); // agent key -> what uses it, in the order found
   const add = (agent, user) => { if (agent && agent !== CUSTOM && missing.has(agent)) uses.set(agent, [...(uses.get(agent) ?? []), user]); };
   add(groomerAgent, "New Task Orchestrator");
-  for (const w of items) for (const role of ROLES) add(w[role]?.agent, `${w.name} ${role === "orchestrator" ? "Task Orchestrator" : ROLE_LABELS[role].toLowerCase()}`);
+  for (const w of items) for (const role of ROLES) add(w[role]?.agent, `${role === "orchestrator" ? "Task Orchestrator" : ROLE_LABELS[role].toLowerCase()} of ${w.name}`);
   return [...uses].map(([agent, usedBy]) => ({
     kind: "agent-missing", agent, usedBy, message: `The agent "${agent}" isn't installed (used by ${usedBy.join(", ")}).`,
   }));
