@@ -103,9 +103,8 @@ test("the editor opens as a full-window overlay the mod draws itself, with the t
   });
 });
 
-test("the overlay's props keep the autoStart and local extras", () => {
-  const o = editorOverlay({ role: "editor", local: { mainRoot: "/r" }, autoStart: true });
-  assert.equal(o.props.autoStart, true);
+test("the overlay's props keep the local extra", () => {
+  const o = editorOverlay({ role: "editor", local: { mainRoot: "/r" } });
   assert.deepEqual(o.props.local, { mainRoot: "/r" });
   assert.equal(o.props.popup, true);
 });

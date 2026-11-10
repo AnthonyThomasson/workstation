@@ -6,12 +6,12 @@
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
 // workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket, in a popup (props.popup)
 // opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow in the center (workflow-editor.js); "run", a started
-// workflow's agents, beside its orchestrator (run-page.js); "investigation", a New Task session's Done button, beside its agent (investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (new-task.js); "prompt", one read-only agent prompt (prompts-page.js).
+// workflow's agents, beside its orchestrator (run-page.js); "investigation", a New Task session's Done button, beside its agent (investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, notify, shared, setShared, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
 import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, TASK_SOURCE } from "./model.js";
-import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField } from "./loader.js";
+import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems } from "./loader.js";
 import { installedAgents } from "./groom.js";
 import { setupProject, setupNote } from "./project-setup.js";
 import { S, icon, stop, note, iconButton, action, gh, later } from "./ui.js";
@@ -29,13 +29,15 @@ import { RunPage } from "./run-page.js";
 import { PromptPage } from "./prompts-page.js";
 import { WorkflowList } from "./workflow-list.js";
 import { loadWorkflows } from "./workflow-env.js";
-import { startRun, liveRunFor, viewRun, reconnectRuns } from "./start.js";
+import { liveRunFor, viewRun, reconnectRuns } from "./start.js";
 import { investigationsHere, reconnectInvestigations, viewInvestigation } from "./investigate.js";
 import { investigationRow } from "./investigations.js";
 import { statusColor, statusLabel } from "./runview.js";
 import { InvestigationPage } from "./investigation-page.js";
 import { NewTaskPage } from "./new-task.js";
 import { AGENT_KEY, newTaskOverlay, newTaskProps, chooseAgent } from "./new-task-dialog.js";
+import { StartPage, startChosen } from "./start-dialog-view.js";
+import { cantStartHere, startOverlay, startProps } from "./start-dialog.js";
 import { initialOpen, investigationsAlone, sectionPlan } from "./sections.js";
 import { startDoctor } from "./doctor-env.js";
 import { DOCTOR_KEY, doctorFor } from "./doctor.js";
@@ -90,6 +92,7 @@ export default class GitHubTasks extends View {
       return;
     }
     if (this.role === "new-task") { this.newTask = new NewTaskPage(blockProps(), cx); return; }
+    if (this.role === "start") { this.startPage = new StartPage(blockProps(), cx); return; }
     if (this.role === "prompt") { this.promptPage = new PromptPage(blockProps()); return; }
     if (this.role === "settings") {
       this.settingsKey = null;
@@ -265,6 +268,7 @@ export default class GitHubTasks extends View {
     if (this.role === "run") return this.runPage.render(cx);
     if (this.role === "investigation") return this.investigationPage.render(cx);
     if (this.role === "new-task") return this.newTask.render(cx);
+    if (this.role === "start") return this.startPage.render(cx);
     if (this.role === "prompt") return this.promptPage.render(cx);
     if (this.role === "settings") return this.renderSettings(cx);
     const t = theme();
@@ -493,17 +497,18 @@ export default class GitHubTasks extends View {
 
   // A click opens the ticket in a large popup over the app to edit (editor.js, popup.js). Its folder and machine go
   // along, so the editor asks GitHub from the same place the panel does.
-  openTicket(ticket, _cx, extra = {}) {
+  openTicket(ticket) {
     const ctx = this.ctx, project = this.project, local = Boolean(ticket.local);
     if (!ctx || (!project && !local)) return;
     openOverlay(editorOverlay({
       role: "editor", ticket, repo: this.repoId(), project: local ? null : { id: project.id, title: project.title },
-      ...(local ? { local: { mainRoot: ticket.mainRoot } } : {}), where: { cwd: ctx.folder, on: ctx.on }, ...extra,
+      ...(local ? { local: { mainRoot: ticket.mainRoot } } : {}), where: { cwd: ctx.folder, on: ctx.on },
     }));
   }
 
-  // Start: the one workflow the ticket's labels trigger starts at once. With several, or none, the ticket opens in
-  // the editor with its Start dialog showing, which lists them or says why there is nothing to start.
+  // Start: the one workflow the ticket's labels trigger starts at once. With several, or none, the Start dialog opens as an
+  // overlay of its own (start-dialog-view.js), listing them or saying why there is nothing to start, with the unreadable workflow
+  // files. If the workflows can't be loaded, the reason shows here in the sidebar and no dialog opens.
   startTicket(ticket, cx) {
     const ctx = this.ctx, local = Boolean(ticket.local), project = local ? null : this.project, repo = this.repoId();
     if (!ctx || (!project && !local) || this.starting.has(ticket.key)) return;
@@ -513,13 +518,14 @@ export default class GitHubTasks extends View {
     const where = { cwd: ctx.folder, on: ctx.on };
     cx.spawn(async (cx) => {
       try {
-        const { items } = await loadWorkflows(where);
+        const { items, errors } = await loadWorkflows(where);
         const matches = matchWorkflows(items, ticket.labels ?? []);
         if (matches.length === 1) {
-          const statusField = local ? null : await loadStatusField(gh, project.id, where).catch(() => null); // without it the ticket's status just isn't moved
-          await startRun(matches[0], ticket, repo, where, cx, { project, statusField });
+          await startChosen(matches[0], ticket, { repo, project, where }, cx);
         } else {
-          this.openTicket(ticket, cx, { autoStart: true });
+          const cant = cantStartHere(where);
+          if (cant) throw new Error(cant);
+          openOverlay(startOverlay(startProps({ ticket, repo, project, local, mainRoot: ticket.mainRoot, where, matches, skipped: errors })));
         }
       } catch (e) {
         this.startError = String(e?.message ?? e);

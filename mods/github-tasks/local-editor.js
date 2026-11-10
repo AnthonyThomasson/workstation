@@ -59,7 +59,6 @@ export class LocalTaskEditor extends TaskEditor {
         this.leaveBody(); // the Description shows as rendered markdown (editor.js)
         this.loaded = true;
         this.checkStartable(cx);
-        if (this.autoStart) { this.autoStart = false; this.openStart(cx); }
       } catch (e) {
         this.loadError = { kind: "other", message: String(e?.message ?? e) };
       }
