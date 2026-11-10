@@ -7,6 +7,7 @@ export const WIDTH = 520;
 export const TITLE = "New task";
 export const AGENT_KEY = "github-tasks.groomAgent"; // the agent saved before the settings page held it
 export const PROMPT = "Describe the ticket you want";
+export const ENTER_HINT = "Enter to continue · Shift+Enter for a new line"; // the muted line on the button row
 
 // The panel's width for a window of `size`: 520px, or what the window has left after the margin on each side. Null until measured.
 export function panelWidth(size) {
@@ -36,6 +37,23 @@ export function chooseAgent(installed, saved) {
 // What Esc does: the dialog closes, unless a task is being started, which can't be called back halfway (an overlay's tasks end
 // with it): then nothing.
 export const escStep = ({ starting }) => (starting ? "ignore" : "close");
+
+// What a plain or Shift Enter in the text box does. "submit": start the task, as Continue does (it is on). "newline": Shift+Enter,
+// which the text box turns into a line break itself. "ignore": Enter while Continue is off (nothing typed, or a start going); the
+// box must not turn that into a line break either, so the page swallows the key. (gpui doesn't say when an IME is composing, so
+// there is no such input: a key that confirms a composition goes to the IME and doesn't reach the page.)
+export function enterStep({ starting, text, shift }) {
+  if (shift) return "newline";
+  return !starting && String(text ?? "").trim() !== "" ? "submit" : "ignore";
+}
+
+// Enter is meant to never leave a line break. If the text box adds one anyway (it did where the key wasn't stopped in time), this is
+// `before` again when `now` is `before` with exactly one "\n" put in somewhere; otherwise null (a different edit: leave it).
+export function withoutEnterNewline(before, now) {
+  if (now.length !== before.length + 1) return null;
+  for (let i = 0; i < now.length; i++) if (now[i] === "\n" && now.slice(0, i) + now.slice(i + 1) === before) return before;
+  return null;
+}
 
 // The dialog's state and what its buttons do. onChange: called after every change, for the view to redraw.
 export class NewTaskDialog {
