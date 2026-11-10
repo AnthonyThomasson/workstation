@@ -18,7 +18,7 @@ export const stopPresses = (el, except) => PRESS_BUTTONS.filter((b) => b !== exc
 // Refactor dialog (refactor.js), which starts the same session with an empty description; null for the New task dialog.
 export async function startTask(props, description, cx, refactor = null) {
   const agent = chooseAgent(await installedAgents(), normalizeGroomer(shared(GROOMER_KEY)).agent ?? shared(AGENT_KEY));
-  if (!agent) throw new Error("Pick an agent that is installed on this computer.");
+  if (!agent && !refactor) throw new Error("Pick an agent that is installed on this computer."); // a refactor runs the agents its type names (investigations.js)
   const where = { cwd: props.where?.cwd, on: props.where?.on };
   const groomer = normalizeGroomer(shared(GROOMER_KEY));
   const subAgents = { investigator: normalizeSubAgent(shared(INVESTIGATOR_KEY)), worker: normalizeSubAgent(shared(WORKER_KEY)) }; // saved apart from the New Task Orchestrator's

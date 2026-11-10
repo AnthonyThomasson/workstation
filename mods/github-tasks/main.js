@@ -454,7 +454,7 @@ export default class GitHubTasks extends View {
   openRefactor() { this.openStartDialog(true); }
   openStartDialog(refactor) {
     const ctx = this.ctx, project = this.project, local = this.source === "local";
-    if (!ctx || !this.agent() || (local ? !this.place?.mainRoot || this.place.remote : !project)) return;
+    if (!ctx || (!refactor && !this.agent()) || (local ? !this.place?.mainRoot || this.place.remote : !project)) return;
     const props = newTaskProps({ repo: this.repo, project, local, mainRoot: this.place?.mainRoot, where: { cwd: ctx.folder, on: ctx.on } });
     openOverlay(refactor ? refactorOverlay(props) : newTaskOverlay(props));
   }
@@ -498,7 +498,7 @@ export default class GitHubTasks extends View {
 
   // The broom in the Tasks header (right of the +, shown while a space is open): opens the Refactor dialog.
   refactorButton(t) {
-    return iconButton("refactor", "broom", t, () => this.openRefactor(), false, this.agent() ? REFACTOR_TIP : "No agent is installed to help with a task");
+    return iconButton("refactor", "broom", t, () => this.openRefactor(), false, REFACTOR_TIP); // no New Task agent needed: the refactor type names its own
   }
 
   // A section's header: pressing it expands or collapses the tickets under it.
