@@ -128,6 +128,8 @@ export function orchestratorPrompt({ id, workflow, ticket, repo, runDir, workDir
     `- Start agents only with \`${runDir}/spawn worker <job> '<brief>'\` (worktree ${workDir}--<job> on ${branch}--<job>), \`${runDir}/spawn reviewer <job>-review <job> '<brief>'\` and \`${runDir}/spawn reviewer final-review final '<brief>'\`, plus investigators as the next point says; keep job names to ${jobRoom(id)} characters or fewer, as a terminal's name is cut at ${nameRoom(id)} in this run and \`<job>-review\` must not be cut to the worker's name.`,
     `- You may start investigators with \`${runDir}/spawn investigator <name> '<brief>'\` to explore the code when it needs to, for example while planning; each is read-only, works in the ticket worktree ${workDir} and sends you its findings. Start one only when you need it, and end it with \`hc kill <name>\` once you have them.`,
     `- Merge a finished job with \`${runDir}/merge <job>\`, one at a time; on a conflict, send the job's worker the named files to rebase onto ${branch}.`,
+    "- Start the final review in the same turn the last job merges, without stopping to report or ask the person first; `merge` says when no job is open.",
+    "- End the final reviewer and every investigator with `hc kill` as soon as their report is in: any live worker, reviewer or investigator keeps the run page's Merge locked.",
     "- Every change, final-review fixes included (a new job), gets at least one worker and at least one reviewer, started with `spawn reviewer`, before `merge <job>`; never merge an unreviewed job.",
     noRemote
       ? `- This repo has no GitHub remote, so there is nothing to fetch: between merges, rebase the ticket branch (in ${workDir}) onto the repo's default branch with \`git -C ${workDir} rebase <main-branch>\`.`
@@ -204,6 +206,7 @@ run_dir=${shQuote(runDir)}
 ticket_dir=${shQuote(workDir)}
 ticket_branch=${shQuote(branch)}
 job_base=${shQuote(workDir)}
+spawn_path=${runDir ? shQuote(`${runDir}/spawn`) : '"$(dirname "$0")/spawn"'}
 usage() {
   echo "usage: spawn worker <job> <brief>" >&2
   echo "       spawn reviewer <name> <job|final> <brief>" >&2
@@ -291,13 +294,15 @@ echo "$term"
 // (grep on `"address" : "…"`, spaces around the colon allowed; no jq or python is needed). If terminals are listed but no
 // address can be read, it fails rather than clean up while agents may still be in the worktree.
 // Safe to run again after any failure: a job that is already on the ticket branch just goes on to the cleanup.
-export function mergeScript({ id, workDir, branch, number }) {
+// runDir: the run folder, where the spawn script is, for the line it prints once no job is left open.
+export function mergeScript({ id, workDir, branch, number, runDir }) {
   const what = Number.isInteger(number) ? ` (ticket #${number})` : "";
   return `#!/bin/sh
 # Merges a finished job into the ticket branch for workflow run ${id}. Usage:
 #   merge <job>
 # It commits what is left in the job's worktree, rebases the job's branch onto the ticket branch, fast-forwards the
-# ticket branch, then ends the job's worker and reviewers, removes its worktree and deletes its branch.
+# ticket branch, then ends the job's worker and reviewers, removes its worktree and deletes its branch. When no other job
+# worktree of the ticket is open, it ends by saying the final review can start now.
 # A rebase conflict is aborted and the files are named; the worktree, branch and agents are left as they were, except that what was
 # left uncommitted in the worktree is now committed on the job's branch. Have the worker resolve it, then run this again.
 set -u
@@ -305,6 +310,7 @@ run_id=${shQuote(id)}
 ticket_dir=${shQuote(workDir)}
 ticket_branch=${shQuote(branch)}
 job_base=${shQuote(workDir)}
+spawn_path=${runDir ? shQuote(`${runDir}/spawn`) : '"$(dirname "$0")/spawn"'}
 usage() { echo "usage: merge <job>" >&2; exit 2; }
 fail() { echo "merge: $*" >&2; exit 1; }
 # a name as it goes in a branch and a folder, as spawn makes it: lower-case letters, digits, _ and -, runs of anything else becoming one -
@@ -383,6 +389,15 @@ done
 [ ! -e "$job_dir" ] || git -C "$ticket_dir" worktree remove "$job_dir" || fail "merged, but could not remove the worktree $job_dir: run merge $job again once that is fixed"
 git -C "$ticket_dir" branch -d "$job_branch" >/dev/null || fail "merged and the worktree is removed, but could not delete the branch $job_branch: run merge $job again once that is fixed"
 echo "Removed $job_dir and $job_branch."
+# the merge is done, so nothing below may fail it: with no job worktree of this ticket left, say what comes next
+if listed=$(git -C "$ticket_dir" worktree list --porcelain 2>/dev/null); then
+  # matched by folder name, as git lists real paths and the ticket's folder may be reached through a link
+  open=$(printf '%s\\n' "$listed" | grep -Fc "/$(basename "$job_base")--")
+  if [ "$open" = 0 ]; then
+    echo "No job is open now: if every planned job is merged, start the final review now with: $spawn_path reviewer final-review final '<brief>'"
+  fi
+fi
+exit 0
 `;
 }
 

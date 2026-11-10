@@ -212,6 +212,12 @@ test("the orchestrator is told the manual, the spawn and merge scripts, the reba
   assert.match(text, /final report for the person to approve/);
 });
 
+test("the orchestrator starts the final review in the turn the last job merges, and ends the final reviewer and investigators at once", () => {
+  const text = prompt("orchestrator");
+  assert.match(text, /Start the final review in the same turn the last job merges, without stopping to report or ask the person first/);
+  assert.match(text, /End the final reviewer and every investigator with `hc kill` as soon as their report is in: any live worker, reviewer or investigator keeps the run page's Merge locked/);
+});
+
 test("live-environment steps never run from a worktree, for the orchestrator and the worker", () => {
   for (const name of ["orchestrator", "worker"]) {
     const text = prompt(name);
@@ -601,7 +607,7 @@ if (argv[0] === "kill" && ${failKill}) process.exit(1);
   chmodSync(join(w.bin, "hc"), 0o755);
   setup({ ...w, job: jobs, addJob, commit });
   const script = join(w.dir, "merge");
-  writeFileSync(script, mergeScript({ id: "12-abc", workDir: w.ticketDir, branch: w.branch, number }));
+  writeFileSync(script, mergeScript({ id: "12-abc", workDir: w.ticketDir, branch: w.branch, number, runDir: "/runs/12-abc" }));
   chmodSync(script, 0o755);
   const env = { PATH: `${w.bin}:${process.env.PATH}`, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
   const r = spawnSync(script, args, { env, encoding: "utf8" });
@@ -808,6 +814,28 @@ test("the merge script quotes whatever is in the paths and ids", () => {
   assert.ok(text.startsWith("#!/bin/sh\n"));
   const syntax = spawnSync("sh", ["-n"], { input: text, encoding: "utf8" });
   assert.equal(syntax.status, 0, syntax.stderr);
+});
+
+test("merge: with no other job worktree open, it says to start the final review with the run's spawn script", () => {
+  const r = runMerge(["auth"], { setup: (w) => { const j = w.addJob(); w.commit(j.path, "work"); } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /No job is open now: if every planned job is merged, start the final review now with: \/runs\/12-abc\/spawn reviewer final-review final '<brief>'/);
+});
+
+test("merge: with another job worktree still open, it does not say the final review can start", () => {
+  const r = runMerge(["auth"], { setup: (w) => { const j = w.addJob(); w.commit(j.path, "work"); w.addJob("other"); } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.stdout, /No job is open now/);
+});
+
+test("merge: a failing worktree check does not fail a merge that is done", () => {
+  const text = mergeScript({ id: "12-abc", workDir: "/src/app", branch: "workflow/12-fix", runDir: "/runs/12-abc" });
+  assert.match(text, /if listed=\$\(git -C "\$ticket_dir" worktree list --porcelain 2>\/dev\/null\); then/);
+  assert.ok(text.trimEnd().endsWith("exit 0"));
+});
+
+test("merge: without a run folder, the final review line points at the spawn script next to it", () => {
+  assert.ok(mergeScript({ id: "12-abc", workDir: "/src/app", branch: "workflow/12-fix" }).includes('spawn_path="$(dirname "$0")/spawn"'));
 });
 
 test("merge: with the worktree gone and the branch already in the ticket branch, it finishes the cleanup", () => {
