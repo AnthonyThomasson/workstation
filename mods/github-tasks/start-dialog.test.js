@@ -11,8 +11,8 @@ test("the dialog is 560px wide", () => {
 
 test("the overlay is a frameless window of the mod with the start role, its own key and what the sidebar knew", () => {
   const ticket = { key: "t1", number: 5, labels: ["bug"] };
-  const props = startProps({ ticket, repo: "o/app", project: { id: "P1", title: "Board", url: "u", extra: 1 }, local: false, mainRoot: "/r", where: { cwd: "/r/x", on: undefined }, matches: [bug, story], skipped: ["a.yaml: bad"] });
-  assert.deepEqual(props, { ticket, repo: "o/app", project: { id: "P1", title: "Board" }, local: null, where: { cwd: "/r/x", on: undefined }, matches: [bug, story], skipped: ["a.yaml: bad"] });
+  const props = startProps({ ticket, repo: "o/app", project: { id: "P1", title: "Board", url: "u", extra: 1 }, where: { cwd: "/r/x", on: undefined }, matches: [bug, story], skipped: ["a.yaml: bad"] });
+  assert.deepEqual(props, { ticket, repo: "o/app", project: { id: "P1", title: "Board" }, where: { cwd: "/r/x", on: undefined }, matches: [bug, story], skipped: ["a.yaml: bad"] });
   const o = startOverlay(props);
   assert.equal(o.mod, "github-tasks");
   assert.equal(o.kind, "window");
@@ -20,12 +20,12 @@ test("the overlay is a frameless window of the mod with the start role, its own 
   assert.equal(o.key, "github-tasks.start");
   assert.equal(o.props.role, "start");
   assert.equal(o.props.repo, "o/app");
-  assert.deepEqual(startProps({ ticket, repo: "o/app", project: null, local: true, mainRoot: "/r", where: { cwd: "/r" } }).local, { mainRoot: "/r" });
-  assert.deepEqual(startProps({ ticket, local: true, mainRoot: "/r", where: {} }).matches, []);
+  assert.equal("local" in props, false);
+  assert.deepEqual(startProps({ ticket, project: null, where: {} }).matches, []);
 });
 
 test("the overlay's props survive being serialised", () => {
-  const props = startProps({ ticket: { key: "k", labels: ["bug"] }, repo: "o/a", project: { id: "P", title: "B" }, local: false, where: { cwd: "/x" }, matches: [bug, story], skipped: [] });
+  const props = startProps({ ticket: { key: "k", labels: ["bug"] }, repo: "o/a", project: { id: "P", title: "B" }, where: { cwd: "/x" }, matches: [bug, story], skipped: [] });
   assert.deepEqual(JSON.parse(JSON.stringify(startOverlay(props).props)), JSON.parse(JSON.stringify({ ...props, role: "start" })));
 });
 
@@ -106,8 +106,8 @@ test("choosing a workflow shows the starting message with its name, and closes t
   assert.equal(d.starting, false);
 });
 
-test("a failed start keeps the dialog open with the reason, and the list so another workflow can be picked", async () => {
-  const d = new StartDialog();
+test("a failed start in the row's overlay keeps the dialog open with the reason, and the list so another workflow can be picked", async () => {
+  const d = new StartDialog(() => {}, { retry: true });
   d.ready(["bug"], [bug, story], []);
   assert.equal(await d.choose(bug, async () => { throw new Error("This space has no folder to work in."); }), "failed");
   assert.equal(d.closed, false);
@@ -162,4 +162,16 @@ test("a space on another machine, or with no folder, can't start a workflow, and
   assert.equal(cantStartHere({ cwd: "/r", on: "dev" }), "This space is on dev. Workflows only run on this computer for now.");
   assert.equal(cantStartHere({ cwd: undefined }), "This space has no folder to work in.");
   assert.equal(cantStartHere(undefined), "This space has no folder to work in.");
+});
+
+test("in the editor's dialog a failed start shows the reason alone, also after a single match that started by itself", async () => {
+  const several = new StartDialog();
+  several.ready(["bug"], [bug, story], []);
+  await several.choose(bug, async () => { throw new Error("no folder"); });
+  assert.equal(several.closed, false);
+  assert.deepEqual(layout(several), { title: "BUG", body: "error", error: "no folder", empty: null });
+  const single = new StartDialog();
+  single.ready(["bug"], [bug], []);
+  await single.choose(bug, async () => { throw new Error("no agent"); });
+  assert.deepEqual(layout(single), { title: "BUG", body: "error", error: "no agent", empty: null });
 });

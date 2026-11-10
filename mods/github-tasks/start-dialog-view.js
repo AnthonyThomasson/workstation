@@ -55,7 +55,7 @@ export class StartPage {
   constructor(props, cx) {
     this.props = props ?? {};
     this.handle = cx.focus_handle(); // the dialog takes Esc
-    this.dialog = new StartDialog(() => {});
+    this.dialog = new StartDialog(() => {}, { retry: true });
     this.dialog.ready(this.props.ticket?.labels ?? [], this.props.matches ?? [], this.props.skipped ?? []);
     cx.timer.after(50, () => this.handle.focus()); // a window doesn't take the keyboard when it opens
   }

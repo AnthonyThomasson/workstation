@@ -13,10 +13,10 @@ export const startOverlay = (props) => ({
 });
 
 // What the overlay needs, as plain data: the ticket (with its saved labels), where to start it from (GitHub mode has a repo and a project,
-// local mode the repo's main checkout), and what the sidebar already found: the matching workflows and the unreadable workflow files.
-export const startProps = ({ ticket, repo, project, local, mainRoot, where, matches, skipped }) => ({
+// local mode neither), and what the sidebar already found: the matching workflows and the unreadable workflow files.
+export const startProps = ({ ticket, repo, project, where, matches, skipped }) => ({
   ticket, repo: repo ?? null, project: project ? { id: project.id, title: project.title } : null,
-  local: local ? { mainRoot } : null, where: { cwd: where?.cwd, on: where?.on },
+  where: { cwd: where?.cwd, on: where?.on },
   matches: matches ?? [], skipped: skipped ?? [],
 });
 
@@ -39,15 +39,19 @@ export const STARTING = "Getting the branch ready and starting the orchestratorâ
 export function layout(d) {
   const title = d.chosen ? d.chosen.name : d.matches.length > 1 ? "Choose a workflow" : "Start";
   const empty = [d.labels.length ? "No workflow matches this ticket's labels." : "This ticket has no labels, and no workflow is the fallback.", "Make one in the Task settings."];
-  const body = d.phase === "loading" ? "loading" : !d.listed ? "error" : d.phase === "starting" ? "starting" : d.matches.length ? "list" : "empty";
+  // A failed start shows the reason alone, unless the dialog allows a retry (the row's overlay): then the list stays under it.
+  const alone = !d.listed || (d.phase === "error" && !d.retry);
+  const body = d.phase === "loading" ? "loading" : alone ? "error" : d.phase === "starting" ? "starting" : d.matches.length ? "list" : "empty";
   return { title, body, error: d.error, empty: body === "empty" ? empty : null };
 }
 
 // The dialog's state and what its buttons do. phase: "loading" (the workflows are being read), "ready" (listed), "starting" (a run is
 // being started) or "error" (the workflows couldn't be read, or the run didn't start). onChange: called after every change, for the
-// view to redraw.
+// view to redraw. retry: after a failed start the list stays under the reason, so another workflow can be picked (the row's overlay;
+// the editor's dialog shows the reason alone).
 export class StartDialog {
-  constructor(onChange = () => {}) {
+  constructor(onChange = () => {}, { retry = false } = {}) {
+    this.retry = retry;
     this.phase = "ready";
     this.labels = [];
     this.matches = [];
