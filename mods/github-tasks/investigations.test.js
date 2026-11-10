@@ -455,13 +455,14 @@ test("Done stops when the agent can't be ended, before anything else is ended or
   assert.equal(f.saved().some((e) => e.id === "inv-1"), true, "still tracked");
 });
 
-test("Done checks the agent is no longer live after killing it: a kill that reports success but leaves it live stops Done", async () => {
+test("Done goes on when the agent's kill exits 0 even if terminals() still lists it live (it may not have refreshed), and stops when the kill fails and it is live", async () => {
   const s = await scratch();
-  const f = fakeDone(s, { stillLive: true, terms: [sub("t2")] }); // kill answers code 0, the terminal is still live
-  const got = await endInvestigation(f.deps, entryOf(s));
-  assert.equal(got.done, false);
-  assert.match(got.error, /^Couldn't end the agent t1: kill failed\. Nothing else was removed/);
-  assert.ok(!f.log.includes("hc kill t2"));
+  const f = fakeDone(s, { stillLive: true, terms: [sub("t2")] }); // kill answers code 0, the listing still says live
+  assert.deepEqual(await endInvestigation(f.deps, entryOf(s)), { done: true, error: null, closed: true });
+  assert.ok(f.log.includes("hc kill t2"), "the sub-agents were ended too");
+  const t = await scratch();
+  const g = fakeDone(t, { stillLive: true, killed: { code: 1, stdout: "", stderr: "terminal busy" } });
+  assert.match((await endInvestigation(g.deps, entryOf(t))).error, /^Couldn't end the agent t1: terminal busy\./);
 });
 
 test("Done ends the New Task agent before it lists the sub-agents, so one started a moment before the agent died is found too", async () => {

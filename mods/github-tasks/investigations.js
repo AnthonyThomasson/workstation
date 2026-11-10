@@ -176,9 +176,11 @@ export async function endInvestigation(deps, entry) {
   if (prototypes.refused) return fail(`Done refused: ${prototypes.refused}. Nothing was ended or removed.`);
   const folder = sessionFolder(deps.home, id);
   if (!folder) return fail(`Done refused: the session id ${id || "(none)"} isn't an investigation's, so its folder can't be found. Nothing was ended or removed.`);
-  // The New Task agent first, so it can't start anything more while Done works; it must really be gone.
+
+  // The New Task agent first, so it can't start anything more while Done works. A failed kill of a terminal that is still live stops
+  // Done (a kill that exits 0 is believed: the listing may not have refreshed yet, as in endRun and endHost).
   const killed = await deps.hc(["kill", agent]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
-  if ((deps.terminals() ?? []).some((k) => k.state === "live" && k.address === agent)) return fail(`Couldn't end the agent ${agent}: ${said(killed) || "kill failed"}. Nothing else was removed; end it with hc kill, then press Done again.`);
+  if (killed.code !== 0 && (deps.terminals() ?? []).some((k) => k.state === "live" && k.address === agent)) return fail(`Couldn't end the agent ${agent}: ${said(killed) || "kill failed"}. Nothing else was removed; end it with hc kill, then press Done again.`);
   await deps.hc(["rm", agent]).catch(() => {});
 
   // Everything the session started, found by label (read after the agent ended, so one it started just before is in the list).
@@ -206,7 +208,6 @@ export async function endInvestigation(deps, entry) {
   }
   const rmd = await Promise.resolve(deps.removeDir(folder)).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
   if (rmd && rmd.code !== 0) return fail(`Couldn't remove the session folder ${folder}: ${said(rmd) || "rm failed"}. Press Done again once that is fixed.`);
-
 
   // Where its tab is, read before anything is closed.
   const spaces = deps.spaces(), panes = deps.panes();
