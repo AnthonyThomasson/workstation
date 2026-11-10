@@ -52,6 +52,45 @@ const EXPECTED = [
   "alpha/bare.js:4 shared-key",
   "alpha/bare.js:6 shared-key",
   "alpha/broken.js:1 parse",
+  // shared/setShared reached any way but a plain named import: re-exports, h["shared"], an alias of the namespace, a destructured
+  // namespace, the default import, import("herdr"). Plain calls through them are followed; anything else can't be, so it fails.
+  "alpha/reexport-herdr.js:1 shared-key",
+  "alpha/reexport-herdr.js:2 shared-key",
+  "alpha/reexport-herdr.js:3 shared-key",
+  "alpha/herdr-namespace.js:2 shared-key",
+  "alpha/herdr-namespace.js:3 shared-key",
+  "alpha/herdr-namespace.js:5 shared-key",
+  "alpha/herdr-namespace.js:7 shared-key",
+  "alpha/herdr-default.js:2 shared-key",
+  "alpha/herdr-dynamic.js:1 shared-key",
+  // a parameter's default is not what it holds: each call site's argument is (a call site that isn't a list written out fails)
+  "alpha/loops.js:3 shared-key",
+  "alpha/loops.js:9 shared-key",
+  // openOverlay found through aliases (as, const, a namespace, an object), a computed "mod" key, an unresolvable computed key
+  "alpha/overlay-aliases.js:3 overlay",
+  "alpha/overlay-aliases.js:5 overlay",
+  "alpha/overlay-aliases.js:6 overlay",
+  "alpha/overlay-aliases.js:7 overlay",
+  "alpha/overlay-aliases.js:8 overlay",
+  "alpha/overlay-aliases.js:10 overlay",
+  // a mods/ path built at run time in mod code: "mods/" + name, ${"mods"}/beta, "mods" + "/beta" (join("mods", x) is fine)
+  "alpha/run-time-paths.js:2 file-path",
+  "alpha/run-time-paths.js:3 file-path",
+  "alpha/run-time-paths.js:4 file-path",
+  // the line is where the matched text is: inside a multi-line template, after a line continuation, in the template's second part
+  "alpha/multiline.js:2 file-path",
+  "alpha/multiline.js:5 file-path",
+  "alpha/multiline.js:7 file-path",
+  // shared-key and overlay report the line of the offending argument or property, not of the call
+  "alpha/args.js:3 shared-key",
+  "alpha/args.js:7 overlay",
+  // scan scope: a dot-folder is scanned, symlinked files and folders fail, absolute and file: imports fail
+  ".dot/a.js:1 file-path",
+  "alpha/linked.js:1 symlink",
+  "alpha/linkdir:1 symlink",
+  "alpha/absolute.js:1 import",
+  "alpha/absolute.js:2 import",
+  "alpha/absolute.js:3 import",
   // *.test.js: only real mods fail; "demo" and "skillshare.x" pass
   "alpha/fake.test.js:2 import",
   "alpha/fake.test.js:6 file-path",
