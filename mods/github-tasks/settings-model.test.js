@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  markdownLiteral, normalizeSettingsSections, promptForRole, SETTINGS_GROUPS, SETTINGS_ENTRIES, groupKey, promptTitle, promptPlaceholder,
+  markdownLiteral, normalizeSettingsSections, promptForRole, SETTINGS_GROUPS, SETTINGS_ENTRIES, groupKey, promptTitle,
 } from "./settings-model.js";
 
 const ALL_KEYS = ["group.orchestrators", "group.agents", "newTask", "orchestrator", "refactor", "worker", "reviewer", "investigator"];
@@ -30,8 +30,7 @@ test("only New Task has settings; every other entry opens to a one-line note", (
   assert.match(note("orchestrator"), /plans/);
   assert.match(note("orchestrator"), /Workers, Reviewers and Investigators/);
   assert.match(note("orchestrator"), /decides what to fix/);
-  assert.match(note("refactor"), /refactor type/);
-  assert.match(note("refactor"), /Investigators/);
+  assert.equal(note("refactor"), "Runs a refactor type, and starts Investigators and Workers (prototypes).");
   for (const role of ["worker", "reviewer"]) {
     assert.match(note(role), /Task Orchestrator/);
     assert.match(note(role), /only in workflow runs/);
@@ -70,10 +69,18 @@ test("prompt tab titles name the orchestrators in full", () => {
   assert.equal(promptTitle("nope"), "Prompt");
 });
 
-test("Refactor has no built-in prompt yet, only a note that it comes with the Refactor Orchestrator ticket", () => {
-  assert.equal(promptForRole("refactor"), null);
-  assert.match(promptPlaceholder("refactor"), /comes with the Refactor Orchestrator ticket/);
-  for (const role of ["newTask", "orchestrator", "worker", "reviewer", "investigator"]) assert.equal(promptPlaceholder(role), null);
+test("Refactor opens the real built-in prompt, for a sample refactor type: GitHub's, or the local one when the repo's tasks are local", () => {
+  const github = promptForRole("refactor", { repo: "o/app", project: { title: "Board" }, options: [{ name: "Todo" }, { name: "Up Next" }] });
+  assert.match(github, /^# You are the Refactor Orchestrator, running the <refactor type name> refactor for o\/app/);
+  assert.ok(github.includes("> <the refactor type's orchestrator prompt goes here>"));
+  assert.ok(github.includes('"Up Next" or "Todo"'), "the project's own spelling of the statuses");
+  assert.ok(github.includes("`<session folder>/spawn investigator <name> '<brief>'`"));
+  assert.match(promptForRole("refactor"), /running the <refactor type name> refactor for <repo>/);
+  const local = promptForRole("refactor", { local: { mainRoot: "/r/app", todoDir: "/t/to-do", upNextDir: "/t/up-next" } });
+  assert.match(local, /^# You are the Refactor Orchestrator, running the <refactor type name> refactor for app/);
+  assert.ok(local.includes("`/t/to-do`") && local.includes("The next id is <next id>"));
+  assert.ok(local.includes("`<session folder>/spawn worker <job> '<brief>'`"));
+  assert.match(local, /Make no `gh` calls/);
 });
 
 test("Investigator opens the real read-only investigator prompt", () => {

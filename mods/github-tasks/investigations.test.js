@@ -7,7 +7,7 @@ import { join } from "node:path";
 import {
   INVESTIGATION_HOST_LABEL, INVESTIGATION_LABEL, INVESTIGATIONS_KEY, beginInvestigation, checkStart, deleteBranch, endInvestigation, firstLine, investigationBranch,
   investigationHostName, investigationId, investigationLabel, investigationRow, investigationRunArgs, investigationsFor, liveInvestigations, reapplyInvestigations, removeWorktree,
-  prototypesOf, savedList, sessionFolder, tabNameFor, unsafeToRemove, withEntry, withoutEntry,
+  prototypesOf, refactorBranch, refactorHostName, refactorLabel, savedList, sessionFolder, tabNameFor, unsafeToRemove, withEntry, withoutEntry,
 } from "./investigations.js";
 import { hostKey, placeholderArgv, slotKey } from "./bgrun.js";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
@@ -950,4 +950,109 @@ test("the real helpers work on a worktree started from a ticket's worktree (the 
 
 test("slots are kept per investigation id, like a run's", () => {
   assert.equal(slotKey("inv-1"), "github-tasks.runtab.inv-1");
+});
+
+// ---- A refactor session --------------------------------------------------------------------------------
+
+const RTYPE = {
+  id: "isolation", name: "Isolation",
+  orchestrator: { agent: "claude", command: "", model: "opus", effort: "high", prompt: "Find modules that reach into each other." },
+  investigator: { agent: "codex", command: "", model: "gpt-x", effort: "low", prompt: "INV TYPE PROMPT" },
+  worker: { agent: "custom", command: "my-worker --go", model: "", effort: "medium", prompt: "WORKER TYPE PROMPT" },
+};
+
+test("a refactor session's label is Refactor · <Name>, with the first line of the focus when given; the tab and the host cut it at 40", () => {
+  assert.equal(refactorLabel(RTYPE, ""), "Refactor · Isolation");
+  assert.equal(refactorLabel(RTYPE, "  \n the sidebar \nand more"), "Refactor · Isolation: the sidebar");
+  const long = refactorLabel(RTYPE, "the sidebar and everything the popup reaches into");
+  assert.equal(tabNameFor(long), long.slice(0, 40).trimEnd());
+  assert.equal(refactorHostName(RTYPE, ""), "Refactor · Isolation agents");
+  assert.equal(refactorHostName(RTYPE, "the sidebar and everything the popup reaches into"), `${long.slice(0, 40).trimEnd()} agents`);
+});
+
+test("a refactor session's branch is investigate/refactor-<type id cut to fit 40>-<base 36 time>", () => {
+  const t = (1_000_000).toString(36);
+  assert.equal(refactorBranch(RTYPE, 1_000_000), `investigate/refactor-isolation-${t}`);
+  const id = "a-very-long-refactor-type-name-that-goes-on-and-on";
+  const branch = refactorBranch({ ...RTYPE, id }, 1_000_000);
+  assert.equal(branch, `investigate/${slug(`refactor-${id}`, 40)}-${t}`);
+  assert.equal(branch.slice("investigate/".length, -(t.length + 1)).length <= 40, true);
+  assert.ok(!branch.slice(0, -(t.length + 1)).endsWith("--"), "no doubled hyphen where the cut fell");
+  assert.equal(refactorBranch({ ...RTYPE, id: "" }, 1_000_000), `investigate/refactor-isolation-${t}`, "no id yet: the name's slug");
+  assert.ok(branch.startsWith("investigate/"), "Done accepts it");
+});
+
+test("a refactor session needs no agent chosen, but still a folder on this computer", () => {
+  assert.doesNotThrow(() => checkStart({ agent: null, where: WHERE, refactor: { type: RTYPE, focus: "" } }));
+  assert.throws(() => checkStart({ agent: null, where: { cwd: "/x", on: "box" }, refactor: {} }), /This space is on box/);
+  assert.throws(() => checkStart({ agent: null, where: {}, refactor: {} }), /no folder/);
+});
+
+// What a refactor start did: the first run's command, what was written to the session folder, the host's name.
+async function startRefactor(refactor, extra = {}) {
+  const f = fakeStart();
+  let files = null;
+  f.deps.writeSession = async (dir, got) => { files = got; f.log.push("write session"); };
+  f.deps.knownAgents = async () => [{ key: "claude", run: ["claude"], installed: true }, { key: "codex", run: ["codex"], installed: true }];
+  f.deps.task = async (dir) => { f.log.push(`task ${dir}`); return "REFACTOR PROMPT"; };
+  const out = await beginInvestigation(f.deps, { agent: null, description: "", repo: "o/app", where: WHERE, groomer: { model: "NEWTASK-MODEL" }, ...extra, refactor });
+  return { ...out, f, files };
+}
+
+test("start a refactor: its names, the type's orchestrator as the agent, its roles' commands and prompts in the session folder", async () => {
+  const { entry, f, files } = await startRefactor({ type: RTYPE, focus: "the sidebar" });
+  const t = (1_000_000).toString(36);
+  assert.equal(entry.label, "Refactor · Isolation: the sidebar");
+  assert.equal(entry.branch, `investigate/refactor-isolation-${t}`);
+  assert.equal(entry.workDir, `/home/me/.herdr/worktrees/app/investigate-refactor-isolation-${t}`);
+  assert.deepEqual(f.hostCalls.map((h) => h.name), ["Refactor · Isolation: the sidebar agents"]);
+  const run = f.hcCalls[0], argv = run.slice(run.indexOf("--") + 1);
+  assert.deepEqual(argv.slice(0, 5), ["claude", "--model", "opus", "--effort", "high"], "the type's orchestrator, not the New Task settings");
+  assert.ok(!argv.includes("NEWTASK-MODEL"));
+  assert.ok(argv.includes("--add-dir") && argv.includes("--allowedTools"));
+  assert.equal(f.hcCalls.at(-1)[2], "REFACTOR PROMPT");
+  assert.ok(files.spawn.includes(shQuote("codex")) && files.spawn.includes("-m") && files.spawn.includes("model_reasoning_effort=low"), "investigators run the type's investigator");
+  assert.ok(files.spawn.includes(shQuote("my-worker --go")) && !files.spawn.includes("--permission-mode"), "workers run the type's custom worker command");
+  assert.ok(files["investigator.md"].endsWith("## This refactor's instructions\n\nINV TYPE PROMPT"));
+  assert.ok(files["worker.md"].endsWith("## This refactor's instructions\n\nWORKER TYPE PROMPT"));
+  assert.match(files["investigator.md"], /Refactor Orchestrator/);
+  assert.match(files.spawn, /The Refactor Orchestrator that started you/);
+});
+
+test("start a refactor: the New Task sub-agent settings are not used, and the focus may be missing", async () => {
+  const { entry, files } = await startRefactor({ type: RTYPE }, { subAgents: { investigator: { agent: "kimi", model: "k" }, worker: { agent: "kimi" } } });
+  assert.equal(entry.label, "Refactor · Isolation");
+  assert.ok(!files.spawn.includes("kimi"));
+});
+
+test("start a refactor: a type that can't run is refused with nothing made", async () => {
+  const f = fakeStart();
+  await assert.rejects(beginInvestigation(f.deps, { agent: null, description: "", where: WHERE, refactor: { type: { ...RTYPE, orchestrator: { ...RTYPE.orchestrator, prompt: "  " } }, focus: "" } }), /The Isolation refactor can't start: Give the refactor a prompt\./);
+  assert.deepEqual(f.log, [], "not even the main checkout was looked at");
+});
+
+test("without a refactor the start is a New Task session as before", async () => {
+  const f = fakeStart();
+  const { entry } = await beginInvestigation(f.deps, { ...ARGS, refactor: null });
+  assert.equal(entry.label, "Fix the login redirect");
+  assert.ok(entry.branch.startsWith("investigate/fix-the-login-redirect-"));
+});
+
+for (const role of ["orchestrator", "investigator", "worker"]) {
+  test(`start a refactor: a ${role} whose agent isn't installed refuses the start, with nothing made`, async () => {
+    const f = fakeStart();
+    f.deps.knownAgents = async () => [{ key: "claude", name: "Claude", run: ["claude"], installed: true }, { key: "codex", name: "Codex", run: ["codex"], installed: false }];
+    const type = { ...RTYPE, orchestrator: { ...RTYPE.orchestrator }, investigator: { ...RTYPE.investigator, agent: "claude" }, worker: { ...RTYPE.worker, agent: "claude", command: "" } };
+    type[role] = { ...type[role], agent: "codex" };
+    await assert.rejects(beginInvestigation(f.deps, { agent: null, description: "", where: WHERE, refactor: { type, focus: "" } }),
+      new RegExp(`^Error: The Isolation refactor's ${role} runs Codex, which isn't installed on this computer\\.$`));
+    assert.deepEqual(f.log, [], "no worktree, host or agent");
+  });
+}
+
+test("start a refactor: a custom agent isn't checked, and an agent the core doesn't list runs as its key", async () => {
+  const f = fakeStart();
+  f.deps.knownAgents = async () => [{ key: "custom", name: "Custom", run: [], installed: false }];
+  await beginInvestigation(f.deps, { agent: null, description: "", where: WHERE, refactor: { type: RTYPE, focus: "" } });
+  assert.equal(f.hcCalls[0][0], "run");
 });

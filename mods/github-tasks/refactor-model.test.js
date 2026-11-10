@@ -14,15 +14,15 @@ const valid = (over = {}) => {
   return { ...r, ...over };
 };
 
-test("a refactor type has an orchestrator and an investigator, labelled for people", () => {
+test("a refactor type has an orchestrator, an investigator and a worker, labelled for people", () => {
   assert.equal(VERSION, 1);
-  assert.deepEqual(ROLES, ["orchestrator", "investigator"]);
-  assert.deepEqual(ROLE_LABELS, { orchestrator: "Orchestrator", investigator: "Investigator" });
-  assert.deepEqual(Object.keys(blank()), ["version", "id", "name", "orchestrator", "investigator"]);
+  assert.deepEqual(ROLES, ["orchestrator", "investigator", "worker"]);
+  assert.deepEqual(ROLE_LABELS, { orchestrator: "Orchestrator", investigator: "Investigator", worker: "Worker" });
+  assert.deepEqual(Object.keys(blank()), ["version", "id", "name", "orchestrator", "investigator", "worker"]);
 });
 
-test("neither role has extra prompts, so the editor shows only the Prompt", () => {
-  assert.deepEqual(ROLE_PROMPTS, { orchestrator: [], investigator: [] });
+test("no role has extra prompts, so the editor shows only the Prompt", () => {
+  assert.deepEqual(ROLE_PROMPTS, { orchestrator: [], investigator: [], worker: [] });
   assert.deepEqual(Object.keys(ROLE_PROMPTS), ROLES);
 });
 
@@ -77,15 +77,36 @@ test("agents, custom commands and efforts are checked as for workflows", () => {
   const r = valid();
   r.orchestrator.effort = "extreme";
   r.investigator.agent = CUSTOM;
-  assert.deepEqual(validate(r).map((p) => p.field), ["orchestrator.effort", "investigator.command"]);
+  r.worker.agent = CUSTOM;
+  r.worker.effort = "extreme";
+  assert.deepEqual(validate(r).map((p) => p.field), ["orchestrator.effort", "investigator.command", "worker.command", "worker.effort"]);
   r.investigator.command = "my-agent --go";
+  r.worker.command = "my-agent --go";
+  r.worker.effort = "high";
   r.orchestrator.effort = "max";
   assert.deepEqual(validate(r), []);
+});
+
+test("a file without a worker section loads the worker defaults and gains the section when saved", () => {
+  const old = "version: 1\nid: x\nname: X\norchestrator:\n  agent: claude\n  prompt: Go.\n";
+  const r = parse(old);
+  assert.deepEqual(r.worker, { prompt: "", agent: "claude", command: "", model: "", effort: "medium" });
+  assert.deepEqual(validate(r), []);
+  assert.deepEqual(Object.keys(parseYaml(serialize(r))), ["version", "id", "name", "orchestrator", "investigator", "worker"]);
+});
+
+test("the worker prompt is optional and a worker keeps its own settings", () => {
+  const r = normalize({ worker: { agent: "claude", model: " sonnet ", effort: "high", prompt: "Build it." } });
+  assert.deepEqual(r.worker, { prompt: "Build it.", agent: "claude", command: "", model: "sonnet", effort: "high" });
+  assert.deepEqual(Object.keys(r.worker).sort(), ["agent", "command", "effort", "model", "prompt"]);
+  assert.deepEqual(validate(valid()), []);
 });
 
 test("only a custom agent keeps a command", () => {
   assert.equal(normalize({ investigator: { agent: "claude", command: "x" } }).investigator.command, "");
   assert.equal(normalize({ investigator: { agent: CUSTOM, command: " x " } }).investigator.command, "x");
+  assert.equal(normalize({ worker: { agent: "claude", command: "x" } }).worker.command, "");
+  assert.equal(normalize({ worker: { agent: CUSTOM, command: " x " } }).worker.command, "x");
 });
 
 test("dirty tracking sees edits and ignores shape noise", () => {
@@ -106,9 +127,10 @@ test("serialize and parse round-trip, in a fixed key order with settings before 
   const text = serialize(r);
   assert.ok(text.endsWith("\n") && !text.startsWith("{"));
   const data = parseYaml(text);
-  assert.deepEqual(Object.keys(data), ["version", "id", "name", "orchestrator", "investigator"]);
+  assert.deepEqual(Object.keys(data), ["version", "id", "name", "orchestrator", "investigator", "worker"]);
   assert.deepEqual(Object.keys(data.orchestrator), ["agent", "command", "model", "effort", "prompt"]);
   assert.deepEqual(Object.keys(data.investigator), ["agent", "command", "model", "effort", "prompt"]);
+  assert.deepEqual(Object.keys(data.worker), ["agent", "command", "model", "effort", "prompt"]);
   assert.deepEqual(parse(text), normalize(r));
 });
 

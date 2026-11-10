@@ -4,6 +4,7 @@
 // role's agent, model, permissions and labels whatever the agent types. investigations.js writes the session folder (this
 // module says what is in it); investigation-agents.js lists the helpers on the session's page by the labels set here.
 import { groomArgv } from "./model.js";
+import { CUSTOM } from "./workflow-model.js";
 import { FOLDER_LABEL, NAME_LABEL, ROLE_LABEL, agentArgv, readOnlyArgv, shQuote } from "./run.js";
 
 export const INVESTIGATION_LABEL = "herdr.investigation"; // on the session's agent and on each of its helpers: the session's id
@@ -38,34 +39,52 @@ export function newTaskAgentArgv(agent, groomer, dir) {
   return argv;
 }
 
-// A prompt's body is exactly three sentences, as run.js's are (run.test.js counts them), then a short list of mechanics.
-export function newTaskInvestigatorPrompt({ workDir, repoRoot, branch }) {
-  return [
-    "# You are an investigator for a New Task session", "",
-    "Investigate read-only: edit nothing, commit nothing and check out no other commit. Explore the session worktree to answer the New Task Orchestrator's brief, saying what you found with its file, line and proof. Send your findings to it with `hc send` and as your last message, then stay available for follow-up questions.", "",
-    `- You work in the session worktree ${workDir} on ${branch}, the same one as the New Task Orchestrator; read and search it freely, see an old file with \`git show <commit>:<path>\`, and run the repo's tests if that helps.`,
-    "- Never push, merge or open a pull request.",
-    `- Stay out of the main checkout ${repoRoot}, and don't start other agents.`,
-  ].join("\n");
+// The Refactor Orchestrator's command, from its refactor type's orchestrator ({ agent, command, model, effort }, as normalizeRole leaves it)
+// and the agents the core knows (`known`): what newTaskAgentArgv gives the New Task Orchestrator, with the type's own settings instead of the
+// New Task ones. A custom agent runs its command as it is.
+export function refactorAgentArgv(orchestrator, known, dir) {
+  const { agent, command, model, effort } = orchestrator;
+  if (agent === CUSTOM) return ["sh", "-c", command];
+  return newTaskAgentArgv({ key: agent, run: (known ?? []).find((a) => a.key === agent)?.run }, { model, effort }, dir);
 }
 
-export function newTaskWorkerPrompt({ workDir, repoRoot, branch }) {
-  return [
-    "# You are a prototype worker for a New Task session", "",
-    "Build a throwaway prototype of what the New Task Orchestrator's brief asks, in your own worktree, so it can find out whether the idea works. Commit as you go, never push, merge or open a pull request, and when you are done send the New Task Orchestrator what you built, your commits and what you learned with `hc send`. Your code is discarded when the person presses Done and never becomes the ticket's work, so build only as much as answers the brief.", "",
+// Which session a helper's prompt is for: "Refactor" in a refactor session, else "New Task".
+const sessionKind = (refactor) => (refactor ? "Refactor" : "New Task");
+
+// The refactor type's own prompt for a role, after the built-in text; nothing added when it has none.
+const withRolePrompt = (text, rolePrompt) => (String(rolePrompt ?? "").trim() ? `${text}\n\n## This refactor's instructions\n\n${String(rolePrompt).trim()}` : text);
+
+// A prompt's body is exactly three sentences, as run.js's are (run.test.js counts them), then a short list of mechanics.
+export function newTaskInvestigatorPrompt({ workDir, repoRoot, branch, refactor = false, rolePrompt = "" }) {
+  const who = sessionKind(refactor);
+  return withRolePrompt([
+    `# You are an investigator for a ${who} session`, "",
+    `Investigate read-only: edit nothing, commit nothing and check out no other commit. Explore the session worktree to answer the ${who} Orchestrator's brief, saying what you found with its file, line and proof. Send your findings to it with \`hc send\` and as your last message, then stay available for follow-up questions.`, "",
+    `- You work in the session worktree ${workDir} on ${branch}, the same one as the ${who} Orchestrator; read and search it freely, see an old file with \`git show <commit>:<path>\`, and run the repo's tests if that helps.`,
+    "- Never push, merge or open a pull request.",
+    `- Stay out of the main checkout ${repoRoot}, and don't start other agents.`,
+  ].join("\n"), rolePrompt);
+}
+
+export function newTaskWorkerPrompt({ workDir, repoRoot, branch, refactor = false, rolePrompt = "" }) {
+  const who = sessionKind(refactor);
+  return withRolePrompt([
+    `# You are a prototype worker for a ${who} session`, "",
+    `Build a throwaway prototype of what the ${who} Orchestrator's brief asks, in your own worktree, so it can find out whether the idea works. Commit as you go, never push, merge or open a pull request, and when you are done send the ${who} Orchestrator what you built, your commits and what you learned with \`hc send\`. Your code is discarded when the person presses Done and never becomes the ticket's work, so build only as much as answers the brief.`, "",
     `- You start in your own worktree, whose path ends in \`--\` and your job's name (it begins with ${workDir}) and which is on a branch that ends the same way (it begins with ${branch}), cut from the session branch ${branch}; leave the session worktree ${workDir} and the main checkout ${repoRoot} alone.`,
     "- Don't start other agents.",
-  ].join("\n");
+  ].join("\n"), rolePrompt);
 }
 
 // The files of a session's folder, by name: what the spawn script needs (the sub-agents' commands in argv: { investigator, worker })
-// and the two prompts the helpers are told to read.
-export function sessionFiles({ id, dir, workDir, repoRoot, branch, argv }) {
-  const place = { workDir, repoRoot, branch };
+// and the two prompts the helpers are told to read. `refactor` ({ investigator, worker }: the refactor type's own prompt for each role, or
+// "") is set in a refactor session, whose helpers answer to the Refactor Orchestrator and read their type's prompt after the built-in text.
+export function sessionFiles({ id, dir, workDir, repoRoot, branch, argv, refactor = null }) {
+  const place = { workDir, repoRoot, branch, refactor: Boolean(refactor) };
   return {
-    spawn: investigationSpawnScript({ id, dir, workDir, branch, argv }),
-    "investigator.md": newTaskInvestigatorPrompt(place),
-    "worker.md": newTaskWorkerPrompt(place),
+    spawn: investigationSpawnScript({ id, dir, workDir, branch, argv, refactor: Boolean(refactor) }),
+    "investigator.md": newTaskInvestigatorPrompt({ ...place, rolePrompt: refactor?.investigator }),
+    "worker.md": newTaskWorkerPrompt({ ...place, rolePrompt: refactor?.worker }),
   };
 }
 
@@ -73,11 +92,12 @@ export function sessionFiles({ id, dir, workDir, repoRoot, branch, argv }) {
 // agent to be ready before giving it its brief: a send to one still booting can be lost.
 // workDir: the session's worktree, on `branch` (investigate/...); a worker's goes beside it as `<workDir>--<job>` on `<branch>--<job>`.
 // A terminal is named `<id>-<name>`, at most 32 long, and labelled with the session's id, its role, its name and its folder.
-export function investigationSpawnScript({ id, dir, workDir, branch, argv }) {
+export function investigationSpawnScript({ id, dir, workDir, branch, argv, refactor = false }) {
+  const who = sessionKind(refactor);
   const roleArgs = (role) => `  ${role}) set -- ${argv[role].map(shQuote).join(" ")} ;;`;
   const room = Math.max(1, 32 - id.length - 1);
   return `#!/bin/sh
-# Starts an investigator or a prototype worker for New Task session ${id}. Usage:
+# Starts an investigator or a prototype worker for ${who} session ${id}. Usage:
 #   spawn investigator <name> <brief>   explores the session's worktree read-only, and reports back
 #   spawn worker <job> <brief>          builds a throwaway prototype in its own worktree and branch (made, or used again), and reports back
 set -u
@@ -129,7 +149,7 @@ fi
 term="$session_id-$name"
 hc run --bg --name "$term" --cwd "$cwd" --label "${INVESTIGATION_LABEL}=$session_id" --label "${ROLE_LABEL}=$role" --label "${NAME_LABEL}=$name" --label "${FOLDER_LABEL}=$cwd" -- "$@" >/dev/null || { echo "spawn: could not start $term" >&2; exit 1; }
 hc wait "$term" --timeout 60 >/dev/null 2>&1 || true
-message="Read $session_dir/$role.md and follow it. The New Task Orchestrator that started you is the terminal \${HC_TERMINAL_ID:-that started you}; reach it with hc send.
+message="Read $session_dir/$role.md and follow it. The ${who} Orchestrator that started you is the terminal \${HC_TERMINAL_ID:-that started you}; reach it with hc send.
 
 Your brief:
 

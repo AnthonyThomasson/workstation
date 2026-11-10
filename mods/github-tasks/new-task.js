@@ -11,21 +11,22 @@ import { AGENT_KEY, ENTER_HINT, NewTaskDialog, PROMPT, TITLE, chooseAgent, boxRo
 import { PRESS_BUTTONS } from "./popup.js";
 import { S, stop, action, gh } from "./ui.js";
 
-const stopPresses = (el, except) => PRESS_BUTTONS.filter((b) => b !== except).reduce((e, b) => e.on_mouse_down(b, stop), el);
+export const stopPresses = (el, except) => PRESS_BUTTONS.filter((b) => b !== except).reduce((e, b) => e.on_mouse_down(b, stop), el);
 
 // Starts the New Task session for `description` from what the sidebar passed (newTaskProps). Throws with a message for the person:
-// no agent installed, a space on another machine, no folder, anything startInvestigation refuses.
-export async function startTask(props, description, cx) {
+// no agent installed, a space on another machine, no folder, anything startInvestigation refuses. refactor: { type, focus } from the
+// Refactor dialog (refactor.js), which starts the same session with an empty description; null for the New task dialog.
+export async function startTask(props, description, cx, refactor = null) {
   const agent = chooseAgent(await installedAgents(), normalizeGroomer(shared(GROOMER_KEY)).agent ?? shared(AGENT_KEY));
-  if (!agent) throw new Error("Pick an agent that is installed on this computer.");
+  if (!agent && !refactor) throw new Error("Pick an agent that is installed on this computer."); // a refactor runs the agents its type names (investigations.js)
   const where = { cwd: props.where?.cwd, on: props.where?.on };
   const groomer = normalizeGroomer(shared(GROOMER_KEY));
   const subAgents = { investigator: normalizeSubAgent(shared(INVESTIGATOR_KEY)), worker: normalizeSubAgent(shared(WORKER_KEY)) }; // saved apart from the New Task Orchestrator's
-  if (props.local) return startLocalNewTask({ agent, description, mainRoot: props.local.mainRoot, groomer, subAgents, where }, cx);
+  if (props.local) return startLocalNewTask({ agent, description, mainRoot: props.local.mainRoot, groomer, subAgents, where, refactor }, cx);
   if (!props.project) throw new Error("This repo has no project to put the ticket on.");
   // The prompt names the statuses as the project spells them ("Todo", not the fixed "To Do").
   const options = (await loadStatusField(gh, props.project.id, where).catch(() => null))?.options ?? [];
-  return startNewTask({ agent, description, repo: props.repo, project: props.project, settings: { backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) }, groomer, subAgents, where }, cx);
+  return startNewTask({ agent, description, repo: props.repo, project: props.project, settings: { backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) }, groomer, subAgents, where, refactor }, cx);
 }
 
 export class NewTaskPage {
