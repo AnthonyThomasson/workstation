@@ -3,8 +3,8 @@
 // and in local mode.
 
 export const SECTIONS = [ // open: whether each starts expanded
-  { id: "next", label: "Up Next", open: true },
   { id: "investigations", label: "Investigations", open: true },
+  { id: "next", label: "Up Next", open: true },
   { id: "progress", label: "In Progress", open: true },
   { id: "review", label: "In Review", open: true },
   { id: "backlog", label: "Backlog", open: false },

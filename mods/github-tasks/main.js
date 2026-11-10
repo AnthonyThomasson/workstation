@@ -1,5 +1,5 @@
 // Tasks: the tickets on the GitHub Project linked to the selected space's repo, in the left menu under
-// Spaces: Up Next, Investigations, In Progress, In Review and Backlog (collapsed). Clicking a ticket
+// Spaces: Investigations, Up Next, In Progress, In Review and Backlog (collapsed). Clicking a ticket
 // opens it in a large popup to edit (editor.js, popup.js), and saving pushes the change to GitHub. Each row links
 // out to GitHub and has Start, which becomes View while its workflow runs. With "taskSource": "local" in the repo's
 // .herdr/tasks/tasks.json the list is the YAML task files instead (local-tasks.js, local-ui.js), read again every 3 seconds.

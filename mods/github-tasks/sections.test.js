@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { SECTIONS, emptyNote, initialOpen, investigationsAlone, sectionPlan, sectionText } from "./sections.js";
 
 test("the sections are Up Next, Investigations, In Progress, In Review, Backlog, in that order", () => {
-  assert.deepEqual(SECTIONS.map((s) => s.label), ["Up Next", "Investigations", "In Progress", "In Review", "Backlog"]);
-  assert.deepEqual(SECTIONS.map((s) => s.id), ["next", "investigations", "progress", "review", "backlog"]);
+  assert.deepEqual(SECTIONS.map((s) => s.label), ["Investigations", "Up Next", "In Progress", "In Review", "Backlog"]);
+  assert.deepEqual(SECTIONS.map((s) => s.id), ["investigations", "next", "progress", "review", "backlog"]);
 });
 
 test("Investigations is expanded by default, like every section but Backlog", () => {
@@ -38,8 +38,8 @@ test("collapsing hides the rows but keeps the count", () => {
 
 test("the plan follows the order whatever order the lists are given in, in GitHub and local mode alike", () => {
   const plan = sectionPlan({ backlog: [1], review: [2], progress: [3], investigations: [4], next: [5] }, initialOpen());
-  assert.deepEqual(plan.map((s) => s.id), ["next", "investigations", "progress", "review", "backlog"]);
-  assert.deepEqual(plan.slice(0, 4).map((s) => s.items), [[5], [4], [3], [2]]);
+  assert.deepEqual(plan.map((s) => s.id), ["investigations", "next", "progress", "review", "backlog"]);
+  assert.deepEqual(plan.slice(0, 4).map((s) => s.items), [[4], [5], [3], [2]]);
 });
 
 test("Investigations show alone when the ticket lists can't be drawn, but only with a context and a repo known", () => {
