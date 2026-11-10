@@ -36,6 +36,8 @@ import { investigationRow } from "./investigations.js";
 import { statusColor, statusLabel } from "./runview.js";
 import { InvestigationPage } from "./investigation-page.js";
 import { NewTaskPage } from "./new-task.js";
+import { RefactorPage } from "./refactor.js";
+import { refactorOverlay, TOOLTIP as REFACTOR_TIP } from "./refactor-dialog.js";
 import { AGENT_KEY, newTaskOverlay, newTaskProps, chooseAgent } from "./new-task-dialog.js";
 import { StartPage, startChosen } from "./start-dialog-view.js";
 import { cantStartHere, startOverlay, startProps } from "./start-dialog.js";
@@ -93,6 +95,7 @@ export default class GitHubTasks extends View {
       return;
     }
     if (this.role === "new-task") { this.newTask = new NewTaskPage(blockProps(), cx); return; }
+    if (this.role === "refactor") { this.refactorPage = new RefactorPage(blockProps(), cx); return; }
     if (this.role === "start") { this.startPage = new StartPage(blockProps(), cx); return; }
     if (this.role === "prompt") { this.promptPage = new PromptPage(blockProps()); return; }
     if (this.role === "settings") {
@@ -270,6 +273,7 @@ export default class GitHubTasks extends View {
     if (this.role === "run") return this.runPage.render(cx);
     if (this.role === "investigation") return this.investigationPage.render(cx);
     if (this.role === "new-task") return this.newTask.render(cx);
+    if (this.role === "refactor") return this.refactorPage.render(cx);
     if (this.role === "start") return this.startPage.render(cx);
     if (this.role === "prompt") return this.promptPage.render(cx);
     if (this.role === "settings") return this.renderSettings(cx);
@@ -298,7 +302,7 @@ export default class GitHubTasks extends View {
       .text_color(t.foreground).text_size(S().body)
       .child(h_flex().h(36).flex_none().pl(14).pr(8).gap(2).items_center()
         .child(div().flex_1().text_size(S().label).font_semibold().text_color(t.muted).child("Tasks"))
-        .when(Boolean(ctx), (el) => el.child(this.newTaskButton(t)))
+        .when(Boolean(ctx), (el) => el.child(this.newTaskButton(t)).child(this.refactorButton(t)))
         .child(iconButton("settings", "settings", t, () => showSettings(), false, problems ? `Task settings (${problems} ${problems === 1 ? "problem" : "problems"} found)` : "Task settings", undefined, problems ? t.ansi1 : undefined))
         .when(Boolean(ctx), (el) => el.child(iconButton("refresh", this.loading && !this.quiet ? "ring" : "sync", t, (_e, cx) => this.refresh(cx, { fresh: true }), this.loading && !this.quiet, "Refresh"))))
       .when(this.projects.length > 1, (el) => el.child(this.renderContext(t)))
@@ -445,10 +449,14 @@ export default class GitHubTasks extends View {
 
   // The + in the Tasks header: opens the New task dialog (new-task.js), a small overlay that asks what the ticket should be about, then
   // starts a New Task session (an Investigation) with that description. Nothing opens without a place to start from or an agent.
-  openNewTask() {
+  // The broom beside it (openRefactor) opens the Refactor dialog (refactor.js) from the same place, under the same conditions.
+  openNewTask() { this.openStartDialog(false); }
+  openRefactor() { this.openStartDialog(true); }
+  openStartDialog(refactor) {
     const ctx = this.ctx, project = this.project, local = this.source === "local";
     if (!ctx || !this.agent() || (local ? !this.place?.mainRoot || this.place.remote : !project)) return;
-    openOverlay(newTaskOverlay(newTaskProps({ repo: this.repo, project, local, mainRoot: this.place?.mainRoot, where: { cwd: ctx.folder, on: ctx.on } })));
+    const props = newTaskProps({ repo: this.repo, project, local, mainRoot: this.place?.mainRoot, where: { cwd: ctx.folder, on: ctx.on } });
+    openOverlay(refactor ? refactorOverlay(props) : newTaskOverlay(props));
   }
 
   // The Create Project button, shown when the repo has no project: makes one linked to the repo, selects
@@ -486,6 +494,11 @@ export default class GitHubTasks extends View {
   newTaskButton(t) {
     const agent = this.agent();
     return iconButton("new-task", "plus", t, () => this.openNewTask(), false, agent ? "Start a new task with an agent" : "No agent is installed to help with a task");
+  }
+
+  // The broom in the Tasks header (right of the +, shown while a space is open): opens the Refactor dialog.
+  refactorButton(t) {
+    return iconButton("refactor", "broom", t, () => this.openRefactor(), false, this.agent() ? REFACTOR_TIP : "No agent is installed to help with a task");
   }
 
   // A section's header: pressing it expands or collapses the tickets under it.
