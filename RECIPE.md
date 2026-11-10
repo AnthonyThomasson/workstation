@@ -1,6 +1,6 @@
 # Tony
 
-Tony is a full Herdr window layout with a 268px navigation sidebar, icon-rich draggable tabs, framed terminal panes, a shared right-hand tool panel and a compact status bar. It combines Herdr's built-in workspace mods with Usage, Sync, Skills, GitHub Tasks (which includes workflow editing and run pages), Status Bar and Tabs Icons, each kept in its own folder under `mods/`.
+Tony is a full Herdr window layout with a 268px navigation sidebar, icon-rich draggable tabs, framed terminal panes, a shared right-hand tool panel and a compact status bar. It combines Herdr's built-in workspace mods with Usage, Sync, Skills, GitHub Tasks (which includes workflow and refactor type editing and run pages), Status Bar and Tabs Icons, each kept in its own folder under `mods/`.
 
 ![Tony](preview.png)
 
@@ -308,7 +308,7 @@ All six custom mods have their own recipes and previews in the same folders that
 - [`mods/usage/RECIPE.md`](mods/usage/RECIPE.md) fills the 100px sidebar Usage block.
 - [`mods/status-bar/RECIPE.md`](mods/status-bar/RECIPE.md) fills the 28px bottom status block.
 - [`mods/skills/RECIPE.md`](mods/skills/RECIPE.md) supplies the `toggle` and default panel roles.
-- [`mods/github-tasks/RECIPE.md`](mods/github-tasks/RECIPE.md) covers tickets plus workflow editing and run pages. Tony mounts Tasks' default ticket sidebar and its `settings` role in the right panel; there is no Tasks toggle and no separate Workflows mod. Bug and Story starter files live under `mods/github-tasks/starters/`.
+- [`mods/github-tasks/RECIPE.md`](mods/github-tasks/RECIPE.md) covers tickets plus workflow and refactor type editing and run pages. Tony mounts Tasks' default ticket sidebar and its `settings` role in the right panel; there is no Tasks toggle and no separate Workflows mod. Starter files live under `mods/github-tasks/starters/`: Bug and Story for `~/.config/herdr-app/workflows`, and Redundant tests, Architecture and Isolation (refactor types) for `~/.config/herdr-app/refactors`.
 - [`mods/sync/RECIPE.md`](mods/sync/RECIPE.md) supplies the always-running `button` role and its `details` panel. It has no settings: running `mods/sync/sync.sh` from a clone links that clone, and the mod syncs it to Herdr by itself.
 - [`mods/tabs-icons/RECIPE.md`](mods/tabs-icons/RECIPE.md) is mounted in the flexible tab-row block with no props.
 

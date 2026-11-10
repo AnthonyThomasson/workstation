@@ -125,7 +125,7 @@ test("the local New Task prompt names the folders, the next id, the file name an
   assert.match(prompt, /exactly one file/);
   assert.match(prompt, /no `gh` calls/);
   assert.doesNotMatch(prompt, /GitHub Project/);
-  assert.match(prompt, /^# You are helping the person write a new task for app$/m);
+  assert.match(prompt, /^# You are the New Task Orchestrator, helping the person write a new task for app$/m);
 });
 
 // ---- which place and which source ----

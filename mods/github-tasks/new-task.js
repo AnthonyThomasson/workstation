@@ -20,7 +20,7 @@ export async function startTask(props, description, cx) {
   if (!agent) throw new Error("Pick an agent that is installed on this computer.");
   const where = { cwd: props.where?.cwd, on: props.where?.on };
   const groomer = normalizeGroomer(shared(GROOMER_KEY));
-  const subAgents = { investigator: normalizeSubAgent(shared(INVESTIGATOR_KEY)), worker: normalizeSubAgent(shared(WORKER_KEY)) }; // saved apart from the New Task agent's
+  const subAgents = { investigator: normalizeSubAgent(shared(INVESTIGATOR_KEY)), worker: normalizeSubAgent(shared(WORKER_KEY)) }; // saved apart from the New Task Orchestrator's
   if (props.local) return startLocalNewTask({ agent, description, mainRoot: props.local.mainRoot, groomer, subAgents, where }, cx);
   if (!props.project) throw new Error("This repo has no project to put the ticket on.");
   // The prompt names the statuses as the project spells them ("Todo", not the fixed "To Do").

@@ -78,6 +78,8 @@ export const LOGIN = ["auth", "login", "-h", "github.com", "-p", "https", "-s", 
 
 // Set to the time of each workflow save or delete, so the lists (and the doctor) refresh.
 export const WORKFLOWS_CHANGED = "github-tasks.workflows.changed";
+// The same for refactor types.
+export const REFACTORS_CHANGED = "github-tasks.refactors.changed";
 
 // Shared state main.js publishes for the settings page and the doctor.
 export const CONTEXT = "github-tasks.context"; // { repo, project, where }: what the sidebar looks at
@@ -168,7 +170,7 @@ export function checkTask(after, statusOptions = []) {
   return null;
 }
 
-// ---- Task agent ---------------------------------------------------------------------------------------
+// ---- New Task Orchestrator ------------------------------------------------------------------------------
 // The one sentence every prompt that asks the person questions uses.
 export const ASK_WITH_TOOL = "Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text.";
 
@@ -181,8 +183,8 @@ export function normalizeGroomer(raw) {
   return { agent: text(raw?.agent) || null, model: text(raw?.model), effort: EFFORTS.includes(raw?.effort) ? raw.effort : "medium" };
 }
 
-// The New Task agent's own helpers (investigation-spawn.js): the investigators and prototype workers it may start. Each has its own
-// agent, model and effort, saved apart from the New Task agent's: { agent, model, effort }, claude / "" (the agent's own) / medium.
+// The New Task Orchestrator's own helpers (investigation-spawn.js): the investigators and prototype workers it may start. Each has its own
+// agent, model and effort, saved apart from the New Task Orchestrator's: { agent, model, effort }, claude / "" (the agent's own) / medium.
 export const INVESTIGATOR_KEY = "github-tasks.investigator";
 export const WORKER_KEY = "github-tasks.protoWorker";
 // "custom" (a workflow's own command) is not a choice here, so a saved one reads as the default.
@@ -277,7 +279,7 @@ export function newTaskPrompt({ repo: repoName, project, backlog = STATUSES.back
   const repo = repoName || "<repo>";
   const board = `the GitHub Project "${project ? project.title ?? "" : "<project>"}"${project?.url ? ` (${project.url})` : ""}`;
   return [
-    `# You are helping the person write a new ticket for ${repo}`, "",
+    `# You are the New Task Orchestrator, helping the person write a new ticket for ${repo}`, "",
     "## Context", "",
     `- The repo is ${repo}. You are working in its folder, so you can read the code.`,
     `- Tickets live on ${board}. That project is the one place to add them.`,

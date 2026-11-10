@@ -1,4 +1,5 @@
-// The Tasks settings page: four agent sections (only New Task collapses), each with a read-only prompt tab, then the workflows
+// The Tasks settings page: the agent sections in two groups, Orchestrators and Agents (settings-model.js), each group and entry
+// collapsing and remembering its state, each entry with a read-only prompt tab, then the workflows and refactors
 // (workflow-list.js), which main.js builds once so they keep their place between renders. The agent controls are
 // global; the prompt tabs carry a snapshot of the current repo/project/status spellings. Not a View of its own:
 // main.js builds one and draws it from render.
@@ -7,11 +8,10 @@ import { v_flex, h_flex, InputState, Input, Popover, TextView } from "gpui-base"
 import { home, run, shared, setShared, theme } from "herdr";
 import { normalizeGroomer, normalizeSubAgent, GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, EFFORTS, PLACE, TASK_SOURCE } from "./model.js";
 import { CHANGED } from "./editor.js";
-import { NEW_TASK_LABELS } from "./workflow-model.js";
 import { CLAUDE_MODELS } from "./models.js";
 import { installedAgents } from "./groom.js";
 import { loadStatusField } from "./loader.js";
-import { normalizeSettingsSections, markdownLiteral } from "./settings-model.js";
+import { normalizeSettingsSections, markdownLiteral, SETTINGS_GROUPS, groupKey, promptTitle } from "./settings-model.js";
 import { DOCTOR_KEY, fixPrompt, doctorFor } from "./doctor.js";
 import { statusDir } from "./local-tasks.js";
 import { tasksConfig } from "./local-tasks-env.js";
@@ -19,23 +19,16 @@ import { sourceFor, sourceToggle } from "./local-ui.js";
 import { S, stop, note, icon, iconButton, action, gh } from "./ui.js";
 
 const SECTIONS_KEY = "github-tasks.settingsSections";
-const SECTIONS = [
-  { role: "newTask", label: "New Task" },
-  { role: "orchestrator", label: "Orchestrator" },
-  { role: "worker", label: "Worker" },
-  { role: "reviewer", label: "Reviewer" },
-  { role: "investigator", label: "Investigator" },
-];
-
-// The helpers the New Task agent may start (investigation-spawn.js), each with agent, model and effort of its own and a prompt tab.
+// The helpers the New Task Orchestrator may start (investigation-spawn.js), each with agent, model and effort of its own and a prompt tab.
 const SUB_AGENTS = [
-  { id: "investigator", heading: "Investigators", role: "newTaskInvestigator", about: "Read-only helpers the New Task agent starts to explore the code." },
+  { id: "investigator", heading: "Investigators", role: "newTaskInvestigator", about: "Read-only helpers the New Task Orchestrator starts to explore the code." },
   { id: "worker", heading: "Workers (prototypes)", role: "newTaskWorker", about: "Helpers it starts to build a throwaway prototype of something complex. Their code is discarded when the session is done." },
 ];
 
 export class TaskSettings {
-  constructor(props, cx, onClose, workflows) {
+  constructor(props, cx, onClose, workflows, refactors) {
     this.workflows = workflows ?? null; // the WorkflowList to draw under the agent settings
+    this.refactors = refactors ?? null; // the refactor types' WorkflowList, drawn below the workflows
     this.onClose = onClose ?? null; // set when the settings sit in the side panel, which needs a way to close
     this.repo = props?.repo ?? ""; // "" until a repo is known
     this.project = props?.project ?? null; // null until the repo has a linked project
@@ -71,16 +64,15 @@ export class TaskSettings {
   }
   sections() { return normalizeSettingsSections(shared(SECTIONS_KEY)); }
 
-  toggleSection(role, cx) {
+  toggleSection(key, cx) {
     const open = this.sections();
-    setShared(SECTIONS_KEY, { ...open, [role]: !open[role] });
+    setShared(SECTIONS_KEY, { ...open, [key]: !open[key] });
     cx.notify();
   }
 
   openPrompt(role) {
-    const label = SECTIONS.find((s) => s.role === role)?.label ?? NEW_TASK_LABELS[role];
     run("tab.new", {
-      name: `${label} prompt`,
+      name: promptTitle(role),
       mod: "github-tasks",
       props: { role: "prompt", promptRole: role, repo: this.repo, project: this.project, options: this.options, local: this.localPrompt() },
     });
@@ -156,8 +148,9 @@ export class TaskSettings {
       .child(div().id("task-settings-body").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(20).py(16).gap(16)
           .child(this.renderSource(t))
-          .children(SECTIONS.map((section) => this.section(t, cx, section)))
-          .when(Boolean(this.workflows), (el) => el.child(this.workflows.render(cx)))));
+          .children(SETTINGS_GROUPS.map((group) => this.group(t, group)))
+          .when(Boolean(this.workflows), (el) => el.child(this.workflows.render(cx)))
+          .when(Boolean(this.refactors), (el) => el.child(this.refactors.render(cx)))));
   }
 
   // What the doctor found at its last check of this place (published by doctor-run.js, not by this page).
@@ -193,27 +186,36 @@ export class TaskSettings {
           .child(action("doctor-copy", this.copied ? "Copied" : "Copy prompt", t, (_e, cx) => { cx.write_to_clipboard(prompt); this.copied = true; cx.notify(); }))));
   }
 
-  section(t, cx, { role, label }) {
-    const prompt = action(`settings-${role}-prompt`, "Prompt", t, () => this.openPrompt(role), true);
-    // Orchestrator, Worker, Reviewer and Investigator have nothing to set: just the name and a button to see the prompt.
-    if (role !== "newTask") return h_flex().id(`settings-${role}`).flex_none().h(30).gap(6).items_center()
-      .child(div().flex_1().min_w(0).truncate().text_size(S().title).font_semibold().child(label))
-      .child(prompt);
+  // A group of agent sections under a heading that collapses them all. Closed, only the heading shows.
+  group(t, { key, label, entries }) {
+    const state = groupKey(key), open = this.sections()[state];
+    return v_flex().id(`settings-group-${key}`).flex_none().gap(8)
+      .child(h_flex().child(this.toggle(t, `settings-group-${key}-toggle`, state, label, open, true)))
+      .when(open, (el) => el.child(v_flex().pl(20).gap(8).children(entries.map((entry) => this.section(t, entry)))));
+  }
+
+  // The chevron and name that open and close a group or an entry.
+  toggle(t, id, state, label, open, big) {
+    return h_flex().id(id).flex_1().min_w(0).h(30).gap(6).items_center().rounded(6).cursor_pointer()
+      .hover((s) => s.text_color(t.muted)).on_mouse_down("left", stop).on_click((_e, cx) => this.toggleSection(state, cx))
+      .child(icon(open ? "chevron-down" : "chevron-right", 14, t.muted))
+      .child(div().truncate().text_size(big ? S().title : S().body).font_semibold().child(label));
+  }
+
+  // One entry: its name (collapsing), a Prompt button, and when open New Task's settings or a one-line note.
+  section(t, { role, label, note: text }) {
     const open = this.sections()[role];
     return v_flex().id(`settings-${role}`).flex_none().gap(8)
       .child(h_flex().gap(6).items_center()
-        .child(h_flex().id(`settings-${role}-toggle`).flex_1().min_w(0).h(30).gap(6).items_center().rounded(6).cursor_pointer()
-          .hover((s) => s.text_color(t.muted)).on_mouse_down("left", stop).on_click((_e, cx) => this.toggleSection(role, cx))
-          .child(icon(open ? "chevron-down" : "chevron-right", 14, t.muted))
-          .child(div().truncate().text_size(S().title).font_semibold().child(label)))
-        .child(prompt))
-      .when(open, (el) => el.child(div().pl(20).pb(4).child(this.agentBody(t))));
+        .child(this.toggle(t, `settings-${role}-toggle`, role, label, open, false))
+        .child(action(`settings-${role}-prompt`, "Prompt", t, () => this.openPrompt(role), true)))
+      .when(open, (el) => el.child(div().pl(20).pb(4).child(role === "newTask" ? this.agentBody(t) : note(t, text))));
   }
 
   agentBody(t) {
     const g = this.groomer(), agent = this.agent();
     return v_flex().flex_none().gap(10)
-      .child(note(t, `The + in the Tasks header opens this agent. The model and effort are passed to the agent when it starts.`))
+      .child(note(t, `The + in the Tasks header opens the New Task Orchestrator. The model and effort are passed to the agent when it starts.`))
       .child(this.agentPicker(t, { prefix: "groom", state: g, selected: agent?.key, input: this.model, save: (patch) => this.saveGroomer(patch) }))
       .children(SUB_AGENTS.map((sub) => {
         const state = this.subAgent(sub.id);
@@ -227,7 +229,7 @@ export class TaskSettings {
   }
 
   // The Agent, Model and Effort controls of one agent. prefix makes their ids distinct from the other agents' on the page; selected is the
-  // agent key to mark (the New Task agent's falls back to what is installed, a helper's is what is saved); save(patch) keeps a change.
+  // agent key to mark (the New Task Orchestrator's falls back to what is installed, a helper's is what is saved); save(patch) keeps a change.
   agentPicker(t, { prefix, state, selected, input, save }) {
     const chip = (id, label, on, onClick) => h_flex().id(id).h(28).px(10).items_center().rounded(6).cursor_pointer()
       .border_1().border_color(t.border).bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted)

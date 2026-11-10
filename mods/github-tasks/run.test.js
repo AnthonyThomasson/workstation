@@ -225,10 +225,10 @@ test("the worker tests, reports with hc send, never merges, and rebases only whe
   const text = prompt("worker");
   assert.match(text, /Test what you change/);
   assert.match(text, /never push, merge or open a pull request/);
-  assert.match(text, /Ask the orchestrator with `hc send`/);
+  assert.match(text, /Ask the Task Orchestrator with `hc send`/);
   assert.ok(text.includes("`git rebase workflow/12-fix-the-login`"));
   assert.ok(text.includes("`git rebase --abort`"));
-  assert.match(text, /Only when the orchestrator sends you conflicting files/);
+  assert.match(text, /Only when the Task Orchestrator sends you conflicting files/);
   assert.match(text, /Don't start other agents/);
 });
 
@@ -280,7 +280,7 @@ test("the investigator is read-only, works in the ticket worktree, answers with 
   const text = prompt("investigator");
   assert.match(text, /^# You are an investigator in a workflow run: Features/m);
   assert.match(text, /^Investigate read-only: edit nothing, commit nothing and check out no other commit/m);
-  assert.match(text, /answer the orchestrator's brief/);
+  assert.match(text, /answer the Task Orchestrator's brief/);
   assert.match(text, /with `hc send` and as your last message/);
   assert.match(text, /ticket worktree \/src\/app-12-fix-the-login on workflow\/12-fix-the-login/);
   assert.match(text, /don't start other agents/);

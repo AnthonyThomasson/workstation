@@ -1,0 +1,30 @@
+version: 1
+id: architecture
+name: Architecture
+
+orchestrator:
+  agent: claude
+  command: ""
+  model: opus
+  effort: high
+  prompt: |-
+    Find places where the code's structure makes it harder to change, and propose deepening it.
+
+    Scope first: look at `git log` for the files and folders that change most, or change together, in recent history. These hot spots are where structure costs the most. Split them among the investigators, one area each.
+
+    Have each investigator look for:
+    - shallow modules: an interface about as big as the thing it hides, so callers learn nearly as much as the implementation
+    - leaky seams: callers that reach past a module's interface, or modules that must be changed together
+    - missing locality: one change or one bug that needs edits in many places
+
+    For every candidate, apply the deletion test: imagine deleting the module. If the complexity vanishes it was pass-through and should go; if the complexity reappears in every caller it was earning its keep.
+
+    Rate each candidate Strong, Worth exploring or Speculative, and say in a sentence or two what the deeper shape would be and what it would let callers stop knowing. List them in the terminal, best first, with the files involved. Do not write an HTML report, and make no changes until the person picks a candidate.
+
+investigator:
+  agent: claude
+  command: ""
+  model: sonnet
+  effort: medium
+  prompt: |-
+    Study the hot spot you are given (read the code and its recent history in `git log`). Report shallow modules, leaky seams and missing locality in it, apply the deletion test to each, and say how strong you think each candidate is. Report only; do not change any file.

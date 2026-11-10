@@ -7,8 +7,6 @@ import { EFFORTS } from "./model.js";
 export const VERSION = 1;
 export const ROLES = ["orchestrator", "worker", "reviewer", "investigator"];
 export const ROLE_LABELS = { orchestrator: "Orchestrator", worker: "Worker", reviewer: "Reviewer", investigator: "Investigator" };
-// What the New Task agent's prompts are called, in the settings' prompt tabs and on the prompt page.
-export const NEW_TASK_LABELS = { newTask: "New Task", newTaskInvestigator: "New Task investigator", newTaskWorker: "New Task prototype worker" };
 // The agent kinds `herdr agent start --kind` accepts.
 export const AGENTS = ["claude", "codex", "gemini", "pi", "cursor", "devin", "agy", "cline", "omp", "mastracode", "opencode",
   "copilot", "kimi", "kiro", "droid", "amp", "grok", "hermes", "kilo", "qodercli", "qwen", "letta", "maki", "muse"];
@@ -40,8 +38,8 @@ export const SCOPE_HINTS = {
 // Besides its own prompt, the orchestrator has one for planning the work and one for the retro after it.
 // Both are optional: left empty, that step gets no extra instructions.
 export const ORCHESTRATOR_PROMPTS = [
-  { key: "planning", label: "Planning prompt", hint: "how the orchestrator plans the work before handing it to the worker" },
-  { key: "retro", label: "Retro prompt", hint: "how the orchestrator looks back on the run once it is done" },
+  { key: "planning", label: "Planning prompt", hint: "how the Task Orchestrator plans the work before handing it to the worker" },
+  { key: "retro", label: "Retro prompt", hint: "how the Task Orchestrator looks back on the run once it is done" },
 ];
 // Only the orchestrator has extra prompts; worker, reviewer and investigator permissions are settings, not prompts.
 export const ROLE_PROMPTS = { orchestrator: ORCHESTRATOR_PROMPTS, worker: [], reviewer: [], investigator: [] };
@@ -86,7 +84,7 @@ function normalizeTrigger(raw) {
   return { labels: list, match: text(r.match) || "any" };
 }
 
-function normalizeRole(raw, extras = [], withPermissions = false) {
+export function normalizeRole(raw, extras = [], withPermissions = false) {
   const r = raw && typeof raw === "object" ? raw : {};
   const base = blankRole();
   const agent = text(r.agent) || base.agent; // an agent kind this list doesn't know is kept, so a newer file survives
@@ -163,10 +161,11 @@ export function parse(source) {
   return normalize(parseFile(source));
 }
 
-export function parseFile(source) {
+// noun: what the file is called in the error (refactor types are read with this too).
+export function parseFile(source, noun = "workflow") {
   let data;
   const asJson = /^\s*\{/.test(source);
   try { data = asJson ? JSON.parse(source) : parseYaml(source); } catch (e) { throw new Error(`not valid ${asJson ? "JSON" : "YAML"} (${e.message})`); }
-  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("not a workflow object");
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error(`not a ${noun} object`);
   return data;
 }

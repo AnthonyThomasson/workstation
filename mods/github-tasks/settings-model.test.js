@@ -1,20 +1,94 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { markdownLiteral, normalizeSettingsSections, promptForRole } from "./settings-model.js";
+import {
+  markdownLiteral, normalizeSettingsSections, promptForRole, SETTINGS_GROUPS, SETTINGS_ENTRIES, groupKey, promptTitle, promptPlaceholder,
+} from "./settings-model.js";
+
+const ALL_KEYS = ["group.orchestrators", "group.agents", "newTask", "orchestrator", "refactor", "worker", "reviewer", "investigator"];
+const closed = Object.fromEntries(ALL_KEYS.map((k) => [k, false]));
+
+test("the agent sections are grouped: Orchestrators (New Task, Task, Refactor) and Agents (Worker, Reviewer, Investigator)", () => {
+  assert.deepEqual(SETTINGS_GROUPS.map((g) => g.label), ["Orchestrators", "Agents"]);
+  assert.deepEqual(SETTINGS_GROUPS[0].entries.map((e) => [e.role, e.label]), [["newTask", "New Task"], ["orchestrator", "Task"], ["refactor", "Refactor"]]);
+  assert.deepEqual(SETTINGS_GROUPS[1].entries.map((e) => [e.role, e.label]), [["worker", "Worker"], ["reviewer", "Reviewer"], ["investigator", "Investigator"]]);
+  assert.deepEqual(SETTINGS_ENTRIES.map((e) => e.role), ["newTask", "orchestrator", "refactor", "worker", "reviewer", "investigator"]);
+});
+
+test("an entry never repeats its group's word", () => {
+  for (const g of SETTINGS_GROUPS) for (const e of g.entries) {
+    assert.doesNotMatch(e.label, /orchestrator|agent/i, e.label);
+  }
+});
+
+test("only New Task has settings; every other entry opens to a one-line note", () => {
+  for (const e of SETTINGS_ENTRIES) {
+    if (e.role === "newTask") { assert.equal(e.note, null); continue; }
+    assert.ok(e.note && !e.note.includes("\n"), e.role);
+  }
+  const note = (role) => SETTINGS_ENTRIES.find((e) => e.role === role).note;
+  assert.match(note("orchestrator"), /runs a workflow/i);
+  assert.match(note("orchestrator"), /plans/);
+  assert.match(note("orchestrator"), /Workers, Reviewers and Investigators/);
+  assert.match(note("orchestrator"), /decides what to fix/);
+  assert.match(note("refactor"), /refactor type/);
+  assert.match(note("refactor"), /Investigators/);
+  for (const role of ["worker", "reviewer"]) {
+    assert.match(note(role), /Task Orchestrator/);
+    assert.match(note(role), /only in workflow runs/);
+  }
+  assert.match(note("investigator"), /shared read-only agent/);
+  assert.match(note("investigator"), /New Task, Task and Refactor Orchestrators can all start it/);
+});
 
 test("settings sections start collapsed and only saved booleans reopen them", () => {
-  const closed = { newTask: false, orchestrator: false, worker: false, reviewer: false, investigator: false };
   assert.deepEqual(normalizeSettingsSections(), closed);
   assert.deepEqual(normalizeSettingsSections(null), closed);
+  assert.deepEqual(normalizeSettingsSections([true]), closed);
   assert.deepEqual(normalizeSettingsSections({ newTask: true, worker: true }), { ...closed, newTask: true, worker: true });
-  assert.deepEqual(normalizeSettingsSections({ investigator: true }), { ...closed, investigator: true });
   assert.deepEqual(normalizeSettingsSections({ newTask: "true", orchestrator: 1, reviewer: false, unknown: true }), closed);
+});
+
+test("every group and every entry remembers its own open state", () => {
+  const saved = Object.fromEntries(ALL_KEYS.map((k) => [k, true]));
+  assert.deepEqual(normalizeSettingsSections(saved), saved);
+  assert.deepEqual(normalizeSettingsSections({ [groupKey("agents")]: true, refactor: true }), { ...closed, "group.agents": true, refactor: true });
+  assert.equal(groupKey("orchestrators"), "group.orchestrators");
+});
+
+test("state saved before the grouping still reads: the old four keys keep their value and the new ones start closed", () => {
+  const old = { newTask: true, orchestrator: true, worker: false, reviewer: true };
+  assert.deepEqual(normalizeSettingsSections(old), { ...closed, newTask: true, orchestrator: true, reviewer: true });
+});
+
+test("prompt tab titles name the orchestrators in full", () => {
+  assert.equal(promptTitle("newTask"), "New Task Orchestrator prompt");
+  assert.equal(promptTitle("orchestrator"), "Task Orchestrator prompt");
+  assert.equal(promptTitle("refactor"), "Refactor Orchestrator prompt");
+  assert.equal(promptTitle("worker"), "Worker prompt");
+  assert.equal(promptTitle("reviewer"), "Reviewer prompt");
+  assert.equal(promptTitle("investigator"), "Investigator prompt");
+  assert.equal(promptTitle("nope"), "Prompt");
+});
+
+test("Refactor has no built-in prompt yet, only a note that it comes with the Refactor Orchestrator ticket", () => {
+  assert.equal(promptForRole("refactor"), null);
+  assert.match(promptPlaceholder("refactor"), /comes with the Refactor Orchestrator ticket/);
+  for (const role of ["newTask", "orchestrator", "worker", "reviewer", "investigator"]) assert.equal(promptPlaceholder(role), null);
+});
+
+test("Investigator opens the real read-only investigator prompt", () => {
+  assert.match(promptForRole("investigator"), /<the workflow's investigator prompt goes here>/);
+});
+
+test("the New Task Orchestrator's helpers' prompt tabs are titled for them", () => {
+  assert.equal(promptTitle("newTaskInvestigator"), "New Task investigator prompt");
+  assert.equal(promptTitle("newTaskWorker"), "New Task prototype worker prompt");
 });
 
 test("built-in role prompts use the sample run placeholders", () => {
   for (const role of ["orchestrator", "worker", "reviewer", "investigator"]) {
     const prompt = promptForRole(role);
-    assert.match(prompt, new RegExp(`You are (the |a |an )?${role}`));
+    assert.match(prompt, new RegExp(`You are (the Task Orchestrator|an? ${role})`));
     assert.match(prompt, /<workflow name>/);
     assert.match(prompt, /Ticket: <ticket title> in <owner\/repo>/);
     assert.match(prompt, /<ticket worktree>/);
@@ -86,5 +160,5 @@ test("the New Task investigator and prototype worker prompts have tabs of their 
 });
 
 test("the settings sections are unchanged by the sub-agents, which live inside New Task", () => {
-  assert.deepEqual(Object.keys(normalizeSettingsSections()), ["newTask", "orchestrator", "worker", "reviewer", "investigator"]);
+  assert.deepEqual(Object.keys(normalizeSettingsSections()), ["group.orchestrators", "group.agents", "newTask", "orchestrator", "refactor", "worker", "reviewer", "investigator"]);
 });

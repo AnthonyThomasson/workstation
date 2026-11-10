@@ -1,4 +1,4 @@
-// Investigations, Herdr's side: starts a New Task agent the way a workflow starts a run (investigations.js has the logic and
+// Investigations, Herdr's side: starts a New Task Orchestrator the way a workflow starts a run (investigations.js has the logic and
 // says how it works): a branch and worktree of its own, a folder of its own for its helpers' spawn script and prompts
 // (investigation-spawn.js), a host terminal that is its parent in the Agents panel, the agent in the background, its own space and tab. Also brings a
 // session's tab to the front again (viewInvestigation) and shows the agents again after an app restart. The tab's page is
@@ -54,7 +54,7 @@ async function removeSession(dir) {
   if (sessionFolder(home(), String(dir).split("/").pop()) === dir) await exec("rm", ["-rf", dir]);
 }
 
-// Starts an Investigation: a New Task agent working in a worktree of its own, from the repo's default branch, in a tab of its own
+// Starts an Investigation: a New Task Orchestrator working in a worktree of its own, from the repo's default branch, in a tab of its own
 // space; its first message is the New Task prompt with `description` in it. The agent is started under a host (bgrun.js) so the Agents
 // panel lists it; a host that won't open fails the start. It works from a ticket's worktree space too (the branch
 // is cut in the repo's main checkout). Throws with a message for the person when it can't, with nothing left behind.

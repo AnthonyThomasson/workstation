@@ -1,4 +1,4 @@
-// An Investigation: a New Task agent that works like a workflow run. It has a branch and a git worktree of its own
+// An Investigation: a New Task Orchestrator that works like a workflow run. It has a branch and a git worktree of its own
 // (investigate/<what it is about>-<time>), runs in the background owned by no tab (hc run --bg, like a run's orchestrator),
 // and is shown in the first tab of a space of its own at the worktree, which the Spaces sidebar nests under the repo's.
 // Like a ticket run's orchestrator it has a **host** (bgrun.js): a tiny terminal in a tab of the repo's space (a space of its own named for the repo
@@ -178,7 +178,7 @@ export async function beginInvestigation(deps, { agent, description, repo, groom
 
 // ---- Done ---------------------------------------------------------------------------------------------
 
-// Takes an investigation down. After the refusal checks (read-only), the New Task agent is ended first, and checked to be no longer
+// Takes an investigation down. After the refusal checks (read-only), the New Task Orchestrator is ended first, and checked to be no longer
 // live, so it can't start anything more. Then everything the session started: every terminal labelled with the session's id (the
 // investigators and prototype workers: found by label, so it works when the agent had ended already; live ones are killed, finished
 // ones removed), its host, every prototype worktree (`<workDir>--<job>` on `<branch>--<job>`), every `<branch>--*` branch and the
@@ -204,7 +204,7 @@ export async function endInvestigation(deps, entry) {
   const folder = sessionFolder(deps.home, id);
   if (!folder) return fail(`Done refused: the session id ${id || "(none)"} isn't an investigation's, so its folder can't be found. Nothing was ended or removed.`);
 
-  // The New Task agent first, so it can't start anything more while Done works. A failed kill of a terminal that is still live stops
+  // The New Task Orchestrator first, so it can't start anything more while Done works. A failed kill of a terminal that is still live stops
   // Done (a kill that exits 0 is believed: the listing may not have refreshed yet, as in endRun and endHost).
   const killed = await deps.hc(["kill", agent]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
   if (killed.code !== 0 && (deps.terminals() ?? []).some((k) => k.state === "live" && k.address === agent)) return fail(`Couldn't end the agent ${agent}: ${said(killed) || "kill failed"}. Nothing else was removed; end it with hc kill, then press Done again.`);

@@ -1,15 +1,20 @@
-// One workflow, in the center: a tab the Task settings page opens (props.role "workflow-editor", props.id the
-// workflow's id, or null for a new one). The trigger labels, where it is kept (global, or the repo), and for the orchestrator,
-// the worker, the reviewer and the investigator their agent, model, effort and prompt. Save writes the YAML file.
+// One workflow or refactor type, in the center: a tab the Task settings page opens (props.role "workflow-editor",
+// props.kind "workflow" (the default) or "refactor", props.id the item's id, or null for a new one). For a workflow:
+// the trigger labels, where it is kept (global, or the repo), and for the orchestrator, the worker, the reviewer and the investigator
+// their agent, model, effort, permissions and prompt. For a refactor type: where it is kept, and the orchestrator
+// and the investigator with their agent, model, effort and prompt (kinds.js says which fields a kind has).
+// Save writes the YAML file.
 // Not a View of its own: main.js builds one in init and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { run, setShared, theme } from "herdr";
-import { ROLES, ROLE_PROMPTS, ROLE_LABELS, AGENTS, AGENT_LABELS, CUSTOM, PERMISSIONS, PERMISSION_LABELS, PERMISSION_HINTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, SCOPES, SCOPE_LABELS, SCOPE_HINTS, blank, normalize, isDirty, uniqueLabels } from "./workflow-model.js";
+import { AGENTS, AGENT_LABELS, CUSTOM, PERMISSIONS, PERMISSION_LABELS, PERMISSION_HINTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, uniqueLabels } from "./workflow-model.js";
+import { kindOf, changedKey, editorTitle, hasTrigger, hasPermissions, promptField } from "./kinds.js";
+import { repoKindDir } from "./places.js";
 import { EFFORTS } from "./model.js";
 import { StoreError } from "./store.js";
 import { S, icon, stop, iconButton, action, gh, scrim } from "./ui.js";
-import { WORKFLOWS_CHANGED, store, codexModels, kimiModels, globalDirText } from "./workflow-env.js";
+import { store, codexModels, kimiModels, globalDirText } from "./workflow-env.js";
 import { modelsFor, matchModels, hasModel } from "./models.js";
 import { findRepo } from "./loader.js";
 import { loadLabels, matchLabels, hasLabel } from "./labels.js";
@@ -17,34 +22,36 @@ import { loadLabels, matchLabels, hasLabel } from "./labels.js";
 
 export class WorkflowEditor {
   constructor(props, cx) {
+    this.kind = kindOf(props?.kind);
+    const M = this.kind.model; // parse / normalize / blank / ROLES ... of this kind
     this.id = props?.id ?? null;
     this.where = props?.where ?? {}; // the selected space's folder and machine, to find its repo's labels
     this.scope = props?.scope ?? "global"; // where the file is kept (model.js SCOPES)
     this.baseScope = this.scope;
     this.repoRoot = props?.repoRoot ?? null; // the repo of the space this was opened from: where "Repo" is
-    this.nameInput = InputState.new({ value: "", placeholder: "Feature development" });
+    this.nameInput = InputState.new({ value: "", placeholder: this.kind.labels.namePlaceholder });
     this.labelInput = InputState.new({ value: "", placeholder: "Type a label and press Enter" });
     this.triggerLabels = []; // the labels already added, shown as chips; the field holds the next one
     this.match = "any";
     this.roles = {};
-    for (const role of ROLES) {
+    for (const role of M.ROLES) {
       this.roles[role] = {
-        agent: "claude", effort: "medium", ...(role === "orchestrator" ? {} : { permissions: "auto" }),
+        agent: "claude", effort: "medium", ...(hasPermissions(this.kind, role) ? { permissions: "auto" } : {}),
         command: InputState.new({ value: "", placeholder: "my-agent --flag" }),
         model: InputState.new({ value: "", placeholder: "Agent's default" }),
         prompt: TextareaState.new({ value: "", rows: 7 }),
       };
     }
     // The extra prompts: the orchestrator's planning and retro.
-    for (const role of ROLES) for (const { key } of ROLE_PROMPTS[role]) this.roles[role][key] = TextareaState.new({ value: "", rows: 5 });
+    for (const role of M.ROLES) for (const { key } of M.ROLE_PROMPTS[role]) this.roles[role][key] = TextareaState.new({ value: "", rows: 5 });
     const touched = (_e, cx) => { if (this.notice?.kind === "saved") this.notice = null; cx.notify(); };
-    const inputs = [this.nameInput, ...ROLES.flatMap((r) => [this.roles[r].prompt, this.roles[r].command]), ...ROLES.flatMap((r) => ROLE_PROMPTS[r].map((p) => this.roles[r][p.key]))];
+    const inputs = [this.nameInput, ...M.ROLES.flatMap((r) => [this.roles[r].prompt, this.roles[r].command]), ...M.ROLES.flatMap((r) => M.ROLE_PROMPTS[r].map((p) => this.roles[r][p.key]))];
     for (const input of inputs) input.on("change", touched);
 
     // A model field completes from its agent's models: the list shows under the field that has focus.
     this.have = { codex: [], kimi: [] }; // the models Codex and Kimi Code list, read from their own files
     this.modelFocus = null; // the role whose model field is being used
-    for (const role of ROLES) {
+    for (const role of M.ROLES) {
       const field = this.roles[role].model;
       field.on("change", (_e, cx) => { this.modelFocus = role; touched(_e, cx); });
       field.on("focus", (_e, cx) => { this.modelFocus = role; cx.notify(); });
@@ -69,14 +76,14 @@ export class WorkflowEditor {
     this.search.on("change", (_e, cx) => cx.notify());
     this.search.on("submit", (_e, cx) => { const first = this.options()[0]; if (first) this.choose(first, cx); });
 
-    this.previous = null; // what the file held when it was read: { workflow, text, scope }
-    this.base = blank();
+    this.previous = null; // what the file held when it was read: { item, text, scope }
+    this.base = M.blank();
     this.loaded = false;
     this.loadError = null;
     this.saving = false;
     this.notice = null; // { kind: "saved" | "error" | "conflict", text }
     this.load(cx);
-    this.loadLabels(cx);
+    if (hasTrigger(this.kind)) this.loadLabels(cx);
     codexModels().then((list) => { this.have.codex = list; cx.notify(); });
     kimiModels().then((list) => { this.have.kimi = list; cx.notify(); });
   }
@@ -160,37 +167,42 @@ export class WorkflowEditor {
 
   // The form as a workflow.
   current() {
-    const w = { ...blank(), id: this.id ?? "", name: this.nameInput.value(), trigger: { labels: [...this.triggerLabels, this.labelInput.value()], match: this.match } };
-    for (const role of ROLES) {
+    const M = this.kind.model;
+    const w = { ...M.blank(), id: this.id ?? "", name: this.nameInput.value() };
+    if (hasTrigger(this.kind)) w.trigger = { labels: [...this.triggerLabels, this.labelInput.value()], match: this.match };
+    for (const role of M.ROLES) {
       const r = this.roles[role];
-      w[role] = { prompt: r.prompt.value(), agent: r.agent, command: r.command.value(), model: r.model.value(), effort: r.effort, ...(role === "orchestrator" ? {} : { permissions: r.permissions }) };
+      w[role] = { prompt: r.prompt.value(), agent: r.agent, command: r.command.value(), model: r.model.value(), effort: r.effort, ...(hasPermissions(this.kind, role) ? { permissions: r.permissions } : {}) };
     }
-    for (const role of ROLES) for (const { key } of ROLE_PROMPTS[role]) w[role][key] = this.roles[role][key].value();
-    return normalize(w);
+    for (const role of M.ROLES) for (const { key } of M.ROLE_PROMPTS[role]) w[role][key] = this.roles[role][key].value();
+    return M.normalize(w);
   }
 
-  // Puts a workflow in the form.
+  // Puts an item in the form.
   show(workflow) {
+    const M = this.kind.model;
     this.nameInput.set_value(workflow.name);
-    this.triggerLabels = [...workflow.trigger.labels];
-    this.match = workflow.trigger.match;
-    this.labelInput.set_value("");
-    for (const role of ROLES) {
+    if (hasTrigger(this.kind)) {
+      this.triggerLabels = [...workflow.trigger.labels];
+      this.match = workflow.trigger.match;
+      this.labelInput.set_value("");
+    }
+    for (const role of M.ROLES) {
       const r = this.roles[role], w = workflow[role];
       r.agent = w.agent;
       r.effort = w.effort;
-      if (role !== "orchestrator") r.permissions = w.permissions;
+      if (hasPermissions(this.kind, role)) r.permissions = w.permissions;
       r.command.set_value(w.command);
       r.model.set_value(w.model);
       r.prompt.set_value(w.prompt);
     }
-    for (const role of ROLES) for (const { key } of ROLE_PROMPTS[role]) this.roles[role][key].set_value(workflow[role][key] ?? "");
-    this.base = normalize(workflow);
+    for (const role of M.ROLES) for (const { key } of M.ROLE_PROMPTS[role]) this.roles[role][key].set_value(workflow[role][key] ?? "");
+    this.base = M.normalize(workflow);
   }
 
-  // The store for what is known now: the global folder, and this workflow's repo where it has one.
+  // The store for what is known now: the global folder, and this item's repo where it has one.
   store() {
-    return store({ repo: this.repoRoot });
+    return store({ repo: this.repoRoot, kind: this.kind });
   }
 
   // Whether each scope can be saved to here, and why not when it cannot.
@@ -200,7 +212,7 @@ export class WorkflowEditor {
   }
 
   dirty() {
-    return this.loaded && (isDirty(this.base, this.current()) || this.scope !== this.baseScope);
+    return this.loaded && (this.kind.model.isDirty(this.base, this.current()) || this.scope !== this.baseScope);
   }
 
   load(cx) {
@@ -212,15 +224,15 @@ export class WorkflowEditor {
       try {
         if (this.id) {
           const found = await this.store().load(this.scope, this.id);
-          if (!found) throw new Error("This workflow's file is gone.");
+          if (!found) throw new Error(`This ${this.kind.noun}'s file is gone.`);
           this.previous = found;
           this.baseScope = found.scope;
-          this.show(found.workflow);
+          this.show(found.item);
         } else {
           this.previous = null;
-          // A new workflow goes where it can: global, else the repo of the space it was opened from.
+          // A new one goes where it can: global, else the repo of the space it was opened from.
           if (this.unavailable("global") && !this.unavailable("repo")) this.scope = this.baseScope = "repo";
-          this.show(blank());
+          this.show(this.kind.model.blank());
         }
         this.loaded = true;
       } catch (e) {
@@ -250,18 +262,20 @@ export class WorkflowEditor {
         // Overwrite: take the file as it is now as the thing being replaced.
         if (force && this.previous) this.previous = (await s.load(this.previous.scope, this.id)) ?? this.previous;
         const saved = await s.save(after, this.scope, this.previous);
-        const named = !this.id || saved.workflow.name !== this.base.name;
-        this.id = saved.workflow.id;
-        this.previous = { workflow: saved.workflow, text: saved.text, scope: saved.scope };
+        const named = !this.id || saved.item.name !== this.base.name;
+        this.id = saved.item.id;
+        this.previous = { item: saved.item, text: saved.text, scope: saved.scope };
         this.baseScope = saved.scope;
-        this.base = normalize(saved.workflow);
-        this.triggerLabels = [...saved.workflow.trigger.labels]; // what was typed is now one of the chips
-        this.labelInput.set_value("");
-        const where = { global: `in ${globalDirText()}`, repo: `in ${this.repoRoot}/.herdr/workflows. Commit it with the repo` }[saved.scope];
+        this.base = this.kind.model.normalize(saved.item);
+        if (hasTrigger(this.kind)) {
+          this.triggerLabels = [...saved.item.trigger.labels]; // what was typed is now one of the chips
+          this.labelInput.set_value("");
+        }
+        const where = { global: `in ${globalDirText(this.kind)}`, repo: `in ${repoKindDir(this.repoRoot, this.kind.folder)}. Commit it with the repo` }[saved.scope];
         const extra = ` ${where}.`;
         this.notice = { kind: "saved", text: `Saved${extra}` };
-        if (named) run("tab.rename", { name: saved.workflow.name });
-        setShared(WORKFLOWS_CHANGED, Date.now());
+        if (named) run("tab.rename", { name: saved.item.name });
+        setShared(changedKey(this.kind), Date.now());
       } catch (e) {
         this.notice = e instanceof StoreError && e.kind === "conflict"
           ? { kind: "conflict", text: e.message }
@@ -320,7 +334,7 @@ export class WorkflowEditor {
       : div().id("workflow-scroll").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(20).py(16).gap(16)
           .child(this.renderBasics(t))
-          .children(ROLES.map((role) => this.renderRole(t, role))));
+          .children(this.kind.model.ROLES.map((role) => this.renderRole(t, role))));
     return v_flex().id("workflow-editor").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
       .on_key_down((e, cx) => {
         if (e.key === "escape" && this.picker) { this.closePicker(cx); cx.stop_propagation(); }
@@ -335,7 +349,7 @@ export class WorkflowEditor {
   renderHeader(t) {
     return h_flex().h(44).flex_none().pl(20).pr(12).gap(8).items_center().border_b(1).border_color(t.border)
       .child(div().flex_1().min_w(0).truncate().text_size(S().secondary).text_color(t.muted)
-        .child(this.id ? `Workflow · ${this.id}` : "New workflow"));
+        .child(editorTitle(this.kind, this.id)));
   }
 
   renderLoadError(t) {
@@ -361,9 +375,9 @@ export class WorkflowEditor {
   renderBasics(t) {
     return v_flex().flex_none().gap(12)
       .child(v_flex().gap(4).child(this.heading(t, "Name")).child(this.field(t, "name", this.nameInput, 36)))
-      .child(this.renderTrigger(t))
+      .when(hasTrigger(this.kind), (el) => el.child(this.renderTrigger(t)))
       .child(v_flex().gap(4).child(this.heading(t, "Kept"))
-        .child(h_flex().flex_wrap().gap(4).children(SCOPES.map((scope) => {
+        .child(h_flex().flex_wrap().gap(4).children(this.kind.model.SCOPES.map((scope) => {
           const on = scope === this.scope, off = Boolean(this.unavailable(scope)) && !on;
           return h_flex().id(`scope-${scope}`).h(28).px(12).items_center().rounded(6)
             .border_1().border_color(t.border).bg(on ? t.selected : t.background).text_size(S().secondary)
@@ -371,12 +385,12 @@ export class WorkflowEditor {
             .when(off, (el) => el.opacity(0.4))
             .when(!off, (el) => el.cursor_pointer().hover((x) => x.bg(on ? t.selected : t.hover)).on_mouse_down("left", stop)
               .on_click((_e, cx) => this.setScope(scope, cx)))
-            .child(SCOPE_LABELS[scope]);
+            .child(this.kind.model.SCOPE_LABELS[scope]);
         })))
-        .child(div().text_size(S().label).text_color(t.muted).child(SCOPE_HINTS[this.scope] ?? ""))
+        .child(div().text_size(S().label).text_color(t.muted).child(this.kind.model.SCOPE_HINTS[this.scope] ?? ""))
         .when(Boolean(this.unavailable(this.scope)), (el) => el.child(div().text_size(S().label).text_color(t.ansi1).child(this.unavailable(this.scope))))
         .when(!this.unavailable(this.scope), (el) => el.child(div().text_size(S().label).text_color(t.muted)
-          .child(`In ${this.scope === "global" ? globalDirText() : `${this.repoRoot}/.herdr/workflows`}.`))));
+          .child(`In ${this.scope === "global" ? globalDirText(this.kind) : repoKindDir(this.repoRoot, this.kind.folder)}.`))));
   }
 
   // The labels that start the workflow: the added ones as chips, a field that adds the next and completes from
@@ -419,11 +433,11 @@ export class WorkflowEditor {
         .child(`${this.repo} has no label named ${missing.map((l) => `"${l}"`).join(", ")}. ${missing.length > 1 ? "They" : "It"} can't start anything until ${missing.length > 1 ? "they exist" : "it exists"} on GitHub.`)));
   }
 
-  // Orchestrator, worker, reviewer or investigator: agent, model, effort, prompt.
+  // One role of the kind (orchestrator, worker, reviewer, investigator): agent, model, effort, permissions, prompt.
   renderRole(t, role) {
-    const r = this.roles[role];
+    const r = this.roles[role], M = this.kind.model, prompt = promptField(this.kind, role);
     return v_flex().id(`role-${role}`).flex_none().p(14).gap(12).rounded(10).border_1().border_color(t.border)
-      .child(div().text_size(S().title).font_semibold().child(ROLE_LABELS[role]))
+      .child(div().text_size(S().title).font_semibold().child(M.ROLE_LABELS[role]))
       .child(h_flex().gap(10).items_end()
         .child(v_flex().w(170).flex_none().gap(4).child(this.heading(t, "Agent"))
           .child(h_flex().id(`agent-${role}`).h(34).px(10).gap(6).items_center().rounded(8).border_1().border_color(t.input).cursor_pointer()
@@ -450,7 +464,7 @@ export class WorkflowEditor {
             .on_click((_e, cx) => this.setEffort(role, effort, cx))
             .child(effort);
         }))))
-      .when(role !== "orchestrator", (el) => el.child(v_flex().gap(4)
+      .when(hasPermissions(this.kind, role), (el) => el.child(v_flex().gap(4)
         .child(this.heading(t, "Permissions"))
         .child(h_flex().flex_wrap().gap(4).children(PERMISSIONS.map((permissions) => {
           const on = permissions === r.permissions;
@@ -462,10 +476,10 @@ export class WorkflowEditor {
             .child(PERMISSION_LABELS[permissions]);
         })))
         .child(div().text_size(S().label).text_color(t.muted).child(PERMISSION_HINTS[role]))))
-      .child(v_flex().gap(4).child(this.heading(t, "Prompt"))
+      .child(v_flex().gap(4).child(this.heading(t, prompt.label, prompt.hint))
         .child(div().id(`field-prompt-${role}`).p(10).rounded(8).border_1().border_color(t.input).on_mouse_down("left", stop)
           .child(Textarea.new(r.prompt).w_full().text_size(S().body).text_color(t.foreground))))
-      .children(ROLE_PROMPTS[role].map(({ key, label, hint }) => v_flex().gap(4).child(this.heading(t, label, hint))
+      .children(M.ROLE_PROMPTS[role].map(({ key, label, hint }) => v_flex().gap(4).child(this.heading(t, label, hint))
         .child(div().id(`field-${key}-${role}`).p(10).rounded(8).border_1().border_color(t.input).on_mouse_down("left", stop)
           .child(Textarea.new(r[key]).w_full().text_size(S().body).text_color(t.foreground)))));
   }
@@ -482,7 +496,7 @@ export class WorkflowEditor {
       .bg(t.popover).shadow_lg().text_color(t.foreground).text_size(S().body)
       .on_mouse_down("left", stop)
       .child(h_flex().flex_none().items_center().gap(8)
-        .child(div().flex_1().min_w(0).text_size(S().title).font_semibold().child(`${ROLE_LABELS[this.picker]} agent`))
+        .child(div().flex_1().min_w(0).text_size(S().title).font_semibold().child(`${this.kind.model.ROLE_LABELS[this.picker]} agent`))
         .child(div().text_size(S().label).text_color(t.muted).child("Esc"))
         .child(iconButton("picker-close", "close", t, (_e, cx) => this.closePicker(cx))))
       .child(h_flex().id("picker-search").h(34).flex_none().px(10).gap(8).items_center().rounded(8).border_1().border_color(t.input)

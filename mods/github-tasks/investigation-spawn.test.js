@@ -60,7 +60,7 @@ test("the sub-agents' agent comes from their own settings: a codex worker, an ag
   assert.equal(subAgentArgv("worker", settings({ agent: "claude" }), undefined, DIR)[0], "claude");
 });
 
-test("the New Task agent, when it is Claude, may run the spawn script and hc send, read, wait, ls and kill, and may read the session folder; it keeps edit tools", () => {
+test("the New Task Orchestrator, when it is Claude, may run the spawn script and hc send, read, wait, ls and kill, and may read the session folder; it keeps edit tools", () => {
   const argv = newTaskAgentArgv({ key: "claude", run: ["claude"] }, { model: "opus", effort: "high" }, DIR);
   assert.deepEqual(argv.slice(0, 5), ["claude", "--model", "opus", "--effort", "high"], "the groomer's own flags come first, as before");
   assert.deepEqual(values(argv, "--add-dir"), [DIR]);
@@ -70,7 +70,7 @@ test("the New Task agent, when it is Claude, may run the spawn script and hc sen
   assert.ok(!argv.some((a) => /^Bash\(hc:\*\)$|Bash\(\*\)/.test(a)), "bare hc would run anything");
 });
 
-test("the New Task agent keeps its command when it is not Claude, and with no directory", () => {
+test("the New Task Orchestrator keeps its command when it is not Claude, and with no directory", () => {
   assert.deepEqual(newTaskAgentArgv({ key: "codex", run: ["codex"] }, { model: "m", effort: "low" }, DIR), ["codex", "-m", "m", "-c", "model_reasoning_effort=low"]);
   assert.deepEqual(newTaskAgentArgv({ key: "kimi", run: ["kimi"] }, { model: "k" }, DIR), ["kimi", "--model", "k"]);
   assert.deepEqual(newTaskAgentArgv({ key: "claude", run: ["claude"] }, {}, null), ["claude", "--effort", "medium"]);
@@ -94,7 +94,7 @@ test("the investigator is read-only, explores the session worktree, reports with
   const text = newTaskInvestigatorPrompt(P);
   assert.match(bodyOf(text), /read-only: edit nothing, commit nothing/);
   assert.match(bodyOf(text), /hc send/);
-  assert.match(bodyOf(text), /New Task agent's brief/);
+  assert.match(bodyOf(text), /New Task Orchestrator's brief/);
   assert.ok(text.includes("/wt/investigate-x") && text.includes("investigate/x"));
   assert.ok(text.includes("`git show <commit>:<path>`"));
   assert.match(text, /Never push, merge or open a pull request/);
@@ -120,7 +120,7 @@ test("the prototype worker builds a throwaway in its own worktree, commits there
 });
 
 test("both sub-agent prompts name the folder their files are in only through the agent that reads them; no workflow sections", () => {
-  for (const text of [newTaskInvestigatorPrompt(P), newTaskWorkerPrompt(P)]) assert.doesNotMatch(text, /This workflow's instructions|orchestrator/i);
+  for (const text of [newTaskInvestigatorPrompt(P), newTaskWorkerPrompt(P)]) assert.doesNotMatch(text, /This workflow's instructions|(?<!New Task )orchestrator/i);
 });
 
 test("the New Task prompts (GitHub and local) tell the agent how to start investigators and workers, and that prototype code is thrown away", () => {
@@ -352,12 +352,12 @@ test("start: the session folder is written after the worktree and before the hos
   assert.ok(f.written[0].files["worker.md"].includes(`begins with ${entry.workDir})`) && !f.written[0].files["worker.md"].includes("<job>"));
 });
 
-test("start: the New Task agent gets the session folder's plumbing, and the sub-agents their own settings", async () => {
+test("start: the New Task Orchestrator gets the session folder's plumbing, and the sub-agents their own settings", async () => {
   const f = fakeStart();
   await beginInvestigation(f.deps, { ...ARGS, subAgents: { investigator: settings({ model: "haiku", effort: "low" }), worker: settings({ model: "opus", effort: "max" }) } });
   const dir = `/home/me/.herdr/investigations/inv-${T}`;
   const agent = f.hcCalls[0].slice(f.hcCalls[0].indexOf("--") + 1);
-  assert.deepEqual(agent.slice(0, 3), ["claude", "--effort", "high"], "the New Task agent's own effort, not the sub-agents'");
+  assert.deepEqual(agent.slice(0, 3), ["claude", "--effort", "high"], "the New Task Orchestrator's own effort, not the sub-agents'");
   assert.deepEqual(values(agent, "--add-dir"), [dir]);
   assert.ok(values(agent, "--allowedTools").includes(`Bash(${dir}/spawn:*)`));
   const spawn = f.written[0].files.spawn;

@@ -112,7 +112,7 @@ test("a token whose scopes gh does not list is not accused", () => {
 test("a saved grooming agent that is not installed is an issue", () => {
   const issues = diagnose(healthy({ groomerAgent: "gemini" }));
   assert.deepEqual(issues.map((i) => [i.kind, i.agent]), [["agent-missing", "gemini"]]);
-  assert.deepEqual(issues[0].usedBy, ["Task agent"]);
+  assert.deepEqual(issues[0].usedBy, ["New Task Orchestrator"]);
 });
 
 test("no saved grooming agent means nothing to check there", () => {
@@ -126,7 +126,7 @@ test("each missing workflow agent is one issue listing every role that uses it",
   ] };
   const issues = diagnose(healthy({ workflows, groomerAgent: "gemini" }));
   assert.deepEqual(issues.map((i) => i.agent), ["gemini"]);
-  assert.deepEqual(issues[0].usedBy, ["Task agent", "Bug orchestrator", "Bug reviewer", "Story worker", "Story investigator"]);
+  assert.deepEqual(issues[0].usedBy, ["New Task Orchestrator", "Task Orchestrator of Bug", "reviewer of Bug", "worker of Story", "investigator of Story"]);
 });
 
 test("an unknown project, repo or statuses carry the last check's project issues", () => {
@@ -275,7 +275,7 @@ test("the prompt covers agents and workflow files, and says what not to touch", 
   const issues = diagnose(healthy({ groomerAgent: "gemini", workflows: { items: [], errors: ["bug.yaml: Line 2: bad"] } }));
   const prompt = fixPrompt(issues, context);
   assert.match(prompt, /"gemini"/);
-  assert.match(prompt, /Task agent/);
+  assert.match(prompt, /New Task Orchestrator/);
   assert.match(prompt, /bug\.yaml: Line 2: bad/);
   assert.match(prompt, /workflows/);
   assert.match(prompt, /Ask the person before/);

@@ -1,0 +1,30 @@
+version: 1
+id: isolation
+name: Isolation
+
+orchestrator:
+  agent: claude
+  command: ""
+  model: opus
+  effort: high
+  prompt: |-
+    Find modules (or mods) that reach into each other's internals, and parts that could stand alone behind a clear interface.
+
+    Map the units first: the modules, packages or mods in the repo, and what each imports from the others. Give each investigator a group of units to trace.
+
+    Have each investigator report:
+    - imports that reach into another unit's internals instead of its public interface, or share state or files with it
+    - anything one unit assumes about another that is not written down
+    - parts that depend on little, are used by several others, or are likely to be reused, and so could stand alone behind a small, clear interface
+
+    For each finding give the files, what crosses the boundary, and what the interface would have to be for the units to be independent. Check whether a test or script already enforces the boundary, and say so.
+
+    Finish with the worst offenders first, rated by how much they couple the code and how easy they are to untangle. Make no changes until the person picks what to isolate.
+
+investigator:
+  agent: claude
+  command: ""
+  model: sonnet
+  effort: medium
+  prompt: |-
+    Trace the units you are given: what each imports from the others, what they share, and what they assume of each other. Report every place one reaches into another's internals, and the parts that could stand alone. Report only; do not change any file.

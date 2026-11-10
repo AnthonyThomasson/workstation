@@ -33,7 +33,7 @@ export function connect({ id, orchestrator, title, space, folder, props, existin
     app, run, paneOf: (made) => paneOf(made, cx), sleep: (ms) => cx.sleep(ms),
     // The focused pane is the left one by now: the app says what it shows (an address). Not yet focused counts as not shown.
     isShown: (orchestrator, left) => { const f = focused(); return f?.pane === left && f.shown === orchestrator; },
-    warn: (body) => notify({ title: kind.startsWith("investigation") ? "The agent may not be showing" : "The orchestrator may not be showing", body, level: "warning" }),
+    warn: (body) => notify({ title: kind.startsWith("investigation") ? "The agent may not be showing" : "The Task Orchestrator may not be showing", body, level: "warning" }),
     setSlot: (runId, slot) => setShared(slotKey(runId), slot),
   }, { id, orchestrator, name: title, space, spaceName: title, folder, props, existing, kind });
 }

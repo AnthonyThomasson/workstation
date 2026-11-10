@@ -34,7 +34,7 @@ test("the placeholder prints a note naming the orchestrator and then waits, so i
   const [sh, c, script] = placeholderArgv("t7");
   assert.equal(sh, "sh");
   assert.equal(c, "-c");
-  assert.match(script, /shows orchestrator t7/);
+  assert.match(script, /shows Task Orchestrator t7/);
   assert.match(script, /View reconnects it/);
   assert.doesNotMatch(script, /Connecting/, "it must read true once the orchestrator has ended too");
   assert.match(script, /exec tail -f \/dev\/null$/);

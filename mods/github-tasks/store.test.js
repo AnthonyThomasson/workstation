@@ -57,10 +57,10 @@ test("clone saves copies in the source scope without changing the source", async
   const { store } = setup();
   await store.save(wf("Bug", { worker: { ...wf().worker, model: "sonnet" } }), "repo");
   const first = await store.clone("repo", "bug"), second = await store.clone("repo", "bug");
-  assert.deepEqual([first.workflow.id, first.workflow.name, first.scope], ["bug-copy", "Bug copy", "repo"]);
-  assert.deepEqual([second.workflow.id, second.workflow.name, second.scope], ["bug-copy-2", "Bug copy 2", "repo"]);
-  assert.equal(first.workflow.worker.model, "sonnet");
-  assert.equal((await store.load("repo", "bug")).workflow.name, "Bug");
+  assert.deepEqual([first.item.id, first.item.name, first.scope], ["bug-copy", "Bug copy", "repo"]);
+  assert.deepEqual([second.item.id, second.item.name, second.scope], ["bug-copy-2", "Bug copy 2", "repo"]);
+  assert.equal(first.item.worker.model, "sonnet");
+  assert.equal((await store.load("repo", "bug")).item.name, "Bug");
   assert.deepEqual((await store.list()).map((i) => i.id).sort(), ["bug", "bug-copy", "bug-copy-2"]);
 });
 
@@ -70,9 +70,9 @@ test("clone keeps its unique id when a long name fills the slug limit", async ()
   await store.save(wf(name), "repo");
   const first = await store.clone("repo", originalId);
   const second = await store.clone("repo", originalId);
-  assert.equal(first.workflow.id, `${"a".repeat(58)}-2`);
-  assert.equal(second.workflow.id, `${"a".repeat(58)}-3`);
-  assert.deepEqual((await store.list()).map((item) => item.id).sort(), [originalId, first.workflow.id, second.workflow.id].sort());
+  assert.equal(first.item.id, `${"a".repeat(58)}-2`);
+  assert.equal(second.item.id, `${"a".repeat(58)}-3`);
+  assert.deepEqual((await store.list()).map((item) => item.id).sort(), [originalId, first.item.id, second.item.id].sort());
 });
 
 test("replacementFromYaml takes the clipboard workflow but keeps the destination id", () => {
@@ -97,8 +97,8 @@ test("paste replaces the workflow in place, keeping its id and scope", async () 
   await store.save(wf("Original"), "repo");
   const pasted = wf("From clipboard", { id: "different", worker: { ...wf().worker, model: "pasted-model" } });
   const saved = await store.paste("repo", "original", serialize(pasted));
-  assert.deepEqual([saved.workflow.id, saved.workflow.name, saved.scope], ["original", "From clipboard", "repo"]);
-  assert.equal(saved.workflow.worker.model, "pasted-model");
+  assert.deepEqual([saved.item.id, saved.item.name, saved.scope], ["original", "From clipboard", "repo"]);
+  assert.equal(saved.item.worker.model, "pasted-model");
   assert.deepEqual([...d.fs.keys()], [`${REPO}/original.yaml`]);
 });
 
@@ -244,14 +244,14 @@ test("a valid paste can replace a malformed listed file without taking its id fr
   const { d, store } = setup(ALL, { [`${REPO}/broken.yaml`]: "name: [" });
   await store.paste("repo", "broken", serialize(wf("Fixed", { id: "other" })));
   assert.deepEqual([...d.fs.keys()], [`${REPO}/broken.yaml`]);
-  assert.equal((await store.load("repo", "broken")).workflow.name, "Fixed");
+  assert.equal((await store.load("repo", "broken")).item.name, "Fixed");
 });
 
 test("a new workflow is written under its slug in the folder of the scope it is saved to", async () => {
   for (const [scope, dir] of Object.entries(ALL)) {
     const { d, store } = setup();
     const saved = await store.save(wf("Feature Work"), scope);
-    assert.equal(saved.workflow.id, "feature-work");
+    assert.equal(saved.item.id, "feature-work");
     assert.equal(saved.scope, scope);
     assert.deepEqual([...d.fs.keys()], [`${dir}/feature-work.yaml`]);
   }
@@ -313,7 +313,7 @@ test("load finds a workflow in the scope asked for, and null when it is not ther
   await store.save(wf("Global one"), "global");
   await store.save(wf("Repo one"), "repo");
   assert.equal((await store.load("global", "global-one")).scope, "global");
-  assert.equal((await store.load("repo", "repo-one")).workflow.id, "repo-one");
+  assert.equal((await store.load("repo", "repo-one")).item.id, "repo-one");
   assert.equal(await store.load("repo", "global-one"), null);
   assert.equal(await store.load("global", "repo-one"), null);
 });
@@ -322,22 +322,22 @@ test("saving again replaces the file; the id stays when the name changes", async
   const { store } = setup();
   await store.save(wf("First name"), "repo");
   const previous = await store.load("repo", "first-name");
-  const saved = await store.save({ ...previous.workflow, name: "Second name" }, "repo", previous);
-  assert.equal(saved.workflow.id, "first-name");
+  const saved = await store.save({ ...previous.item, name: "Second name" }, "repo", previous);
+  assert.equal(saved.item.id, "first-name");
   assert.equal((await store.list()).length, 1);
-  assert.equal((await store.load("repo", "first-name")).workflow.name, "Second name");
+  assert.equal((await store.load("repo", "first-name")).item.name, "Second name");
 });
 
 test("moving a workflow to another scope writes the new file and removes the old one", async () => {
   const { d, store } = setup();
   await store.save(wf("Mover"), "global");
   let previous = await store.load("global", "mover");
-  const moved = await store.save(previous.workflow, "repo", previous);
+  const moved = await store.save(previous.item, "repo", previous);
   assert.equal(moved.scope, "repo");
   assert.deepEqual([...d.fs.keys()], [`${REPO}/mover.yaml`]);
 
   previous = await store.load("repo", "mover");
-  await store.save(previous.workflow, "global", previous);
+  await store.save(previous.item, "global", previous);
   assert.deepEqual([...d.fs.keys()], [`${GLOBAL}/mover.yaml`]);
   assert.equal((await store.list()).length, 1);
 });
@@ -350,7 +350,7 @@ test("a move onto a file already there is refused, and neither file is touched",
   d.fs.set(`${GLOBAL}/twin.json`, JSON.stringify({ name: "Twin from elsewhere" }));
   const before = new Map(d.fs);
   const previous = await store.load("repo", "twin");
-  await assert.rejects(store.save(previous.workflow, "global", previous), (e) => e.kind === "invalid" && /already exists in global/.test(e.message));
+  await assert.rejects(store.save(previous.item, "global", previous), (e) => e.kind === "invalid" && /already exists in global/.test(e.message));
   assert.deepEqual(d.fs, before);
 });
 
@@ -359,7 +359,7 @@ test("a file changed on disk since it was read is a conflict, and is not overwri
   await store.save(wf("Shared"), "global");
   const previous = await store.load("global", "shared");
   d.fs.set(`${GLOBAL}/shared.yaml`, previous.text.replace("do it", "someone else's edit"));
-  await assert.rejects(store.save({ ...previous.workflow, name: "Mine" }, "global", previous), (e) => e instanceof StoreError && e.kind === "conflict");
+  await assert.rejects(store.save({ ...previous.item, name: "Mine" }, "global", previous), (e) => e instanceof StoreError && e.kind === "conflict");
   assert.match(d.fs.get(`${GLOBAL}/shared.yaml`), /someone else's edit/);
 });
 
@@ -397,7 +397,7 @@ test("a custom agent's command and the trigger labels are saved and read back", 
   const w = wf("Everything", { trigger: { labels: ["a", "b"], match: "all" } });
   w.worker = { ...w.worker, agent: "custom", command: "my-agent --go" };
   await store.save(w, "repo");
-  const back = (await store.load("repo", "everything")).workflow;
+  const back = (await store.load("repo", "everything")).item;
   assert.deepEqual(back.trigger, { labels: ["a", "b"], match: "all" });
   assert.equal(back.worker.command, "my-agent --go");
   assert.equal(parseYaml(d.fs.get(`${REPO}/everything.yaml`)).worker.command, "my-agent --go");
@@ -415,9 +415,9 @@ test("files saved before scopes and before several labels still load", async () 
   const old = JSON.stringify({ id: "old", name: "Old", global: true, trigger: { label: "x" } });
   const { store } = setup(ALL, { [`${GLOBAL}/old.json`]: old });
   const found = await store.load("global", "old");
-  assert.deepEqual(found.workflow.trigger, { labels: ["x"], match: "any" });
-  assert.equal("strategy" in found.workflow, false);
-  assert.equal("global" in found.workflow, false);
+  assert.deepEqual(found.item.trigger, { labels: ["x"], match: "any" });
+  assert.equal("strategy" in found.item, false);
+  assert.equal("global" in found.item, false);
 });
 
 test("a workflow saved as JSON is rewritten as YAML, and the JSON file goes", async () => {
@@ -426,7 +426,7 @@ test("a workflow saved as JSON is rewritten as YAML, and the JSON file goes", as
   const found = await store.load("global", "old");
   assert.equal(found.legacy, true);
   assert.deepEqual((await store.list()).map((i) => i.id), ["old"]);
-  const saved = await store.save({ ...found.workflow, orchestrator: { ...found.workflow.orchestrator, prompt: "o" }, reviewer: { ...found.workflow.reviewer, prompt: "r" } }, "global", found);
+  const saved = await store.save({ ...found.item, orchestrator: { ...found.item.orchestrator, prompt: "o" }, reviewer: { ...found.item.reviewer, prompt: "r" } }, "global", found);
   assert.deepEqual([...d.fs.keys()], [`${GLOBAL}/old.yaml`]);
   assert.equal(saved.legacy, false);
   assert.equal(parseYaml(d.fs.get(`${GLOBAL}/old.yaml`)).name, "Old");
@@ -457,4 +457,137 @@ test("loadAll reads every workflow whole, with its scope, by name, and reports t
 test("loadAll without a repo reads only the global folder", async () => {
   const { store } = setup({ global: GLOBAL }, { [`${GLOBAL}/g.yaml`]: "name: G\n", [`${REPO}/r.yaml`]: "name: R\n" });
   assert.deepEqual((await store.loadAll()).items.map((i) => i.id), ["g"]);
+});
+
+// ---- the refactor kind: the same store over the refactors folders and refactor-model.js ----
+
+import { readFileSync } from "node:fs";
+import { REFACTOR, WORKFLOW } from "./kinds.js";
+import * as refactorModel from "./refactor-model.js";
+
+const R_GLOBAL = "/home/me/.config/herdr-app/refactors", R_REPO = "/proj/.herdr/refactors";
+const R_ALL = { global: R_GLOBAL, repo: R_REPO };
+const rf = (name, over = {}) => {
+  const r = refactorModel.blank();
+  r.name = name;
+  r.orchestrator.prompt = "Find it.";
+  return { ...r, ...over };
+};
+const rsetup = (dirs = R_ALL, files = {}) => { const d = disk(files); return { d, store: makeStore({ io: d.io, dirs, kind: REFACTOR }) }; };
+const starterText = (name) => readFileSync(new URL(`./starters/${name}.yaml`, import.meta.url), "utf8");
+
+test("the default kind is the workflow one", () => {
+  assert.equal(WORKFLOW.folder, "workflows");
+  assert.equal(REFACTOR.folder, "refactors");
+});
+
+test("a refactor type is saved under its slug in the refactors folder, serialized by refactor-model", async () => {
+  const { d, store } = rsetup();
+  const saved = await store.save(rf("Redundant tests"), "global");
+  assert.deepEqual([...d.fs.keys()], [`${R_GLOBAL}/redundant-tests.yaml`]);
+  assert.equal(d.fs.get(`${R_GLOBAL}/redundant-tests.yaml`), refactorModel.serialize({ ...rf("Redundant tests"), id: "redundant-tests" }));
+  assert.equal(saved.item.id, "redundant-tests");
+  assert.equal(saved.item, saved.item);
+  assert.equal(saved.scope, "global");
+  await store.save(rf("Repo only"), "repo");
+  assert.ok(d.fs.has(`${R_REPO}/repo-only.yaml`));
+});
+
+test("a refactor type with no prompt, or a name taken in any scope, is refused with the refactor wording", async () => {
+  const { d, store } = rsetup();
+  await assert.rejects(store.save(rf("No prompt", { orchestrator: { ...rf("x").orchestrator, prompt: "" } }), "global"),
+    (e) => e.kind === "invalid" && e.message === "Give the refactor a prompt.");
+  await store.save(rf("Taken"), "global");
+  await assert.rejects(store.save(rf("Taken"), "repo"), (e) => e.kind === "invalid" && e.message === "A refactor with that name already exists.");
+  assert.deepEqual([...d.fs.keys()], [`${R_GLOBAL}/taken.yaml`]);
+});
+
+test("the refactor list and loadAll are by name with scopes, repo only with a repo, and a bad file shows its error", async () => {
+  const { d, store } = rsetup(R_ALL, { [`${R_GLOBAL}/broken.yaml`]: "- a" });
+  await store.save(rf("Zeta"), "global");
+  await store.save(rf("Alpha"), "repo");
+  assert.deepEqual(await store.list(), [
+    { id: "alpha", name: "Alpha", scope: "repo" },
+    { id: "broken", name: "broken", scope: "global", error: "not a refactor object" },
+    { id: "zeta", name: "Zeta", scope: "global" },
+  ]);
+  const all = await store.loadAll();
+  assert.deepEqual(all.items.map((i) => [i.id, i.scope]), [["alpha", "repo"], ["zeta", "global"]]);
+  assert.deepEqual(all.errors, ["broken.yaml: not a refactor object"]);
+  const noRepo = makeStore({ io: d.io, dirs: { global: R_GLOBAL }, kind: REFACTOR });
+  assert.deepEqual((await noRepo.list()).map((i) => i.id), ["broken", "zeta"]);
+  assert.deepEqual(noRepo.available, ["global"]);
+  await assert.rejects(noRepo.save(rf("Nope"), "repo"), (e) => e.kind === "unavailable" && e.message === "Repo refactors aren't available here.");
+});
+
+test("a workflow store never lists the refactors folder, nor a refactor store the workflows one", async () => {
+  const d = disk();
+  const workflows = makeStore({ io: d.io, dirs: { global: GLOBAL } });
+  const refactors = makeStore({ io: d.io, dirs: { global: R_GLOBAL }, kind: REFACTOR });
+  await workflows.save(wf("A workflow"), "global");
+  await refactors.save(rf("A refactor"), "global");
+  assert.deepEqual((await workflows.list()).map((i) => i.id), ["a-workflow"]);
+  assert.deepEqual((await refactors.list()).map((i) => i.id), ["a-refactor"]);
+});
+
+test("load, save again, move, conflict and remove work for refactor types", async () => {
+  const { d, store } = rsetup();
+  await store.save(rf("Move me"), "global");
+  const found = await store.load("global", "move-me");
+  assert.equal(found.item.name, "Move me");
+  assert.equal(await store.load("repo", "move-me"), null);
+  const edited = { ...found.item, name: "Moved", investigator: { ...found.item.investigator, prompt: "Look." } };
+  const again = await store.save(edited, "global", found);
+  assert.equal(again.item.id, "move-me"); // the id stays when the name changes
+  assert.equal(again.item.investigator.prompt, "Look.");
+  const moved = await store.save(again.item, "repo", again);
+  assert.deepEqual([...d.fs.keys()], [`${R_REPO}/move-me.yaml`]);
+  d.fs.set(`${R_REPO}/move-me.yaml`, "changed elsewhere");
+  await assert.rejects(store.save(moved.item, "repo", moved), (e) => e.kind === "conflict" && e.message === "This refactor changed on disk after you opened it.");
+  d.fs.set(`${R_REPO}/move-me.yaml`, moved.text);
+  await store.remove("repo", "move-me");
+  assert.equal(d.fs.size, 0);
+  await assert.rejects(store.remove("repo", "move-me"), (e) => e.kind === "missing" && e.message === "That refactor is already gone.");
+});
+
+test("clone and paste work for refactor types, and paste validates as a refactor", async () => {
+  const { d, store } = rsetup();
+  await store.save(rf("Tidy"), "global");
+  const copy = await store.clone("global", "tidy");
+  assert.deepEqual([copy.item.id, copy.item.name], ["tidy-copy", "Tidy copy"]);
+  assert.equal(cloneWorkflow(rf("Tidy", { id: "tidy" }), ["tidy"], REFACTOR).id, "tidy-copy");
+  assert.ok(await store.copyText("global", "tidy"));
+  await assert.rejects(store.paste("global", "tidy", "- a"), (e) => e.kind === "invalid" && /Clipboard is not a valid refactor: not a refactor object/.test(e.message));
+  await assert.rejects(store.paste("global", "tidy", refactorModel.serialize(rf("No prompt", { orchestrator: { ...rf("x").orchestrator, prompt: "" } }))),
+    (e) => e.kind === "invalid" && e.message === "Give the refactor a prompt.");
+  const pasted = await store.paste("global", "tidy", refactorModel.serialize(rf("Other name", { id: "ignored" })));
+  assert.deepEqual([pasted.item.id, pasted.item.name], ["tidy", "Other name"]);
+  assert.deepEqual([...d.fs.keys()].sort(), [`${R_GLOBAL}/tidy-copy.yaml`, `${R_GLOBAL}/tidy.yaml`]);
+  assert.throws(() => replacementFromYaml("- a", "x", REFACTOR), /Clipboard is not a valid refactor/);
+});
+
+test("restore puts the three shipped refactor starters in the plan's scope, replacing what was there", async () => {
+  const starters = REFACTOR.starters.map(starterText);
+  const { d, store } = rsetup();
+  await store.save(rf("Old global"), "global");
+  await store.save(rf("Old project"), "repo");
+  await store.restore(restorePlan(await store.list(), "repo", "/proj"), starters);
+  assert.deepEqual([...d.fs.keys()].sort(), [`${R_GLOBAL}/old-global.yaml`, ...REFACTOR.starters.map((n) => `${R_REPO}/${n}.yaml`)].sort());
+  assert.equal(d.fs.get(`${R_REPO}/architecture.yaml`), starterText("architecture"));
+  await store.restore(restorePlan(await store.list(), "all", "/proj"), starters);
+  assert.deepEqual([...d.fs.keys()].sort(), REFACTOR.starters.map((n) => `${R_GLOBAL}/${n}.yaml`).sort());
+  const names = (await store.list()).map((i) => i.name);
+  assert.deepEqual(names, ["Architecture", "Isolation", "Redundant tests"]);
+});
+
+test("an invalid refactor starter is refused before restore deletes anything, and a workflow is not a refactor starter", async () => {
+  const { d, store } = rsetup();
+  await store.save(rf("Keep me"), "global");
+  const before = new Map(d.fs);
+  const plan = restorePlan(await store.list(), "global", "/proj");
+  const good = starterText("isolation");
+  await assert.rejects(store.restore(plan, [good, "name: ["]), (e) => e.kind === "invalid");
+  await assert.rejects(store.restore(plan, [good, "name: No prompt\n"]), (e) => e.kind === "invalid" && /Give the refactor a prompt/.test(e.message));
+  await assert.rejects(store.restore(plan, [good, readFileSync(new URL("./starters/bug.yaml", import.meta.url), "utf8")]), (e) => e.kind === "invalid");
+  assert.deepEqual(d.fs, before);
 });

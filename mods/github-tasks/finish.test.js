@@ -687,7 +687,7 @@ test("fixingDone: ends when the orchestrator is gone, and does nothing without a
 });
 
 test("fixingNote names the fix", () => {
-  assert.equal(fixingNote(sent()), "The orchestrator is fixing it (Fix conflicts). Merge comes back when it is done.");
+  assert.equal(fixingNote(sent()), "The Task Orchestrator is fixing it (Fix conflicts). Merge comes back when it is done.");
 });
 
 // --- the Merge button -------------------------------------------------------------------------------------------------------

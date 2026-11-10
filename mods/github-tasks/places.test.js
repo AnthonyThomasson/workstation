@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { firstLine, repoWorkflowsDir, globalWorkflowsDir, tildePath, workflowDirs } from "./places.js";
+import { firstLine, repoWorkflowsDir, globalWorkflowsDir, tildePath, workflowDirs, refactorDirs, kindDirs, repoRefactorsDir, globalRefactorsDir } from "./places.js";
 
 test("firstLine takes the first non-empty line, trimmed", () => {
   assert.equal(firstLine("\n  /a/b  \n/c\n"), "/a/b");
@@ -31,4 +31,14 @@ test("global is always a place; repo is one only with a repo", () => {
     global: "/home/me/.config/herdr-app/workflows",
     repo: "/code/app/.herdr/workflows",
   });
+});
+
+test("refactor types live in refactors folders: the Herdr home's, and a repo's .herdr", () => {
+  assert.equal(repoRefactorsDir("/code/app"), "/code/app/.herdr/refactors");
+  assert.equal(globalRefactorsDir("/home/me/.config/herdr-app/"), "/home/me/.config/herdr-app/refactors");
+  assert.deepEqual(refactorDirs("/home/me/.config/herdr-app", null), { global: "/home/me/.config/herdr-app/refactors" });
+  assert.deepEqual(refactorDirs("/home/me/.config/herdr-app", "/code/app"), {
+    global: "/home/me/.config/herdr-app/refactors", repo: "/code/app/.herdr/refactors",
+  });
+  assert.deepEqual(kindDirs("/h", "/r", "workflows"), workflowDirs("/h", "/r"));
 });
