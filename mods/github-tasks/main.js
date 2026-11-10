@@ -525,7 +525,7 @@ export default class GitHubTasks extends View {
         } else {
           const cant = cantStartHere(where);
           if (cant) throw new Error(cant);
-          openOverlay(startOverlay(startProps({ ticket, repo, project, local, mainRoot: ticket.mainRoot, where, matches, skipped: errors })));
+          openOverlay(startOverlay(startProps({ ticket, repo, project, where, matches, skipped: errors })));
         }
       } catch (e) {
         this.startError = String(e?.message ?? e);
