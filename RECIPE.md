@@ -326,6 +326,7 @@ No `keys.json` belongs to the Tony layout: it supplies no layout-specific key bi
 ## Done when
 
 - `herdr-app check` passes for `mods/usage`, `mods/status-bar`, `mods/skills`, `mods/github-tasks` and `mods/sync`; then `layout.switch` to `Tony` succeeds without layout or mod errors.
+- `node tests/mod-isolation.test.js` exits 0: no mod imports, opens, names a file of, or shares a key with another mod. It parses every `.js` file under `mods/` with a vendored, pinned acorn (`tests/vendor/acorn/`), needs no `npm install`, and prints `file:line`, the rule and the name found for each link. It also fails what it can't follow (shared/setShared/openOverlay passed on in an odd way, a `mods/` path built at run time, absolute imports, symlinks) and scans dot-folders. Mod code may name only itself and Herdr's built-ins (the allowlist at the top of the script); in `*.test.js` files only the names of other real mods fail. Its own test, `node --test tests/mod-isolation.fixtures.test.js`, runs it on the fake `tests/fixtures/mods/` tree.
 - The window matches the tree and dimensions above, follows the selected theme/fonts, shows the six built-in mod roles, and frames even a lone terminal pane with its 30px header and focus border.
 - Tabs Icons passes its own recipe checks.
 - Tony's Sync and Skills toggles open their matching `panel-body` children; **Task settings** opens only from the Tasks sidebar gear.

@@ -2,9 +2,9 @@
 // and the notice line. It all lives in Herdr's shared values, because a dialog is a separate view
 // whose tasks end when it closes. No Herdr imports: main.js passes shared/setShared in, the tests
 // a Map.
-export const REQUEST = "skillshare.request.v1"; // { id, op, ... }
-export const NOTICE = "skillshare.notice.v1"; // { kind, text, at }
-export const BUSY = "skillshare.busy.v1"; // { [machine]: { text, at } }; "" is this computer
+export const REQUEST = "skills.request.v1"; // { id, op, ... }
+export const NOTICE = "skills.notice.v1"; // { kind, text, at }
+export const BUSY = "skills.busy.v1"; // { [machine]: { text, at } }; "" is this computer
 
 // createChannel({ get, set, now }): get(key) and set(key, value) read and write shared values.
 //   request(op): hands op to the panel.

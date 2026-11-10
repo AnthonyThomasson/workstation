@@ -1,0 +1,11 @@
+import { openOverlay as open } from "herdr";
+import * as h from "herdr";
+open({ mod: "beta" });
+const fn = open;
+fn({ mod: "beta" });
+h.openOverlay({ mod: "beta" });
+open({ ["mod"]: "beta" });
+open({ [k]: "alpha" });
+const api = { open };
+api.open({ mod: "beta" });
+open({ ["mod"]: "alpha" });

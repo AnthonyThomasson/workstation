@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, utimesSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { syncFolder, readLink, snapshot, unignored, listTargets, switchBranch, SYNC } from "./ops.js";
-import { syncWorld as world, cleanWorld as clean } from "./scratch-repos.js";
+import { syncWorld as world, cleanWorld as clean, DEMO_MOD, OTHER_MOD } from "./scratch-repos.js";
 import { parseSyncJson } from "./model.js";
 
 const link = (w) => parseSyncJson(readFileSync(join(w.herdr, "sync.json"), "utf8"));
@@ -16,23 +16,23 @@ const touch = (p) => { const t = new Date(Date.now() + 5000); utimesSync(p, t, t
 test("Sync makes Herdr match the picked folder, with no backup and nothing written to the repo", async () => {
   const w = world("sync");
   try {
-    w.put(w.a, "mods/demo/main.js", "two\n"); w.put(w.a, "mods/demo/icon.svg", "<svg/>\n");
+    w.put(w.a, `mods/${DEMO_MOD}/main.js`, "two\n"); w.put(w.a, `mods/${DEMO_MOD}/icon.svg`, "<svg/>\n");
     const out = await syncFolder(w.io, w.a);
     assert.equal(out.result, "ok", out.message);
     assert.match(out.message, /loaded \d+ mods with no errors/);
-    assert.equal(readFileSync(join(w.herdr, "mods/demo/main.js"), "utf8"), "two\n");
-    assert.ok(existsSync(join(w.herdr, "mods/demo/icon.svg")));
+    assert.equal(readFileSync(join(w.herdr, `mods/${DEMO_MOD}/main.js`), "utf8"), "two\n");
+    assert.ok(existsSync(join(w.herdr, `mods/${DEMO_MOD}/icon.svg`)));
     assert.deepEqual(readdirSync(w.herdr).filter((n) => n.includes("backup")), [], "no backup folder");
-    assert.deepEqual(w.git(w.a, "status", "--porcelain", "--", "mods").split("\n").map((l) => l.trim()).filter(Boolean).sort(), ["?? mods/demo/icon.svg", "M mods/demo/main.js"], "only the edits this test made");
+    assert.deepEqual(w.git(w.a, "status", "--porcelain", "--", "mods").split("\n").map((l) => l.trim()).filter(Boolean).sort(), [`?? mods/${DEMO_MOD}/icon.svg`, `M mods/${DEMO_MOD}/main.js`], "only the edits this test made");
   } finally { clean(w); }
 });
 
 test("Sync is one way: Herdr's own edit is replaced by the repo's file, and a file the repo dropped is removed", async () => {
   const w = world("one-way");
   try {
-    const f = join(w.herdr, "mods/demo/main.js");
+    const f = join(w.herdr, `mods/${DEMO_MOD}/main.js`);
     writeFileSync(f, "edited in Herdr\n"); touch(f);
-    const stale = join(w.herdr, "mods/demo/old.js");
+    const stale = join(w.herdr, `mods/${DEMO_MOD}/old.js`);
     writeFileSync(stale, "stale\n");
     const foreign = join(w.herdr, "mods/shipped/main.js");
     mkdirSync(dirname(foreign), { recursive: true }); writeFileSync(foreign, "not ours\n");
@@ -50,10 +50,10 @@ test("Sync from a worktree on another branch copies that checkout, and sync.json
   try {
     const wt = join(w.base, "wt");
     w.git(w.a, "worktree", "add", "-q", "-b", "feature", wt);
-    writeFileSync(join(wt, "mods/demo/main.js"), "from the feature branch\n");
+    writeFileSync(join(wt, `mods/${DEMO_MOD}/main.js`), "from the feature branch\n");
     const out = await syncFolder(w.io, wt);
     assert.equal(out.result, "ok", out.message);
-    assert.equal(readFileSync(join(w.herdr, "mods/demo/main.js"), "utf8"), "from the feature branch\n");
+    assert.equal(readFileSync(join(w.herdr, `mods/${DEMO_MOD}/main.js`), "utf8"), "from the feature branch\n");
     assert.equal(link(w).repo, w.git(wt, "rev-parse", "--show-toplevel").trim());
     assert.notEqual(link(w).repo, w.git(w.a, "rev-parse", "--show-toplevel").trim());
   } finally { clean(w); }
@@ -86,10 +86,10 @@ test("Sync reports a mod the running Herdr cannot load, and errors Herdr lists",
   const w = world("loaded");
   try {
     const stub = join(w.home, ".local/bin/herdr-app");
-    writeFileSync(stub, '#!/bin/sh\ncase "$1" in status) echo \'{ "errors": [] }\' ;; *) case "$2" in mods/other) echo bad; exit 1 ;; esac ;; esac\n', { mode: 0o755 });
+    writeFileSync(stub, '#!/bin/sh\ncase "$1" in status) echo \'{ "errors": [] }\' ;; *) case "$2" in mods/' + OTHER_MOD + ') echo bad; exit 1 ;; esac ;; esac\n', { mode: 0o755 });
     let out = await syncFolder(w.io, w.a);
     assert.equal(out.result, "error");
-    assert.match(out.message, /Herdr could not load: other/);
+    assert.match(out.message, new RegExp(`Herdr could not load: ${OTHER_MOD}`));
     writeFileSync(stub, '#!/bin/sh\ncase "$1" in status) echo \'{ "errors": ["x"] }\' ;; *) echo ok ;; esac\n', { mode: 0o755 });
     out = await syncFolder(w.io, w.a);
     assert.equal(out.result, "error");
@@ -175,7 +175,7 @@ test("the snapshot changes when a file's content changes, not when it is only to
     const s0 = await snapshot(w.io, w.a);
     assert.ok(s0, "a snapshot");
     assert.equal(await snapshot(w.io, w.a), s0, "stable");
-    const f = join(w.a, "mods/demo/main.js");
+    const f = join(w.a, `mods/${DEMO_MOD}/main.js`);
     touch(f);
     assert.equal(await snapshot(w.io, w.a), s0, "touched: same");
     writeFileSync(f, "one\n");
@@ -185,10 +185,10 @@ test("the snapshot changes when a file's content changes, not when it is only to
     assert.notEqual(s1, s0);
     writeFileSync(f, "one\n");
     assert.equal(await snapshot(w.io, w.a), s0, "changed back: same as before");
-    w.put(w.a, "mods/demo/new.js", "x\n");
+    w.put(w.a, `mods/${DEMO_MOD}/new.js`, "x\n");
     const s2 = await snapshot(w.io, w.a);
     assert.notEqual(s2, s0, "a new file");
-    rmSync(join(w.a, "mods/demo/new.js"));
+    rmSync(join(w.a, `mods/${DEMO_MOD}/new.js`));
     assert.equal(await snapshot(w.io, w.a), s0);
     rmSync(f);
     assert.notEqual(await snapshot(w.io, w.a), s0, "a deleted file");
@@ -205,7 +205,7 @@ test("the snapshot ignores git-ignored files and .git", async () => {
     w.put(w.a, "debug.log", "x\n");
     w.git(w.a, "commit", "-q", "--allow-empty", "-m", "empty");
     assert.equal(await snapshot(w.io, w.a), s0);
-    w.put(w.a, "mods/demo/new.js", "mine\n");
+    w.put(w.a, `mods/${DEMO_MOD}/new.js`, "mine\n");
     assert.notEqual(await snapshot(w.io, w.a), s0, "a file git does not ignore counts");
   } finally { clean(w); }
 });
@@ -222,7 +222,7 @@ test("the snapshot leaves out skillshare/, the only place the sync script writes
     assert.equal(await snapshot(w.io, w.a), before, "and the snapshot did not notice");
     w.put(w.a, "skillshare/skills/mine/new/SKILL.md", "mine\n");
     assert.equal(await snapshot(w.io, w.a), before, "skillshare/ edits are not content the sync copies");
-    w.put(w.a, "mods/demo/main.js", "two\n");
+    w.put(w.a, `mods/${DEMO_MOD}/main.js`, "two\n");
     assert.notEqual(await snapshot(w.io, w.a), before);
   } finally { clean(w); }
 });
@@ -234,7 +234,7 @@ test("a snapshot taken before a sync differs from one taken after only if the fo
     await syncFolder(w.io, w.a);
     assert.equal(await snapshot(w.io, w.a), pre);
     const pre2 = await snapshot(w.io, w.a);
-    writeFileSync(join(w.a, "mods/demo/main.js"), "edited during the copy\n");
+    writeFileSync(join(w.a, `mods/${DEMO_MOD}/main.js`), "edited during the copy\n");
     assert.notEqual(await snapshot(w.io, w.a), pre2);
   } finally { clean(w); }
 });
@@ -250,10 +250,10 @@ test("paths git ignores are dropped; tracked, new and removed ones are kept", as
     w.put(w.a, "node_modules/x/index.js", "x\n");
     w.put(w.a, "debug.log", "x\n");
     const kept = await unignored(w.io, w.a, [
-      "mods/demo/main.js", "skillshare/skills/installed", "skillshare/skills/installed/SKILL.md", "node_modules", "node_modules/x/index.js",
-      "debug.log", "skillshare/skills/mine/.keep", "mods/demo/removed.js", ".gitignore", "a b/with space.txt",
+      `mods/${DEMO_MOD}/main.js`, "skillshare/skills/installed", "skillshare/skills/installed/SKILL.md", "node_modules", "node_modules/x/index.js",
+      "debug.log", "skillshare/skills/mine/.keep", `mods/${DEMO_MOD}/removed.js`, ".gitignore", "a b/with space.txt",
     ]);
-    assert.deepEqual(kept, ["mods/demo/main.js", "skillshare/skills/mine/.keep", "mods/demo/removed.js", ".gitignore", "a b/with space.txt"]);
+    assert.deepEqual(kept, [`mods/${DEMO_MOD}/main.js`, "skillshare/skills/mine/.keep", `mods/${DEMO_MOD}/removed.js`, ".gitignore", "a b/with space.txt"]);
     assert.deepEqual(await unignored(w.io, w.a, []), []);
     assert.deepEqual(await unignored(w.io, w.a, ["debug.log"]), []);
   } finally { clean(w); }

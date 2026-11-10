@@ -1,5 +1,5 @@
 import { execFileSync, execFile } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, cpSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, cpSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,17 @@ import { createRunner } from "./jobs.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const MOUNT = join(here, "sync.sh");
+
+// The sample mods in the scratch repository are named at run time: the names of the real mods (the folders next to this
+// one under mods/) are the exclusion list, and the first names off a counter that match none of them are used. So no mod
+// name other than sync's own is written in this file, and a real mod can never be mistaken for sample data.
+const realMods = new Set(readdirSync(dirname(here), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name));
+const sampleNames = (count) => {
+  const names = [];
+  for (let n = 1; names.length < count; n++) if (!realMods.has(`sample${n}`)) names.push(`sample${n}`);
+  return names;
+};
+export const [DEMO_MOD, OTHER_MOD] = sampleNames(2);
 
 // Throwaway git repositories for the tests: a bare remote and two clones (a is the linked repo whose Herdr
 // folder is HERDR_APP_HOME, b is "another clone"), the real sync.sh inside a, and a stub herdr-app. Nothing outside
@@ -36,9 +47,9 @@ export const syncWorld = (name) => {
   mkdirSync(join(w.a, "mods/sync"), { recursive: true });
   cpSync(MOUNT, join(w.a, "mods/sync/sync.sh"));
   const put = (root, rel, text) => { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), text); };
-  put(w.a, "mods/demo/main.js", "one\n");
-  put(w.a, "mods/demo/mod.json", "{}\n");
-  put(w.a, "mods/other/main.js", "other\n");
+  put(w.a, join("mods", DEMO_MOD, "main.js"), "one\n");
+  put(w.a, join("mods", DEMO_MOD, "mod.json"), "{}\n");
+  put(w.a, join("mods", OTHER_MOD, "main.js"), "other\n");
   put(w.a, "skillshare/skills/mine/.keep", "");
   put(w.a, "layouts/Tony.json", "{}\n");
   put(w.a, "preview.png", "png\n");
