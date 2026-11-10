@@ -18,16 +18,19 @@ import * as workflowModel from "./workflow-model.js";
 import * as refactorModel from "./refactor-model.js";
 import { WORKFLOWS_CHANGED, REFACTORS_CHANGED } from "./model.js";
 
+// The roles of a model whose blank has a permissions setting.
+const permissionRolesOf = (model) => model.ROLES.filter((role) => "permissions" in model.blank()[role]);
+
 export const WORKFLOW = { key: "workflow", noun: "workflow", plural: "workflows", folder: "workflows", model: workflowModel, starters: ["bug", "story"],
   changed: WORKFLOWS_CHANGED,
   labels: { listTitle: "Workflows", listNote: "How work gets done: the labels that start each one, and how its Task Orchestrator, worker, reviewer and investigator run.", newLabel: "New workflow", emptyText: "No workflows yet. Make one with New workflow.", editorNoun: "workflow", namePlaceholder: "Feature development", starterNames: ["Bug", "Story"] },
-  editor: { trigger: true, permissionRoles: ["worker", "reviewer"],
-    prompts: { orchestrator: { label: "Prompt" }, worker: { label: "Prompt" }, reviewer: { label: "Prompt" } } },
+  editor: { trigger: true, permissionRoles: permissionRolesOf(workflowModel),
+    prompts: { orchestrator: { label: "Prompt" }, worker: { label: "Prompt" }, reviewer: { label: "Prompt" }, investigator: { label: "Prompt" } } },
 };
 export const REFACTOR = { key: "refactor", noun: "refactor", plural: "refactors", folder: "refactors", model: refactorModel, starters: ["redundant-tests", "architecture", "isolation"],
   changed: REFACTORS_CHANGED,
   labels: { listTitle: "Refactors", listNote: "How a refactor type runs: the Refactor Orchestrator's prompt, and the investigators it starts.", newLabel: "New refactor", emptyText: "No refactor types yet. Make one with New refactor.", editorNoun: "refactor type", namePlaceholder: "Dead code", starterNames: ["Redundant tests", "Architecture", "Isolation"] },
-  editor: { trigger: false, permissionRoles: [],
+  editor: { trigger: false, permissionRoles: permissionRolesOf(refactorModel),
     prompts: {
       orchestrator: { label: "Refactor prompt", hint: "what the refactor looks for and how to report it" },
       investigator: { label: "Prompt", hint: "optional: extra instructions for every investigator" },

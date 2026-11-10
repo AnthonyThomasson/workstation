@@ -276,15 +276,15 @@ export class WorkflowList {
       .child(h_flex().flex_none().items_center().gap(8)
         .child(div().flex_1().min_w(0).text_size(S().title).font_semibold().child("Restore defaults?"))
         .child(div().text_size(S().label).text_color(t.muted).child("Esc"))
-        .when(!current.working, (el) => el.child(iconButton("restore-defaults-close", "close", t, (_e, cx) => this.closeRestore(cx)))))
+        .when(!current.working, (el) => el.child(iconButton(`restore-defaults-close-${this.kind.key}`, "close", t, (_e, cx) => this.closeRestore(cx)))))
       .child(note(t, plan.deletions.length ? `These ${this.kind.plural} will be deleted:` : `There are no ${this.kind.plural} here to delete.`))
       .when(Boolean(plan.deletions.length), (el) => el.child(div().id(`restore-defaults-deletions-${this.kind.key}`).max_h(240).overflow_y_scrollbar()
         .child(v_flex().gap(4).children(plan.deletions.map(deletion)))))
       .child(note(t, restoreNote(this.kind, plan.createScope)))
       .when(Boolean(current.error), (el) => el.child(note(t, current.error, t.ansi1)))
       .child(h_flex().flex_none().justify_end().gap(8)
-        .child(action("restore-defaults-cancel", "Cancel", t, (_e, cx) => this.closeRestore(cx), true, current.working))
-        .child(action("restore-defaults-confirm", current.working ? "Restoring…" : "Restore defaults", t, (_e, cx) => this.restoreDefaults(cx), false, current.working)));
+        .child(action(`restore-defaults-cancel-${this.kind.key}`, "Cancel", t, (_e, cx) => this.closeRestore(cx), true, current.working))
+        .child(action(`restore-defaults-confirm-${this.kind.key}`, current.working ? "Restoring…" : "Restore defaults", t, (_e, cx) => this.restoreDefaults(cx), false, current.working)));
     return div().id(`restore-defaults-backdrop-${this.kind.key}`).absolute().inset_0().flex().items_center().justify_center().bg(scrim(t))
       .on_mouse_down("left", (_e, cx) => { this.closeRestore(cx); cx.stop_propagation(); })
       .child(dialog);

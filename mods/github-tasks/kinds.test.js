@@ -82,3 +82,11 @@ test("each kind announces its saves on its own shared key, so a workflow's save 
   assert.equal(changedKey(REFACTOR), REFACTOR.changed);
   assert.notEqual(changedKey(WORKFLOW), changedKey(REFACTOR));
 });
+
+test("the roles with permissions come from the model, not a list kept beside it", () => {
+  for (const kind of [WORKFLOW, REFACTOR]) {
+    const expected = kind.model.ROLES.filter((role) => "permissions" in kind.model.blank()[role]);
+    assert.deepEqual(kind.editor.permissionRoles, expected);
+    for (const role of kind.model.ROLES) assert.equal(hasPermissions(kind, role), expected.includes(role));
+  }
+});

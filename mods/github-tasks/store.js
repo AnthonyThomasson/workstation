@@ -182,7 +182,7 @@ export function makeStore({ io, dirs, kind = WORKFLOW }) {
 
   async function restore(plan, starterTexts) {
     // Read and check every starter before the first deletion. Restore copies their text, including their own ids,
-    // directly: the same Bug and Story may intentionally remain in the other scope.
+    // directly: the same starters may intentionally remain in the other scope.
     const starters = starterTexts.map((source) => {
       let workflow;
       try { workflow = parse(source); }
