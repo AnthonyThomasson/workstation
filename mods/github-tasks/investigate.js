@@ -76,7 +76,7 @@ export async function startInvestigation(args, cx) {
       return host;
     },
     closeHost: async (host) => {
-      await endHost({ id: sessionId, hc, terminals, run, spaces: spaces(), panes: panes(), record: shared(hostKey(sessionId)), also: [host?.address] });
+      await endHost({ id: sessionId, hc, terminals, run, spaces: spaces(), panes: panes(), record: shared(hostKey(sessionId)), also: [host?.address], closeSpace: true });
       setShared(hostKey(sessionId), null);
       hostSpace = null;
     },

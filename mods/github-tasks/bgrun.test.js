@@ -1206,3 +1206,38 @@ test("#56 the host's note can be said for a session, and is the ticket's by defa
   assert.match(text, /Host of '\\''this'\\'' session\./);
   assert.equal(spawnSync("sh", ["-c", text.replace(/exec tail -f \/dev\/null/, "true")], { encoding: "utf8" }).stdout.split("\x07")[1], "Host of 'this' session.\n");
 });
+
+test("#56 a failed start's host takes its space with it by id, even when the snapshot is stale (it still lists the agent's closed tab, or doesn't list the new space at all)", async () => {
+  const stale = fakeEnd();
+  stale.deps.spaces = [{ id: "sH", tabs: [{ id: "tH" }, { id: "tA" }] }]; // tA was closed a moment ago
+  stale.deps.record = { tab: "tH", space: "sH", created: true };
+  await endHost(stale.deps);
+  assert.ok(!stale.log.some(([n]) => n === "space.close"), "by default a space with another tab in the snapshot is kept (Done's way)");
+  const forced = fakeEnd();
+  forced.deps.spaces = stale.deps.spaces;
+  forced.deps.record = stale.deps.record;
+  assert.deepEqual(await endHost({ ...forced.deps, closeSpace: true }), { error: null });
+  assert.deepEqual(forced.log.filter(([n]) => n === "space.close"), [["space.close", { id: "sH", confirmed: true }]], "closed once, after the host's tab");
+  assert.ok(forced.log.findIndex(([n]) => n === "tab.close") < forced.log.findIndex(([n]) => n === "space.close"));
+  const unlisted = fakeEnd();
+  unlisted.deps.spaces = [{ id: "sR", tabs: [{ id: "tR" }] }]; // the snapshot predates the new space
+  unlisted.deps.record = { tab: "tH", space: "sH", created: true };
+  await endHost({ ...unlisted.deps, closeSpace: true });
+  assert.deepEqual(unlisted.log.at(-1), ["space.close", { id: "sH", confirmed: true }]);
+  const notMade = fakeEnd();
+  notMade.deps.record = { tab: "tH", space: "sR", created: false };
+  await endHost({ ...notMade.deps, closeSpace: true });
+  assert.ok(!notMade.log.some(([n]) => n === "space.close"), "a space the start didn't make is never closed");
+  const gone = fakeEnd();
+  gone.deps.record = { tab: "tH", space: "sH", created: true };
+  gone.deps.run = (n) => { if (n === "space.close") throw new Error("no such space"); };
+  assert.deepEqual(await endHost({ ...gone.deps, closeSpace: true }), { error: null }, "already closed is no failure");
+});
+
+test("#56 the agent's tab, not the host's, is the one selected once it is made in the session's space", async () => {
+  const f = fakeApp();
+  await connectRun(f.deps, { ...base, kind: "investigation", space: "sH" }); // sH: the space whose first tab is the host's
+  assert.deepEqual(f.runs.slice(0, 2), [["space.select", { id: "sH" }], ["tab.select", { id: "tNew" }]]);
+  assert.ok(f.runs.every(([n, a]) => n !== "tab.select" || a.id === "tNew"), "no other tab is selected");
+  assert.equal(f.runs.at(-1)[0], "pane.focus");
+});

@@ -53,7 +53,7 @@ export function newTaskWorkerPrompt({ workDir, repoRoot, branch }) {
   return [
     "# You are a prototype worker for a New Task session", "",
     "Build a throwaway prototype of what the New Task agent's brief asks, in your own worktree, so it can find out whether the idea works. Commit as you go, never push, merge or open a pull request, and when you are done send the New Task agent what you built, your commits and what you learned with `hc send`. Your code is discarded when the person presses Done and never becomes the ticket's work, so build only as much as answers the brief.", "",
-    `- Your worktree is ${workDir}--<job> on ${branch}--<job>, cut from the session branch ${branch}; leave the session worktree ${workDir} and the main checkout ${repoRoot} alone.`,
+    `- You start in your own worktree, whose path ends in \`--\` and your job's name (it begins with ${workDir}) and which is on a branch that ends the same way (it begins with ${branch}), cut from the session branch ${branch}; leave the session worktree ${workDir} and the main checkout ${repoRoot} alone.`,
     "- Don't start other agents.",
   ].join("\n");
 }

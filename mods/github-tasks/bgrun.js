@@ -222,8 +222,11 @@ export async function openHost(deps, { id, name, repoRoot, spaces, panes, own = 
 // is gone already is nothing to do; a tab already closed is no failure. A host that is still live after its kill is an error
 // naming it, and its tab is kept.
 //   deps: { id, hc, terminals() , run, spaces, panes, record? ({ tab, space, created }), also? (addresses to end even if their label
-//   isn't listed yet: a host just made) }. Resolves with { error }.
-export async function endHost({ id, hc, terminals, run, spaces, panes, record = null, also = [] }) {
+//   isn't listed yet: a host just made), closeSpace? }. Resolves with { error }.
+//   closeSpace: a failed start's way (investigate.js): the space this start made for the host is closed by its id, after the host's tab,
+//   whatever `spaces` says: the snapshot may still list the agent's tab that was closed a moment ago, or not list the new space yet.
+//   Only a space the start made (record.created); one that is already gone is no failure.
+export async function endHost({ id, hc, terminals, run, spaces, panes, record = null, also = [], closeSpace = false }) {
   const hosts = (terminals() ?? []).filter((k) => k.state === "live" && k.labels?.[HOST_LABEL] === id);
   for (const address of also) if (address && !hosts.some((h) => h.address === address)) hosts.push({ address });
   const stuck = [], tabs = new Set();
@@ -236,6 +239,7 @@ export async function endHost({ id, hc, terminals, run, spaces, panes, record = 
   }
   if (stuck.length) return { error: `couldn't end the run's host ${stuck.join("; ")}` };
   for (const tab of tabs) { try { run("tab.close", { id: tab, confirmed: true }); } catch { /* it closed with its terminal */ } }
+  if (closeSpace && record?.created && record.space) { try { run("space.close", { id: record.space, confirmed: true }); } catch { /* it is gone already */ } return { error: null }; }
   const space = record?.created && record.space ? (spaces ?? []).find((s) => s.id === record.space) : null;
   if (space && tabs.size && (space.tabs ?? []).every((t) => tabs.has(t.id))) { try { run("space.close", { id: space.id, confirmed: true }); } catch { /* it closed with its tab */ } }
   return { error: null };

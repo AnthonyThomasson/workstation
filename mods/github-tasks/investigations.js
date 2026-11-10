@@ -137,6 +137,7 @@ export async function beginInvestigation(deps, { agent, description, repo, groom
   const label = investigationLabel(description, repoName);
   const id = investigationId(now), branch = investigationBranch(description, now);
   const dir = sessionFolder(deps.home, id);
+  if (!dir) throw new Error(`Couldn't find a folder for the session's helpers: no home folder is known for ${id}.`); // before anything is made
   const task = await deps.task(dir); // before anything is made: a failure here leaves nothing behind
   const workDir = await deps.prepareWorktree(repoRoot, branch, deps.worktreePath(repoRoot, branch, deps.home));
   const base = { id, label, repoRoot, repo: repoName, branch, workDir };

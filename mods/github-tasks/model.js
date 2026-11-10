@@ -263,7 +263,7 @@ export function newTaskSubAgents(dir) {
   if (!dir) return [];
   return [
     "## Starting helpers", "",
-    "You may start helpers, but only when you need them: most tasks need none. Each one sends you its report with `hc send`; wait for it with `hc wait --children any`, and end the helper with `hc kill <name>` once you have it. Put the brief in single quotes, and write any `'` inside it as `'\\''`.", "",
+    "You may start helpers, but only when you need them: most tasks need none. A spawn command prints the helper's terminal name. Each helper sends you its report with `hc send`; wait for it with `hc wait --children any`, and end the helper with `hc kill <the name spawn prints>` once you have it. Put the brief in single quotes, and write any `'` inside it as `'\\''`.", "",
     `- \`${dir}/spawn investigator <name> '<brief>'\` explores this worktree read-only to answer a question about the code, which you can use when reading it yourself would take too long.`,
     `- \`${dir}/spawn worker <job> '<brief>'\` builds a throwaway prototype in a worktree of its own, to find out whether an idea works. Use it only for a really complex task.`,
     "- A prototype's code is thrown away when the person presses Done and never becomes the ticket's work: use what the worker learned to write the ticket, not the code.", "",

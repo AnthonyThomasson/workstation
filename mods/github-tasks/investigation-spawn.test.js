@@ -108,8 +108,11 @@ test("the prototype worker builds a throwaway in its own worktree, commits there
   assert.match(bodyOf(text), /commit/i);
   assert.match(bodyOf(text), /hc send/);
   assert.match(bodyOf(text), /never push, merge or open a pull request/);
-  assert.ok(text.includes("/wt/investigate-x--<job> on investigate/x--<job>"));
-  assert.match(text, /cut from (the session branch )?investigate\/x/);
+  assert.doesNotMatch(text, /<job>/, "no placeholder for the agent to take literally");
+  assert.match(text, /You start in your own worktree/);
+  assert.ok(text.includes("begins with /wt/investigate-x)") && text.includes("begins with investigate/x)"), "says where its worktree and branch begin");
+  assert.match(text, /ends in `--` and your job's name/);
+  assert.match(text, /cut from the session branch investigate\/x/);
   assert.match(text, /discarded/);
   assert.match(text, /never becomes the ticket's work/);
   assert.ok(text.includes("main checkout /src/app"));
@@ -131,7 +134,9 @@ test("the New Task prompts (GitHub and local) tell the agent how to start invest
     assert.match(text, /thrown away/);
     assert.match(text, /never becomes the ticket's work/);
     assert.match(text, /Don't write code/);
-    assert.match(text, /hc kill/);
+    assert.ok(text.includes("`hc kill <the name spawn prints>`"), "the name the script printed, not the <name> the agent gave");
+    assert.ok(!text.includes("hc kill <name>"));
+    assert.match(text, /prints the helper's terminal name/);
   }
 });
 
@@ -344,7 +349,7 @@ test("start: the session folder is written after the worktree and before the hos
   assert.deepEqual(Object.keys(f.written[0].files).sort(), ["investigator.md", "spawn", "worker.md"]);
   assert.ok(f.written[0].files.spawn.includes(`herdr.investigation=`) && f.written[0].files.spawn.includes(`session_id='inv-${T}'`));
   assert.ok(f.written[0].files["investigator.md"].includes(entry.workDir));
-  assert.ok(f.written[0].files["worker.md"].includes(`${entry.workDir}--<job>`));
+  assert.ok(f.written[0].files["worker.md"].includes(`begins with ${entry.workDir})`) && !f.written[0].files["worker.md"].includes("<job>"));
 });
 
 test("start: the New Task agent gets the session folder's plumbing, and the sub-agents their own settings", async () => {
@@ -418,6 +423,14 @@ test("start: a session folder that can't be written takes back what was made: no
   assert.ok(!f.log.includes("open host") && !f.log.includes("hc run"));
   assert.ok(f.log.some((l) => l.startsWith("remove session")), "what was half written");
   assert.ok(f.log.at(-1).startsWith("cleanup "));
+  assert.deepEqual(f.saved(), []);
+});
+
+test("start: a session folder that can't be named (no home) is refused before anything is made", async () => {
+  const f = fakeStart();
+  f.deps.home = "";
+  await assert.rejects(beginInvestigation(f.deps, ARGS), /folder for the session's helpers/);
+  assert.deepEqual(f.log, [], "no prompt, worktree, folder, host or agent");
   assert.deepEqual(f.saved(), []);
 });
 

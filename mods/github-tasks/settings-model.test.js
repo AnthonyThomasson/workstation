@@ -78,7 +78,8 @@ test("the New Task investigator and prototype worker prompts have tabs of their 
   const worker = promptForRole("newTaskWorker");
   assert.match(worker, /^# You are a prototype worker/);
   assert.match(worker, /throwaway prototype/);
-  assert.match(worker, /<session worktree>--<job>/);
+  assert.match(worker, /begins with <session worktree>\)/);
+  assert.doesNotMatch(worker, /<job>/);
   assert.match(worker, /discarded/);
   assert.notEqual(investigator, promptForRole("investigator"), "not the ticket run's investigator");
   assert.equal(promptForRole("nope"), null);
