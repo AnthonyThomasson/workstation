@@ -206,7 +206,6 @@ run_dir=${shQuote(runDir)}
 ticket_dir=${shQuote(workDir)}
 ticket_branch=${shQuote(branch)}
 job_base=${shQuote(workDir)}
-spawn_path=${runDir ? shQuote(`${runDir}/spawn`) : '"$(dirname "$0")/spawn"'}
 usage() {
   echo "usage: spawn worker <job> <brief>" >&2
   echo "       spawn reviewer <name> <job|final> <brief>" >&2
