@@ -7,7 +7,7 @@ import { shared, theme, closeOverlay } from "herdr";
 import { GROOMER_KEY, STATUSES, normalizeGroomer, spelled } from "./model.js";
 import { loadStatusField } from "./loader.js";
 import { installedAgents, startNewTask, startLocalNewTask } from "./groom.js";
-import { AGENT_KEY, NewTaskDialog, PROMPT, TITLE, chooseAgent, panelWidth } from "./new-task-dialog.js";
+import { AGENT_KEY, ENTER_HINT, NewTaskDialog, PROMPT, TITLE, chooseAgent, boxRows, enterStep, panelWidth } from "./new-task-dialog.js";
 import { PRESS_BUTTONS } from "./popup.js";
 import { S, stop, action, gh } from "./ui.js";
 
@@ -31,7 +31,7 @@ export class NewTaskPage {
   constructor(props, cx) {
     this.props = props ?? {};
     this.handle = cx.focus_handle(); // the root takes Esc when the text box doesn't
-    this.input = TextareaState.new({ value: "", rows: 6 });
+    this.input = TextareaState.new({ value: "", rows: boxRows(S().body) });
     this.dialog = new NewTaskDialog(() => {});
     this.input.on("change", (_e, cx) => { this.dialog.setText(this.input.value()); cx.notify(); });
     this.window = null;
@@ -53,6 +53,19 @@ export class NewTaskPage {
     });
   }
 
+  // Enter in the text box. The panel sees the key before the text box turns it into a line break (the chat mod's composer does the
+  // same), so a plain Enter is swallowed here: it starts the task when Continue is on and does nothing otherwise. Shift+Enter goes on
+  // to the text box, which makes the line break. Cmd/Ctrl/Alt+Enter are left to the text box as they were.
+  onKey(e, cx) {
+    if (e.key === "escape") { this.close(); cx.stop_propagation(); return; }
+    const m = e.modifiers ?? {};
+    if (e.key !== "enter" || m.control || m.alt || m.platform) return;
+    const step = enterStep({ starting: this.dialog.starting, text: this.dialog.text, shift: Boolean(m.shift) });
+    if (step === "newline") return;
+    cx.stop_propagation();
+    if (step === "submit") this.continue(cx);
+  }
+
   render(cx) {
     const t = theme(), width = panelWidth(this.window), d = this.dialog;
     // The backdrop covers the window; a press on it closes, and the panel stops presses so they don't (which also keeps the window from being dragged).
@@ -60,19 +73,21 @@ export class NewTaskPage {
       .on_size_change((win, cx) => {
         const first = !this.window;
         this.window = win;
+        this.input.set_rows(boxRows(S().body)); // the text size may have changed since the dialog opened
         if (first) cx.timer.after(50, () => this.input.focus?.());
         cx.notify();
       })
       .on_mouse_down("left", (_e, cx) => { this.close(); cx.stop_propagation(); });
     const panel = v_flex().id("new-task").track_focus(this.handle).w(width ?? 0).flex_none().p(16).gap(12).rounded(12).border_1().border_color(t.border)
       .bg(t.background).text_color(t.foreground).text_size(S().body).shadow_lg()
-      .on_key_down((e, cx) => { if (e.key === "escape") { this.close(); cx.stop_propagation(); } })
+      .on_key_down((e, cx) => this.onKey(e, cx))
       .child(div().text_size(S().title).font_semibold().child(TITLE))
       .child(div().text_size(S().secondary).text_color(t.muted).child(PROMPT))
-      .child(div().id("new-task-text").h(132).flex_none().rounded(8).border_1().border_color(t.border).bg(t.chrome).p(8)
+      .child(div().id("new-task-text").h(132).flex_none().min_h(0).overflow_hidden().rounded(8).border_1().border_color(t.border).bg(t.chrome).p(8)
         .child(Textarea.new(this.input).size_full().text_size(S().body).text_color(t.foreground)))
       .when(Boolean(d.error), (el) => el.child(div().id("new-task-error").flex_none().text_size(S().secondary).text_color(t.blocked).child(`! ${d.error}`)))
-      .child(h_flex().gap(8).justify_end()
+      .child(h_flex().gap(8).items_center()
+        .child(div().id("new-task-hint").flex_1().min_w(0).truncate().text_size(S().label).text_color(t.muted).child(ENTER_HINT))
         .child(action("new-task-cancel", "Cancel", t, () => this.close(), true, d.starting))
         .child(action("new-task-continue", d.starting ? "Starting…" : "Continue", t, (_e, cx) => this.continue(cx), false, !d.canContinue())));
     return stopPresses(backdrop, "left").when(Boolean(width), (el) => el.child(stopPresses(panel)));

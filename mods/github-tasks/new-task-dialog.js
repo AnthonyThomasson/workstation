@@ -7,6 +7,7 @@ export const WIDTH = 520;
 export const TITLE = "New task";
 export const AGENT_KEY = "github-tasks.groomAgent"; // the agent saved before the settings page held it
 export const PROMPT = "Describe the ticket you want";
+export const ENTER_HINT = "Enter to continue · Shift+Enter for a new line"; // the muted line on the button row
 
 // The panel's width for a window of `size`: 520px, or what the window has left after the margin on each side. Null until measured.
 export function panelWidth(size) {
@@ -36,6 +37,20 @@ export function chooseAgent(installed, saved) {
 // What Esc does: the dialog closes, unless a task is being started, which can't be called back halfway (an overlay's tasks end
 // with it): then nothing.
 export const escStep = ({ starting }) => (starting ? "ignore" : "close");
+
+// What a plain or Shift Enter in the text box does. "submit": start the task, as Continue does (it is on). "newline": Shift+Enter,
+// which the text box turns into a line break itself. "ignore": Enter while Continue is off (nothing typed, or a start going); the
+// box must not turn that into a line break either, so the page swallows the key. (gpui gives key events no composing state, so there
+// is no such input: the IME is expected to take the Enter that confirms a composition before it reaches the page.)
+export function enterStep({ starting, text, shift }) {
+  if (shift) return "newline";
+  return !starting && String(text ?? "").trim() !== "" ? "submit" : "ignore";
+}
+
+// The text box is 132px tall with a 1px border and 8px padding each side: 114px inside. Rows of text (a line is about 1.5 times the
+// text size, as the ticket editor reckons) that fit in that, so the last line and the caret are never cut off; more text scrolls.
+export const BOX_HEIGHT = 132, BOX_INSET = 2 + 16;
+export const boxRows = (bodySize) => Math.max(1, Math.floor((BOX_HEIGHT - BOX_INSET) / (bodySize * 1.5)));
 
 // The dialog's state and what its buttons do. onChange: called after every change, for the view to redraw.
 export class NewTaskDialog {
