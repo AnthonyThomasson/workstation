@@ -254,14 +254,26 @@ export function fixingDone({ fixing, status, live, turn }) {
   return fixing;
 }
 
+// What Merge is waiting for, as a sentence for the muted line shown in place of the button, or null when nothing is.
+// The same gate as canMerge, plus known: the run page knows the ticket's folder and branch. Live workers, reviewers and
+// investigators are named in that order.
+export function mergeWait({ finalSeen: seen, workers = [], reviewers = [], investigators = [], known } = {}) {
+  if (!seen) return "Merge appears once the final review has started and every agent has ended.";
+  const names = [...workers, ...reviewers, ...investigators].filter((a) => a.live).map((a) => a.name);
+  if (names.length) return `Merge appears once ${names.length} ${names.length === 1 ? "agent has" : "agents have"} ended: ${names.join(", ")}.`;
+  return known ? null : "Merge appears once the run page knows the ticket worktree.";
+}
+
 // What the Merge button is. failure: the red state (mergeFailure), fixing: the record, busy: "merge" | "pr" | "fix" | null,
-// ready: the gate (canMerge, and a run page that knows its folder and branch). Returns { mode, label, enabled }:
-// normal (Merge, enabled when ready), red (the fix's label, enabled until pressed), fixing (Merge, disabled; the note says why).
-export function mergeView({ ready, busy, failure, fixing }) {
+// ready: the gate (canMerge, and a run page that knows its folder and branch), wait: what mergeWait says while it is closed.
+// Returns { mode, label, enabled, wait? }: normal (Merge, enabled; Merging…/Opening PR… while busy), red (the fix's label, enabled
+// until pressed), fixing (Merge, disabled; the note says why), hidden (gated: no button, only the wait line).
+export function mergeView({ ready, busy, failure, fixing, wait }) {
   if (fixing) return { mode: "fixing", label: "Merge", enabled: false };
   if (failure) return { mode: "red", label: busy === "fix" ? "Sending…" : failure.label, enabled: !busy };
-  const label = busy === "merge" ? "Merging…" : busy === "pr" ? "Opening PR…" : "Merge";
-  return { mode: "normal", label, enabled: Boolean(ready) && !busy };
+  if (busy === "merge" || busy === "pr") return { mode: "normal", label: busy === "merge" ? "Merging…" : "Opening PR…", enabled: false };
+  if (!ready) return { mode: "hidden", label: "", enabled: false, wait: wait ?? "" };
+  return { mode: "normal", label: "Merge", enabled: !busy };
 }
 
 // The red state and the fixing record as shared state kept them (JSON), or null when they aren't that.

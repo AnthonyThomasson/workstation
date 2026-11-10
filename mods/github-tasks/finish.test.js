@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, statusStage, movesTo, optionFor, statusArgs, mergeSteps, runSteps, prArgs, prViewArgs, parsePrUrl, prNumber, parsePr, LABELS, prStateArgs, parsePrState, mergeFailure, fixMessage, restartTask, fixingDone, fixingStart, fixingNote, mergeView, restoreFailure, restoreFixing, openPullRequest } from "./finish.js";
+import { worktreeArgs, branchArgs, canMerge, mergeWait, finalSeen, shouldAutoPr, stageOf, statusStage, movesTo, optionFor, statusArgs, mergeSteps, runSteps, prArgs, prViewArgs, parsePrUrl, prNumber, parsePr, LABELS, prStateArgs, parsePrState, mergeFailure, fixMessage, restartTask, fixingDone, fixingStart, fixingNote, mergeView, restoreFailure, restoreFixing, openPullRequest } from "./finish.js";
 
 test("canMerge needs the final reviewer seen and nobody live", () => {
   const ended = { live: false }, live = { live: true, status: "idle" };
@@ -724,9 +724,25 @@ test("fixingNote names the fix", () => {
 
 test("mergeView: Merge is enabled when ready and nothing is going, with or without a pull request", () => {
   assert.deepEqual(mergeView({ ready: true }), { mode: "normal", label: "Merge", enabled: true });
-  assert.deepEqual(mergeView({ ready: false }), { mode: "normal", label: "Merge", enabled: false });
+  assert.deepEqual(mergeView({ ready: false, wait: "w" }), { mode: "hidden", label: "", enabled: false, wait: "w" }, "gated: no button, only what it waits for");
   assert.deepEqual(mergeView({ ready: true, busy: "merge" }), { mode: "normal", label: "Merging…", enabled: false });
   assert.deepEqual(mergeView({ ready: true, busy: "pr" }), { mode: "normal", label: "Opening PR…", enabled: false });
+});
+
+test("mergeView: busy keeps the Merging… / Opening PR… label whatever the gate says", () => {
+  assert.deepEqual(mergeView({ ready: false, busy: "merge" }), { mode: "normal", label: "Merging…", enabled: false });
+  assert.deepEqual(mergeView({ ready: false, busy: "pr" }), { mode: "normal", label: "Opening PR…", enabled: false });
+});
+
+test("mergeWait says what Merge waits for, in order: the final review, the live agents, then the worktree", () => {
+  const live = (name) => ({ live: true, name }), ended = { live: false, name: "x" };
+  assert.equal(mergeWait({ finalSeen: false, workers: [ended], reviewers: [], investigators: [], known: true }), "Merge appears once the final review has started and every agent has ended.");
+  assert.equal(mergeWait({ finalSeen: false, known: false }), "Merge appears once the final review has started and every agent has ended.");
+  assert.equal(mergeWait({ finalSeen: true, workers: [live("worker-1"), ended], reviewers: [live("final-review")], investigators: [live("inv")], known: true }), "Merge appears once 3 agents have ended: worker-1, final-review, inv.");
+  assert.equal(mergeWait({ finalSeen: true, reviewers: [live("final-review")], known: true }), "Merge appears once 1 agent has ended: final-review.");
+  assert.equal(mergeWait({ finalSeen: true, workers: [ended], known: false }), "Merge appears once the run page knows the ticket worktree.");
+  assert.equal(mergeWait({ finalSeen: true, workers: [ended], known: true }), null);
+  assert.equal(mergeWait({ finalSeen: true }), "Merge appears once the run page knows the ticket worktree.", "known must be said");
 });
 
 test("mergeView: a failure makes the button red with its label, enabled until it is pressed", () => {
@@ -739,6 +755,7 @@ test("mergeView: a failure makes the button red with its label, enabled until it
 test("mergeView: while the orchestrator is fixing it, Merge is disabled and the red state is not shown", () => {
   assert.deepEqual(mergeView({ ready: true, failure: failure("checks"), fixing: sent() }), { mode: "fixing", label: "Merge", enabled: false });
   assert.deepEqual(mergeView({ ready: true, fixing: sent() }), { mode: "fixing", label: "Merge", enabled: false });
+  assert.deepEqual(mergeView({ ready: false, fixing: sent() }), { mode: "fixing", label: "Merge", enabled: false }, "the fixing note keeps its (disabled) button");
 });
 
 test("restoreFailure and restoreFixing read what shared state kept, and refuse anything else", () => {
