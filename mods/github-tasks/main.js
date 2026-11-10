@@ -560,6 +560,7 @@ export default class GitHubTasks extends View {
     const max = Math.max(12, Math.floor(room / (S().body * 0.55)));
     return h_flex().id(`ticket-${ticket.key}`).flex_none().mx(8).mb(1).px(6).h(28).gap(8).items_center().rounded(6)
       .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => this.openTicket(ticket, cx))
+      .tooltip(rowLabel(ticket))
       .child(div().w(8).h(8).flex_none().rounded_full().when(ticket.draft, (el) => el.border(1.5).border_color(color)).when(!ticket.draft, (el) => el.bg(color)))
       .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(rowLabel(ticket), max)))
       .when(Boolean(ticket.url), (el) => el.child(iconButton(`open-${ticket.key}`, "external", t, (_e, cx) => cx.open_url(ticket.url), false, "Open on GitHub")))
