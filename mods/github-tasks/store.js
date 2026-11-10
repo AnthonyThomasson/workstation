@@ -63,9 +63,7 @@ const legacyOf = (dir, id) => `${dir}/${id}.json`;
 
 export function makeStore({ io, dirs, kind = WORKFLOW }) {
   const { parse, serialize, validate, slug, SCOPES, SCOPE_LABELS } = kind.model, noun = kind.noun;
-  // An item is stored under `item`; `workflow` names the same object, as it did before there were two kinds.
-  const withItem = (item, rest) => ({ item, workflow: item, ...rest });
-  const previousId = (previous) => (previous.item ?? previous.workflow).id;
+  const withItem = (item, rest) => ({ item, ...rest });
   const available = SCOPES.filter((scope) => Boolean(dirs[scope]));
 
   function folder(scope) {
@@ -73,7 +71,7 @@ export function makeStore({ io, dirs, kind = WORKFLOW }) {
     return dirs[scope];
   }
 
-  // Every file in the available scopes, read: [{ id, scope, workflow }] or [{ id, scope, file, error }] for a file that cannot be
+  // Every file in the available scopes, read: [{ id, scope, item }] or [{ id, scope, file, error }] for a file that cannot be
   // read. The one place a workflow folder is listed.
   async function readAll() {
     const entries = [];
@@ -85,7 +83,7 @@ export function makeStore({ io, dirs, kind = WORKFLOW }) {
         try {
           const text = (await io.read(fileOf(dir, id))) ?? (await io.read(legacyOf(dir, id)));
           if (text == null) continue;
-          entries.push({ id, scope, workflow: { ...parse(text), id, scope } });
+          entries.push({ id, scope, item: { ...parse(text), id, scope } });
         } catch (e) {
           entries.push({ id, scope, error: e.message, file: files.includes(`${id}.yaml`) ? `${id}.yaml` : `${id}.json` });
         }
@@ -98,7 +96,7 @@ export function makeStore({ io, dirs, kind = WORKFLOW }) {
   // Every workflow in the available scopes, by name: [{ id, name, scope, error? }]. A file that cannot be
   // read is listed with its error instead of failing the whole list.
   async function list() {
-    const items = (await readAll()).map((e) => (e.error ? { id: e.id, name: e.id, scope: e.scope, error: e.error } : { id: e.id, name: e.workflow.name || e.id, scope: e.scope }));
+    const items = (await readAll()).map((e) => (e.error ? { id: e.id, name: e.id, scope: e.scope, error: e.error } : { id: e.id, name: e.item.name || e.id, scope: e.scope }));
     return items.sort(byName);
   }
 
@@ -107,7 +105,7 @@ export function makeStore({ io, dirs, kind = WORKFLOW }) {
   async function loadAll() {
     const entries = await readAll();
     return {
-      items: entries.filter((e) => e.workflow).map((e) => ({ ...e.workflow, name: e.workflow.name || e.id })).sort(byName),
+      items: entries.filter((e) => e.item).map((e) => ({ ...e.item, name: e.item.name || e.id })).sort(byName),
       errors: entries.filter((e) => e.error).map((e) => `${e.file}: ${e.error}`),
     };
   }
@@ -126,7 +124,7 @@ export function makeStore({ io, dirs, kind = WORKFLOW }) {
     return found && (found.legacy ? serialize(parse(found.text)) : found.text);
   }
 
-  // One workflow and the text it was read as: { item, text, scope, legacy } (item is also `workflow`), or null when there is none.
+  // One workflow and the text it was read as: { item, text, scope, legacy }, or null when there is none.
   // legacy: it was read from an old JSON file.
   async function load(scope, id) {
     const found = await loadText(scope, id);
@@ -146,11 +144,11 @@ export function makeStore({ io, dirs, kind = WORKFLOW }) {
 
   // Saves a workflow in a scope. `previous` is what load() gave (null for a new one). A new one gets its file
   // name from its name, unless clone() supplies the unique id it already chose. Moving to another scope writes
-  // the new file, then removes the old one. Returns { item, workflow (the same), text, scope, legacy }.
+  // the new file, then removes the old one. Returns { item, text, scope, legacy }.
   async function save(workflow, scope, previous = null, newId = null) {
     const dir = folder(scope);
-    const id = previous ? previousId(previous) : newId ?? slug(workflow.name);
-    const taken = (await list()).map((i) => i.id).filter((id) => id !== (previous && previousId(previous)));
+    const id = previous ? previous.item.id : newId ?? slug(workflow.name);
+    const taken = (await list()).map((i) => i.id).filter((id) => id !== (previous && previous.item.id));
     const problems = validate({ ...workflow, id: previous ? workflow.id : id }, previous ? taken : []);
     if (!previous && taken.includes(id)) problems.unshift({ field: "name", message: `A ${noun} with that name already exists.` });
     if (problems.length) throw Object.assign(new StoreError("invalid", problems[0].message), { problems });

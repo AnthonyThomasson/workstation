@@ -1,4 +1,4 @@
-// One tab per workflow: the opener records the pane its tab.new made, and opening the same subject
+// One tab per workflow or refactor type (see kinds.js kindSubject): the opener records the pane its tab.new made, and opening the same subject
 // again selects that tab instead.
 import { panes, run, shared, setShared } from "herdr";
 
@@ -27,5 +27,3 @@ export function openOnce(subject, args, cx) {
     }
   });
 }
-
-export const workflowSubject = (scope, id) => (id ? `workflow:${scope}:${id}` : null);

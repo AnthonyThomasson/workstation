@@ -5,7 +5,7 @@
 // .herdr/tasks/tasks.json the list is the YAML task files instead (local-tasks.js, local-ui.js), read again every 3 seconds.
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
 // workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket, in a popup (props.popup)
-// opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow in the center (workflow-editor.js); "run", a started
+// opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow or refactor type (props.kind) in the center (workflow-editor.js); "run", a started
 // workflow's agents, beside its orchestrator (run-page.js); "investigation", a New Task session's Done button, beside its agent (investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -28,6 +28,7 @@ import { editorOverlay } from "./popup.js";
 import { RunPage } from "./run-page.js";
 import { PromptPage } from "./prompts-page.js";
 import { WorkflowList } from "./workflow-list.js";
+import { REFACTOR } from "./kinds.js";
 import { loadWorkflows } from "./workflow-env.js";
 import { liveRunFor, viewRun, reconnectRuns } from "./start.js";
 import { investigationsHere, reconnectInvestigations, viewInvestigation } from "./investigate.js";
@@ -98,6 +99,7 @@ export default class GitHubTasks extends View {
       this.settingsKey = null;
       this.page = null;
       this.workflowList = new WorkflowList(cx, { place: () => shared(PLACE) ?? null, shown: shownHere });
+      this.refactorList = new WorkflowList(cx, { place: () => shared(PLACE) ?? null, shown: shownHere, kind: REFACTOR });
       return;
     }
     this.handle = cx.focus_handle();
@@ -308,7 +310,7 @@ export default class GitHubTasks extends View {
     const t = theme(), ctx = shared(CONTEXT) ?? null, key = JSON.stringify(ctx); // no repo or project is still a page, with placeholders
     if (key !== this.settingsKey) {
       this.settingsKey = key;
-      later(cx, (cx) => { this.page = new TaskSettings(ctx, cx, () => run("layout.hide", { id: PANEL }), this.workflowList); cx.notify(); });
+      later(cx, (cx) => { this.page = new TaskSettings(ctx, cx, () => run("layout.hide", { id: PANEL }), this.workflowList, this.refactorList); cx.notify(); });
     }
     if (this.page && key === this.settingsKey) return this.page.render(cx);
     return v_flex().id("task-settings-empty").size_full().p(16).gap(10).bg(t.background).text_size(S().body)

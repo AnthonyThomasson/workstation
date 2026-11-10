@@ -1,5 +1,5 @@
 // The Tasks settings page: the agent sections in two groups, Orchestrators and Agents (settings-model.js), each group and entry
-// collapsing and remembering its state, each entry with a read-only prompt tab, then the workflows
+// collapsing and remembering its state, each entry with a read-only prompt tab, then the workflows and refactors
 // (workflow-list.js), which main.js builds once so they keep their place between renders. The agent controls are
 // global; the prompt tabs carry a snapshot of the current repo/project/status spellings. Not a View of its own:
 // main.js builds one and draws it from render.
@@ -26,8 +26,9 @@ const SUB_AGENTS = [
 ];
 
 export class TaskSettings {
-  constructor(props, cx, onClose, workflows) {
+  constructor(props, cx, onClose, workflows, refactors) {
     this.workflows = workflows ?? null; // the WorkflowList to draw under the agent settings
+    this.refactors = refactors ?? null; // the refactor types' WorkflowList, drawn below the workflows
     this.onClose = onClose ?? null; // set when the settings sit in the side panel, which needs a way to close
     this.repo = props?.repo ?? ""; // "" until a repo is known
     this.project = props?.project ?? null; // null until the repo has a linked project
@@ -148,7 +149,8 @@ export class TaskSettings {
         .child(v_flex().px(20).py(16).gap(16)
           .child(this.renderSource(t))
           .children(SETTINGS_GROUPS.map((group) => this.group(t, group)))
-          .when(Boolean(this.workflows), (el) => el.child(this.workflows.render(cx)))));
+          .when(Boolean(this.workflows), (el) => el.child(this.workflows.render(cx)))
+          .when(Boolean(this.refactors), (el) => el.child(this.refactors.render(cx)))));
   }
 
   // What the doctor found at its last check of this place (published by doctor-run.js, not by this page).
