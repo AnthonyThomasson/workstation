@@ -14,7 +14,8 @@ import { S, icon, stop, note, iconButton, action, gh, scrim } from "./ui.js";
 import { Auth, REFRESH, LOGIN } from "./auth.js";
 import { matchWorkflows } from "./match.js";
 import { loadWorkflows } from "./workflow-env.js";
-import { startRun } from "./start.js";
+import { StartDialog } from "./start-dialog.js";
+import { renderStartDialog, startChosen } from "./start-dialog-view.js";
 import { markdownLiteral } from "./settings-model.js";
 import { panelSize, panelAppeared, closeStep, escStep, afterSave, PRESS_BUTTONS } from "./popup.js";
 import { wontDoFooter, wontDoPrompt, retryAfterSignIn } from "./wontdo.js";
@@ -36,7 +37,6 @@ export class TaskEditor {
     this.where = props?.where ?? {};
     this.draft = Boolean(this.ticket.draft);
     this.popup = Boolean(props?.popup); // in the popup (see the top), not in a tab
-    this.autoStart = Boolean(props?.autoStart); // the sidebar's Start asked for several workflows or none: show the dialog once loaded
 
     this.handle = cx.focus_handle(); // the editor's root takes the keyboard when the textarea goes, so Cmd-S still reaches it
     this.auth = new Auth();
@@ -55,7 +55,7 @@ export class TaskEditor {
     this.search.on("change", (_e, cx) => cx.notify());
     this.search.on("submit", (_e, cx) => { const first = this.options()[0]; if (first) this.choose(first.name, cx); });
 
-    // The Start dialog: null, or { phase: "loading" | "ready" | "starting" | "error", matches, labels, chosen, error, skipped }.
+    // The Start dialog (start-dialog.js): null, or the StartDialog being shown.
     this.start = null;
     this.startable = false; // whether the saved labels match any workflow, which is what enables Start
 
@@ -123,7 +123,6 @@ export class TaskEditor {
         this.base = snapshot({ ...task.value, status: this.status });
         this.loaded = true;
         this.checkStartable(cx);
-        if (this.autoStart) { this.autoStart = false; this.openStart(cx); }
       }
       cx.notify();
     });
@@ -314,18 +313,19 @@ export class TaskEditor {
   // choose from. A ticket as GitHub holds it is what starts, so the saved labels are matched, not unsaved edits.
   openStart(cx) {
     const labels = [...this.base.labels], token = (this.startToken = (this.startToken ?? 0) + 1);
-    this.start = { phase: "loading", matches: [], labels, chosen: null, error: null, skipped: [] };
+    const dialog = this.start = new StartDialog(() => {});
+    dialog.begin(labels);
     cx.notify();
     cx.spawn(async (cx) => {
       try {
         const { items, errors } = await loadWorkflows(this.where);
-        if (token !== this.startToken || !this.start) return;
+        if (token !== this.startToken || this.start !== dialog) return;
         const matches = matchWorkflows(items, labels);
-        this.start = { ...this.start, phase: "ready", matches, skipped: errors };
+        dialog.ready(labels, matches, errors);
         if (matches.length === 1) this.runWorkflow(matches[0], cx);
       } catch (e) {
-        if (token !== this.startToken || !this.start) return;
-        this.start = { ...this.start, phase: "error", error: String(e?.message ?? e) };
+        if (token !== this.startToken || this.start !== dialog) return;
+        dialog.loadFailed(e?.message ?? e);
       }
       cx.notify();
     });
@@ -333,17 +333,13 @@ export class TaskEditor {
 
   // Starts the workflow on the ticket. The dialog goes once the tab is open, and stays with the reason if it can't.
   runWorkflow(workflow, cx) {
-    const ticket = { ...this.ticket, ...this.base };
-    this.start = { ...this.start, phase: "starting", chosen: workflow, error: null };
-    cx.notify();
+    const dialog = this.start, ticket = { ...this.ticket, ...this.base };
     cx.spawn(async (cx) => {
-      try {
-        const statusField = this.project ? await loadStatusField(gh, this.project.id, this.where).catch(() => null) : null; // without it the ticket's status just isn't moved
-        await startRun(workflow, ticket, this.repo, this.where, cx, { project: this.project, statusField });
-        this.start = null;
+      const result = dialog.choose(workflow, (w) => startChosen(w, ticket, { repo: this.repo, project: this.project, where: this.where }, cx));
+      cx.notify(); // choose has set "starting" by now
+      if (await result === "started") {
+        if (this.start === dialog) this.start = null;
         if (this.popup) { this.closeNow(); return; } // the run's tab is open: the popup has done its job
-      } catch (e) {
-        this.start = { ...this.start, phase: "error", error: String(e?.message ?? e) };
       }
       cx.notify();
     });
@@ -351,7 +347,7 @@ export class TaskEditor {
 
   // A run that is starting finishes first: it can't be called back halfway, and the dialog says how it went.
   closeStart(cx) {
-    if (this.start?.phase === "starting") return;
+    if (!this.start?.requestClose()) return;
     this.startToken++;
     this.start = null;
     cx.notify();
@@ -567,38 +563,10 @@ export class TaskEditor {
       .child(dialog);
   }
 
-  // The dialog Start opens: the workflow starting, why it couldn't, or, when the labels trigger several, a
-  // list to choose from first.
+  // The dialog Start opens, over the editor (start-dialog-view.js draws it): the workflow starting, why it couldn't, or, when the
+  // labels trigger several, a list to choose from first.
   renderStart(t) {
-    const s = this.start, chosen = s.chosen, several = s.matches.length > 1;
-    const title = chosen ? chosen.name : several ? "Choose a workflow" : "Start";
-    const close = (_e, cx) => this.closeStart(cx);
-    const where = (w) => (w.scope === "global" ? "Global" : "Repo");
-    const row = (w) => h_flex().id(`start-${w.scope}-${w.id}`).flex_none().px(10).py(8).gap(8).items_center().rounded(6).cursor_pointer()
-      .hover((st) => st.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => this.runWorkflow(w, cx))
-      .child(v_flex().flex_1().min_w(0).gap(1)
-        .child(div().truncate().text_size(S().body).font_medium().child(w.name))
-        .child(div().truncate().text_size(S().label).text_color(t.muted).child(w.trigger.labels.length ? `${w.trigger.match === "all" ? "All of" : "Any of"}: ${w.trigger.labels.join(", ")}` : "Fallback: no labels")))
-      .child(div().flex_none().px(6).h(18).flex().items_center().rounded(9).border_1().border_color(t.border).text_size(S().label).text_color(t.muted).child(where(w)))
-      .child(icon("chevron-right", 14, t.muted));
-    const body = s.phase === "loading" ? v_flex().gap(8).children([0, 1].map((i) => div().h(40).flex_none().rounded(8).bg(t.chrome).opacity(1 - i * 0.3)))
-      : s.phase === "error" ? note(t, s.error, t.ansi1)
-      : s.phase === "starting" ? h_flex().gap(8).items_center().child(icon("ring", 14, t.muted).spin(900)).child(note(t, "Getting the branch ready and starting the orchestrator…"))
-      : several ? div().id("start-list").max_h(380).overflow_y_scrollbar().child(v_flex().gap(2).children(s.matches.map(row)))
-      : v_flex().gap(6)
-        .child(note(t, s.labels.length ? "No workflow matches this ticket's labels." : "This ticket has no labels, and no workflow is the fallback."))
-        .child(note(t, "Make one in the Task settings."));
-    const labels = s.labels.length ? s.labels.join(", ") : "none";
-    const dialog = v_flex().id("task-start").w(560).max_h(560).flex_none().p(16).gap(12).rounded(12).border_1().border_color(t.border)
-      .bg(t.popover).shadow_lg().text_color(t.foreground).text_size(S().body)
-      .on_mouse_down("left", stop)
-      .child(h_flex().flex_none().items_center().gap(8)
-        .child(div().flex_1().min_w(0).truncate().text_size(S().title).font_semibold().child(title))
-        .child(div().text_size(S().label).text_color(t.muted).child("Esc"))
-        .child(iconButton("start-close", "close", t, close)))
-      .child(div().flex_none().truncate().text_size(S().label).text_color(t.muted).child(`Matched on labels: ${labels}`))
-      .child(body)
-      .when(s.skipped.length > 0, (el) => el.child(note(t, `Skipped unreadable workflows: ${s.skipped.join("; ")}`, t.ansi1)));
+    const dialog = renderStartDialog(t, this.start, { onChoose: (w, cx) => this.runWorkflow(w, cx), onClose: (cx) => this.closeStart(cx) });
     return div().id("task-start-backdrop").absolute().inset_0().flex().items_center().justify_center().bg(scrim(t))
       .on_mouse_down("left", (_e, cx) => { this.closeStart(cx); cx.stop_propagation(); })
       .child(dialog);
