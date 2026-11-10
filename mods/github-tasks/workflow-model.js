@@ -86,7 +86,7 @@ function normalizeTrigger(raw) {
   return { labels: list, match: text(r.match) || "any" };
 }
 
-function normalizeRole(raw, extras = [], withPermissions = false) {
+export function normalizeRole(raw, extras = [], withPermissions = false) {
   const r = raw && typeof raw === "object" ? raw : {};
   const base = blankRole();
   const agent = text(r.agent) || base.agent; // an agent kind this list doesn't know is kept, so a newer file survives
@@ -163,10 +163,11 @@ export function parse(source) {
   return normalize(parseFile(source));
 }
 
-export function parseFile(source) {
+// noun: what the file is called in the error (refactor types are read with this too).
+export function parseFile(source, noun = "workflow") {
   let data;
   const asJson = /^\s*\{/.test(source);
   try { data = asJson ? JSON.parse(source) : parseYaml(source); } catch (e) { throw new Error(`not valid ${asJson ? "JSON" : "YAML"} (${e.message})`); }
-  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("not a workflow object");
+  if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error(`not a ${noun} object`);
   return data;
 }

@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { parse as parseYaml } from "./yaml.js";
 import { blank, normalize, validate } from "./workflow-model.js";
+import * as refactor from "./refactor-model.js";
+import { WORKFLOW, REFACTOR } from "./kinds.js";
 
 const dir = new URL("./starters/", import.meta.url);
 const load = (file) => parseYaml(readFileSync(new URL(file, dir), "utf8"));
@@ -30,3 +32,46 @@ for (const file of ["bug.yaml", "story.yaml"]) {
     for (const [role, key] of PROMPTS) assert.doesNotMatch(data[role][key], /skill|mattpocock/i, `${file} ${role}.${key}`);
   });
 }
+
+const REFACTOR_STARTERS = { "redundant-tests.yaml": "Redundant tests", "architecture.yaml": "Architecture", "isolation.yaml": "Isolation" };
+
+for (const [file, name] of Object.entries(REFACTOR_STARTERS)) {
+  test(`${file} parses and validates as a refactor type, id and name matching`, () => {
+    const text = readFileSync(new URL(file, dir), "utf8"), r = refactor.parse(text);
+    assert.deepEqual(refactor.validate(r), []);
+    assert.equal(r.name, name);
+    assert.equal(r.id, refactor.slug(name));
+    assert.equal(`${r.id}.yaml`, file);
+    assert.equal(r.version, 1);
+  });
+
+  test(`${file} runs a Claude opus/high orchestrator and a Claude sonnet/medium investigator`, () => {
+    const { orchestrator, investigator } = refactor.parse(readFileSync(new URL(file, dir), "utf8"));
+    assert.deepEqual([orchestrator.agent, orchestrator.model, orchestrator.effort], ["claude", "opus", "high"]);
+    assert.deepEqual([investigator.agent, investigator.model, investigator.effort], ["claude", "sonnet", "medium"]);
+    assert.ok(orchestrator.prompt.trim());
+  });
+
+  test(`${file} is a refactor type, not a workflow: no trigger, worker, reviewer, planning or retro`, () => {
+    const data = load(file);
+    assert.deepEqual(Object.keys(data), ["version", "id", "name", "orchestrator", "investigator"]);
+    assert.deepEqual(Object.keys(data.orchestrator), ["agent", "command", "model", "effort", "prompt"]);
+  });
+}
+
+test("the Architecture starter follows the improve-codebase-architecture approach, with no HTML report", () => {
+  const { prompt } = refactor.parse(readFileSync(new URL("architecture.yaml", dir), "utf8")).orchestrator;
+  for (const word of ["git log", "shallow", "seam", "locality", "deletion test", "Strong", "Worth exploring", "Speculative"]) assert.match(prompt, new RegExp(word, "i"));
+  assert.match(prompt, /do not write an html report/i);
+});
+
+test("each kind lists exactly its own starters, and together they are every file in starters/", () => {
+  assert.deepEqual(WORKFLOW.starters.map((n) => `${n}.yaml`), ["bug.yaml", "story.yaml"]);
+  assert.deepEqual(REFACTOR.starters.map((n) => `${n}.yaml`), Object.keys(REFACTOR_STARTERS));
+  const files = readdirSync(dir).filter((f) => f.endsWith(".yaml")).sort();
+  assert.deepEqual(files, [...WORKFLOW.starters, ...REFACTOR.starters].map((n) => `${n}.yaml`).sort());
+});
+
+test("a workflow starter is not a valid refactor type: it has no refactor prompt", () => {
+  for (const file of ["bug.yaml", "story.yaml"]) assert.ok(refactor.validate(refactor.parse(readFileSync(new URL(file, dir), "utf8"))).length > 0, file);
+});

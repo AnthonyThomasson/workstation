@@ -7,15 +7,18 @@
 //   { global?, repo? }
 // a scope without a folder is not available (global always has one; repo has none when the selected space
 // is not in a repo), and nothing is listed from it or written to it. Nothing here runs git.
-import { parse, serialize, slug, normalize, validate, SCOPES, SCOPE_LABELS } from "./workflow-model.js";
+//
+// Every function takes the kind of thing stored (kinds.js): workflows, the default, or refactor types.
+import { WORKFLOW } from "./kinds.js";
 
 export class StoreError extends Error {
   constructor(kind, message) { super(message); this.kind = kind; } // "conflict" | "invalid" | "missing" | "unavailable" | "other"
 }
 
 // A copy keeps its contents and scope; its name is changed until the slug it produces is not an existing id.
-export function cloneWorkflow(workflow, existingIds) {
-  const copy = normalize(workflow), base = `${copy.name} copy`, taken = new Set(existingIds);
+export function cloneItem(item, existingIds, kind = WORKFLOW) {
+  const { normalize, slug } = kind.model;
+  const copy = normalize(item), base = `${copy.name} copy`, taken = new Set(existingIds);
   for (let number = 1; ; number++) {
     const name = number === 1 ? base : `${base} ${number}`;
     // slug() cuts to 60 characters, so reserve the suffix instead of letting a long name cut it off forever.
@@ -24,12 +27,14 @@ export function cloneWorkflow(workflow, existingIds) {
   }
 }
 
+export const cloneWorkflow = cloneItem;
+
 // Clipboard YAML becomes the replacement's contents, never its id: that still belongs to the destination file.
-export function replacementFromYaml(source, id) {
+export function replacementFromYaml(source, id, kind = WORKFLOW) {
   let replacement;
-  try { replacement = { ...parse(source), id }; }
-  catch (e) { throw new StoreError("invalid", `Clipboard is not a valid workflow: ${e?.message ?? e}`); }
-  const problems = validate(replacement);
+  try { replacement = { ...kind.model.parse(source), id }; }
+  catch (e) { throw new StoreError("invalid", `Clipboard is not a valid ${kind.noun}: ${e?.message ?? e}`); }
+  const problems = kind.model.validate(replacement);
   if (problems.length) throw Object.assign(new StoreError("invalid", problems[0].message), { problems });
   return replacement;
 }
@@ -56,11 +61,15 @@ export function restorePlan(items, tab, repoRoot) {
 const fileOf = (dir, id) => `${dir}/${id}.yaml`;
 const legacyOf = (dir, id) => `${dir}/${id}.json`;
 
-export function makeStore({ io, dirs }) {
+export function makeStore({ io, dirs, kind = WORKFLOW }) {
+  const { parse, serialize, validate, slug, SCOPES, SCOPE_LABELS } = kind.model, noun = kind.noun;
+  // An item is stored under `item`; `workflow` names the same object, as it did before there were two kinds.
+  const withItem = (item, rest) => ({ item, workflow: item, ...rest });
+  const previousId = (previous) => (previous.item ?? previous.workflow).id;
   const available = SCOPES.filter((scope) => Boolean(dirs[scope]));
 
   function folder(scope) {
-    if (!dirs[scope]) throw new StoreError("unavailable", `${SCOPE_LABELS[scope] ?? scope} workflows aren't available here.`);
+    if (!dirs[scope]) throw new StoreError("unavailable", `${SCOPE_LABELS[scope] ?? scope} ${kind.plural} aren't available here.`);
     return dirs[scope];
   }
 
@@ -117,11 +126,11 @@ export function makeStore({ io, dirs }) {
     return found && (found.legacy ? serialize(parse(found.text)) : found.text);
   }
 
-  // One workflow and the text it was read as: { workflow, text, scope, legacy }, or null when there is none.
+  // One workflow and the text it was read as: { item, text, scope, legacy } (item is also `workflow`), or null when there is none.
   // legacy: it was read from an old JSON file.
   async function load(scope, id) {
     const found = await loadText(scope, id);
-    return found && { ...found, workflow: { ...parse(found.text), id } };
+    return found && withItem({ ...parse(found.text), id }, found);
   }
 
   // A write that fails because the file changed since it was read is a conflict; anything else is not.
@@ -130,20 +139,20 @@ export function makeStore({ io, dirs }) {
       await io.write(path, text, expected);
     } catch (e) {
       const now = await io.read(path).catch(() => undefined);
-      if (now !== undefined && now !== expected) throw new StoreError("conflict", "This workflow changed on disk after you opened it.");
+      if (now !== undefined && now !== expected) throw new StoreError("conflict", `This ${noun} changed on disk after you opened it.`);
       throw new StoreError("other", `Could not write ${path}: ${e?.message ?? e}`);
     }
   }
 
   // Saves a workflow in a scope. `previous` is what load() gave (null for a new one). A new one gets its file
   // name from its name, unless clone() supplies the unique id it already chose. Moving to another scope writes
-  // the new file, then removes the old one. Returns { workflow, text, scope }.
+  // the new file, then removes the old one. Returns { item, workflow (the same), text, scope, legacy }.
   async function save(workflow, scope, previous = null, newId = null) {
     const dir = folder(scope);
-    const id = previous ? previous.workflow.id : newId ?? slug(workflow.name);
-    const taken = (await list()).map((i) => i.id).filter((id) => id !== previous?.workflow.id);
+    const id = previous ? previousId(previous) : newId ?? slug(workflow.name);
+    const taken = (await list()).map((i) => i.id).filter((id) => id !== (previous && previousId(previous)));
     const problems = validate({ ...workflow, id: previous ? workflow.id : id }, previous ? taken : []);
-    if (!previous && taken.includes(id)) problems.unshift({ field: "name", message: "A workflow with that name already exists." });
+    if (!previous && taken.includes(id)) problems.unshift({ field: "name", message: `A ${noun} with that name already exists.` });
     if (problems.length) throw Object.assign(new StoreError("invalid", problems[0].message), { problems });
 
     const text = serialize({ ...workflow, id }), path = fileOf(dir, id);
@@ -151,26 +160,26 @@ export function makeStore({ io, dirs }) {
     // Same place as before: replace what was read. A new file, or a move: nothing may be there yet.
     const sameFile = previous && previous.scope === scope;
     if (!sameFile && ((await io.read(path)) != null || (await io.read(legacyOf(dir, id))) != null)) {
-      throw new StoreError("invalid", `A workflow with the id "${id}" already exists in ${SCOPE_LABELS[scope].toLowerCase()}.`);
+      throw new StoreError("invalid", `A ${noun} with the id "${id}" already exists in ${SCOPE_LABELS[scope].toLowerCase()}.`);
     }
     // An old JSON file has no YAML beside it yet: write that new, then take the JSON away.
     await write(path, text, sameFile && !previous.legacy ? previous.text : null);
     if (previous && (!sameFile || previous.legacy)) await io.remove(previous.legacy ? legacyOf(folder(previous.scope), id) : fileOf(folder(previous.scope), id));
-    return { workflow: { ...parse(text), id }, text, scope, legacy: false };
+    return withItem({ ...parse(text), id }, { text, scope, legacy: false });
   }
 
   async function clone(scope, id) {
     const found = await load(scope, id);
-    if (!found) throw new StoreError("missing", "That workflow is already gone.");
-    const copy = cloneWorkflow(found.workflow, (await list()).map((item) => item.id));
+    if (!found) throw new StoreError("missing", `That ${noun} is already gone.`);
+    const copy = cloneItem(found.item, (await list()).map((item) => item.id), kind);
     return save(copy, scope, null, copy.id);
   }
 
   async function paste(scope, id, source) {
     const previous = await loadText(scope, id);
-    if (!previous) throw new StoreError("missing", "That workflow is already gone.");
-    const destination = { ...previous, workflow: { id } }; // the old file need not be valid for Paste to repair it
-    return save(replacementFromYaml(source, id), scope, destination);
+    if (!previous) throw new StoreError("missing", `That ${noun} is already gone.`);
+    const destination = withItem({ id }, previous); // the old file need not be valid for Paste to repair it
+    return save(replacementFromYaml(source, id, kind), scope, destination);
   }
 
   async function restore(plan, starterTexts) {
@@ -226,7 +235,7 @@ export function makeStore({ io, dirs }) {
 
   async function remove(scope, id) {
     const found = await load(scope, id);
-    if (!found) throw new StoreError("missing", "That workflow is already gone.");
+    if (!found) throw new StoreError("missing", `That ${noun} is already gone.`);
     await io.remove((found.legacy ? legacyOf : fileOf)(folder(scope), id));
   }
 

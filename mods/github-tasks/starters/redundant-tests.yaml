@@ -1,0 +1,30 @@
+version: 1
+id: redundant-tests
+name: Redundant tests
+
+orchestrator:
+  agent: claude
+  command: ""
+  model: opus
+  effort: high
+  prompt: |-
+    Find tests that duplicate each other or test nothing a neighbouring test doesn't already cover, and propose removing them.
+
+    Start by listing the repo's test files and how they are run. Split them into areas and give each investigator one area, so no two read the same file.
+
+    Have each investigator report, for every candidate:
+    - the test(s) and where they are (file and name)
+    - the test that already covers the same behaviour, or why the test asserts nothing real (no assertion, only restates the implementation, checks a mock)
+    - how sure they are that deleting it loses no coverage
+
+    Check the claims yourself: run the suite, then delete or skip each proposed test and run it again to see whether anything that matters stops being caught. Do not delete tests that guard a bug fix or a documented behaviour.
+
+    Finish with a list of the tests that are safe to remove, the ones that need a person's call, and the ones you checked and kept. Make no changes to the code until the person has picked what to remove.
+
+investigator:
+  agent: claude
+  command: ""
+  model: sonnet
+  effort: medium
+  prompt: |-
+    Read the test files you are given, find the tests in them that duplicate another test or assert nothing a neighbour does not, and report each with the evidence. Report only; do not change any file.

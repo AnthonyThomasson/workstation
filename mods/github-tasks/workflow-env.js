@@ -1,11 +1,12 @@
 // Herdr's side of the store: real files, and where they are. Everything else is store.js.
 import { exec, home, appHome, readTextFile, writeTextFile } from "herdr";
 import { makeStore } from "./store.js";
-import { WORKFLOWS_CHANGED } from "./model.js";
+import { WORKFLOWS_CHANGED, REFACTORS_CHANGED } from "./model.js";
 import { parseCodexModels, parseKimiModels } from "./models.js";
-import { firstLine, workflowDirs, globalWorkflowsDir, tildePath } from "./places.js";
+import { firstLine, kindDirs, globalKindDir, tildePath } from "./places.js";
+import { WORKFLOW, REFACTOR } from "./kinds.js";
 
-export { WORKFLOWS_CHANGED };
+export { WORKFLOWS_CHANGED, REFACTORS_CHANGED };
 
 const sh = (script, ...args) => exec("sh", ["-c", script, "github-tasks", ...args]);
 
@@ -31,20 +32,24 @@ export const codexModels = () => readTextFile(`${home()}/.codex/models_cache.jso
 export const kimiModels = () => readTextFile(`${home()}/.kimi-code/config.toml`)
   .then((text) => parseKimiModels(text ?? ""), () => []);
 
-// Where global workflows are kept: the workflows folder of the Herdr home. It is made when one is saved.
-export const globalDir = () => globalWorkflowsDir(appHome());
+// Where global workflows (or refactor types, kind = REFACTOR) are kept: that folder of the Herdr home. It is made
+// when one is saved.
+export const globalDir = (kind = WORKFLOW) => globalKindDir(appHome(), kind.folder);
 // That folder as people write it, for messages: ~/.config/herdr-app/workflows.
-export const globalDirText = () => tildePath(globalDir(), home());
+export const globalDirText = (kind = WORKFLOW) => tildePath(globalDir(kind), home());
 
-// The shipped starters, read from this installed mod rather than embedded a second time in its code.
-export async function starterWorkflows() {
-  return Promise.all(["bug", "story"].map(async (name) => {
+// A kind's shipped starters' texts, read from this installed mod rather than embedded a second time in its code.
+// All of them are read (and any missing one throws) before the caller changes anything.
+export async function starterTexts(kind = WORKFLOW) {
+  return Promise.all(kind.starters.map(async (name) => {
     const path = `${appHome()}/mods/github-tasks/starters/${name}.yaml`;
     const text = await readTextFile(path);
     if (text == null) throw new Error(`Could not read the shipped ${name} starter at ${path}.`);
     return text;
   }));
 }
+export const starterWorkflows = () => starterTexts(WORKFLOW);
+export const starterRefactors = () => starterTexts(REFACTOR);
 
 // The git repo a folder is in: its top folder, or null (not a repo, or git cannot run there).
 const repoOfFolder = (folder) => sh('git -C "$1" rev-parse --show-toplevel 2>/dev/null', folder)
@@ -56,10 +61,14 @@ export const repoRootOf = (where) => (where?.cwd && !where.on ? repoOfFolder(whe
 
 // The store for what is known now: the repo of the selected space (or null). Global is always there; a
 // repo's workflows are available only while their space is the one open.
-export function store({ repo = null } = {}) {
-  return makeStore({ io, dirs: workflowDirs(appHome(), repo) });
+// kind: WORKFLOW (the default) or REFACTOR, from kinds.js.
+export function store({ repo = null, kind = WORKFLOW } = {}) {
+  return makeStore({ io, dirs: kindDirs(appHome(), repo, kind.folder), kind });
 }
 
 // Every workflow the place can see, whole, for Start and the ticket editor's Start dialog: { items, errors }.
 // A repo's own workflows are there only for a repo on this computer.
 export const loadWorkflows = async (where) => store({ repo: await repoRootOf(where) }).loadAll();
+
+// The same for refactor types.
+export const loadRefactors = async (where) => store({ repo: await repoRootOf(where), kind: REFACTOR }).loadAll();

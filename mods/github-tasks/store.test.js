@@ -458,3 +458,136 @@ test("loadAll without a repo reads only the global folder", async () => {
   const { store } = setup({ global: GLOBAL }, { [`${GLOBAL}/g.yaml`]: "name: G\n", [`${REPO}/r.yaml`]: "name: R\n" });
   assert.deepEqual((await store.loadAll()).items.map((i) => i.id), ["g"]);
 });
+
+// ---- the refactor kind: the same store over the refactors folders and refactor-model.js ----
+
+import { readFileSync } from "node:fs";
+import { REFACTOR, WORKFLOW } from "./kinds.js";
+import * as refactorModel from "./refactor-model.js";
+
+const R_GLOBAL = "/home/me/.config/herdr-app/refactors", R_REPO = "/proj/.herdr/refactors";
+const R_ALL = { global: R_GLOBAL, repo: R_REPO };
+const rf = (name, over = {}) => {
+  const r = refactorModel.blank();
+  r.name = name;
+  r.orchestrator.prompt = "Find it.";
+  return { ...r, ...over };
+};
+const rsetup = (dirs = R_ALL, files = {}) => { const d = disk(files); return { d, store: makeStore({ io: d.io, dirs, kind: REFACTOR }) }; };
+const starterText = (name) => readFileSync(new URL(`./starters/${name}.yaml`, import.meta.url), "utf8");
+
+test("the default kind is the workflow one", () => {
+  assert.equal(WORKFLOW.folder, "workflows");
+  assert.equal(REFACTOR.folder, "refactors");
+});
+
+test("a refactor type is saved under its slug in the refactors folder, serialized by refactor-model", async () => {
+  const { d, store } = rsetup();
+  const saved = await store.save(rf("Redundant tests"), "global");
+  assert.deepEqual([...d.fs.keys()], [`${R_GLOBAL}/redundant-tests.yaml`]);
+  assert.equal(d.fs.get(`${R_GLOBAL}/redundant-tests.yaml`), refactorModel.serialize({ ...rf("Redundant tests"), id: "redundant-tests" }));
+  assert.equal(saved.item.id, "redundant-tests");
+  assert.equal(saved.workflow, saved.item);
+  assert.equal(saved.scope, "global");
+  await store.save(rf("Repo only"), "repo");
+  assert.ok(d.fs.has(`${R_REPO}/repo-only.yaml`));
+});
+
+test("a refactor type with no prompt, or a name taken in any scope, is refused with the refactor wording", async () => {
+  const { d, store } = rsetup();
+  await assert.rejects(store.save(rf("No prompt", { orchestrator: { ...rf("x").orchestrator, prompt: "" } }), "global"),
+    (e) => e.kind === "invalid" && e.message === "Give the refactor a prompt.");
+  await store.save(rf("Taken"), "global");
+  await assert.rejects(store.save(rf("Taken"), "repo"), (e) => e.kind === "invalid" && e.message === "A refactor with that name already exists.");
+  assert.deepEqual([...d.fs.keys()], [`${R_GLOBAL}/taken.yaml`]);
+});
+
+test("the refactor list and loadAll are by name with scopes, repo only with a repo, and a bad file shows its error", async () => {
+  const { d, store } = rsetup(R_ALL, { [`${R_GLOBAL}/broken.yaml`]: "- a" });
+  await store.save(rf("Zeta"), "global");
+  await store.save(rf("Alpha"), "repo");
+  assert.deepEqual(await store.list(), [
+    { id: "alpha", name: "Alpha", scope: "repo" },
+    { id: "broken", name: "broken", scope: "global", error: "not a refactor object" },
+    { id: "zeta", name: "Zeta", scope: "global" },
+  ]);
+  const all = await store.loadAll();
+  assert.deepEqual(all.items.map((i) => [i.id, i.scope]), [["alpha", "repo"], ["zeta", "global"]]);
+  assert.deepEqual(all.errors, ["broken.yaml: not a refactor object"]);
+  const noRepo = makeStore({ io: d.io, dirs: { global: R_GLOBAL }, kind: REFACTOR });
+  assert.deepEqual((await noRepo.list()).map((i) => i.id), ["broken", "zeta"]);
+  assert.deepEqual(noRepo.available, ["global"]);
+  await assert.rejects(noRepo.save(rf("Nope"), "repo"), (e) => e.kind === "unavailable" && e.message === "Repo refactors aren't available here.");
+});
+
+test("a workflow store never lists the refactors folder, nor a refactor store the workflows one", async () => {
+  const d = disk();
+  const workflows = makeStore({ io: d.io, dirs: { global: GLOBAL } });
+  const refactors = makeStore({ io: d.io, dirs: { global: R_GLOBAL }, kind: REFACTOR });
+  await workflows.save(wf("A workflow"), "global");
+  await refactors.save(rf("A refactor"), "global");
+  assert.deepEqual((await workflows.list()).map((i) => i.id), ["a-workflow"]);
+  assert.deepEqual((await refactors.list()).map((i) => i.id), ["a-refactor"]);
+});
+
+test("load, save again, move, conflict and remove work for refactor types", async () => {
+  const { d, store } = rsetup();
+  await store.save(rf("Move me"), "global");
+  const found = await store.load("global", "move-me");
+  assert.equal(found.item.name, "Move me");
+  assert.equal(await store.load("repo", "move-me"), null);
+  const edited = { ...found.item, name: "Moved", investigator: { ...found.item.investigator, prompt: "Look." } };
+  const again = await store.save(edited, "global", found);
+  assert.equal(again.item.id, "move-me"); // the id stays when the name changes
+  assert.equal(again.item.investigator.prompt, "Look.");
+  const moved = await store.save(again.item, "repo", again);
+  assert.deepEqual([...d.fs.keys()], [`${R_REPO}/move-me.yaml`]);
+  d.fs.set(`${R_REPO}/move-me.yaml`, "changed elsewhere");
+  await assert.rejects(store.save(moved.item, "repo", moved), (e) => e.kind === "conflict" && e.message === "This refactor changed on disk after you opened it.");
+  d.fs.set(`${R_REPO}/move-me.yaml`, moved.text);
+  await store.remove("repo", "move-me");
+  assert.equal(d.fs.size, 0);
+  await assert.rejects(store.remove("repo", "move-me"), (e) => e.kind === "missing" && e.message === "That refactor is already gone.");
+});
+
+test("clone and paste work for refactor types, and paste validates as a refactor", async () => {
+  const { d, store } = rsetup();
+  await store.save(rf("Tidy"), "global");
+  const copy = await store.clone("global", "tidy");
+  assert.deepEqual([copy.item.id, copy.item.name], ["tidy-copy", "Tidy copy"]);
+  assert.equal(cloneWorkflow(rf("Tidy", { id: "tidy" }), ["tidy"], REFACTOR).id, "tidy-copy");
+  assert.ok(await store.copyText("global", "tidy"));
+  await assert.rejects(store.paste("global", "tidy", "- a"), (e) => e.kind === "invalid" && /Clipboard is not a valid refactor: not a refactor object/.test(e.message));
+  await assert.rejects(store.paste("global", "tidy", refactorModel.serialize(rf("No prompt", { orchestrator: { ...rf("x").orchestrator, prompt: "" } }))),
+    (e) => e.kind === "invalid" && e.message === "Give the refactor a prompt.");
+  const pasted = await store.paste("global", "tidy", refactorModel.serialize(rf("Other name", { id: "ignored" })));
+  assert.deepEqual([pasted.item.id, pasted.item.name], ["tidy", "Other name"]);
+  assert.deepEqual([...d.fs.keys()].sort(), [`${R_GLOBAL}/tidy-copy.yaml`, `${R_GLOBAL}/tidy.yaml`]);
+  assert.throws(() => replacementFromYaml("- a", "x", REFACTOR), /Clipboard is not a valid refactor/);
+});
+
+test("restore puts the three shipped refactor starters in the plan's scope, replacing what was there", async () => {
+  const starters = REFACTOR.starters.map(starterText);
+  const { d, store } = rsetup();
+  await store.save(rf("Old global"), "global");
+  await store.save(rf("Old project"), "repo");
+  await store.restore(restorePlan(await store.list(), "repo", "/proj"), starters);
+  assert.deepEqual([...d.fs.keys()].sort(), [`${R_GLOBAL}/old-global.yaml`, ...REFACTOR.starters.map((n) => `${R_REPO}/${n}.yaml`)].sort());
+  assert.equal(d.fs.get(`${R_REPO}/architecture.yaml`), starterText("architecture"));
+  await store.restore(restorePlan(await store.list(), "all", "/proj"), starters);
+  assert.deepEqual([...d.fs.keys()].sort(), REFACTOR.starters.map((n) => `${R_GLOBAL}/${n}.yaml`).sort());
+  const names = (await store.list()).map((i) => i.name);
+  assert.deepEqual(names, ["Architecture", "Isolation", "Redundant tests"]);
+});
+
+test("an invalid refactor starter is refused before restore deletes anything, and a workflow is not a refactor starter", async () => {
+  const { d, store } = rsetup();
+  await store.save(rf("Keep me"), "global");
+  const before = new Map(d.fs);
+  const plan = restorePlan(await store.list(), "global", "/proj");
+  const good = starterText("isolation");
+  await assert.rejects(store.restore(plan, [good, "name: ["]), (e) => e.kind === "invalid");
+  await assert.rejects(store.restore(plan, [good, "name: No prompt\n"]), (e) => e.kind === "invalid" && /Give the refactor a prompt/.test(e.message));
+  await assert.rejects(store.restore(plan, [good, readFileSync(new URL("./starters/bug.yaml", import.meta.url), "utf8")]), (e) => e.kind === "invalid");
+  assert.deepEqual(d.fs, before);
+});

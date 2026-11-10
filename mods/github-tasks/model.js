@@ -78,6 +78,8 @@ export const LOGIN = ["auth", "login", "-h", "github.com", "-p", "https", "-s", 
 
 // Set to the time of each workflow save or delete, so the lists (and the doctor) refresh.
 export const WORKFLOWS_CHANGED = "github-tasks.workflows.changed";
+// The same for refactor types.
+export const REFACTORS_CHANGED = "github-tasks.refactors.changed";
 
 // Shared state main.js publishes for the settings page and the doctor.
 export const CONTEXT = "github-tasks.context"; // { repo, project, where }: what the sidebar looks at
