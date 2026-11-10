@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { parse as parseYaml } from "./yaml.js";
 import * as wf from "./workflow-model.js";
 import {
-  VERSION, ROLES, ROLE_LABELS, AGENTS, CUSTOM, EFFORTS, SCOPES, SCOPE_LABELS, SCOPE_HINTS, slug,
+  VERSION, ROLES, ROLE_LABELS, ROLE_PROMPTS, AGENTS, CUSTOM, EFFORTS, SCOPES, SCOPE_LABELS, SCOPE_HINTS, slug,
   blank, normalize, validate, snapshot, isDirty, serialize, parse,
 } from "./refactor-model.js";
 
@@ -19,6 +19,11 @@ test("a refactor type has an orchestrator and an investigator, labelled for peop
   assert.deepEqual(ROLES, ["orchestrator", "investigator"]);
   assert.deepEqual(ROLE_LABELS, { orchestrator: "Orchestrator", investigator: "Investigator" });
   assert.deepEqual(Object.keys(blank()), ["version", "id", "name", "orchestrator", "investigator"]);
+});
+
+test("neither role has extra prompts, so the editor shows only the Prompt", () => {
+  assert.deepEqual(ROLE_PROMPTS, { orchestrator: [], investigator: [] });
+  assert.deepEqual(Object.keys(ROLE_PROMPTS), ROLES);
 });
 
 test("it shares the workflow helpers instead of copying them", () => {

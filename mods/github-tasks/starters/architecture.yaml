@@ -8,7 +8,7 @@ orchestrator:
   model: opus
   effort: high
   prompt: |-
-    Find places where the code's structure makes it harder to change, and propose deepening it. A simple take on mattpocock's improve-codebase-architecture skill.
+    Find places where the code's structure makes it harder to change, and propose deepening it.
 
     Scope first: look at `git log` for the files and folders that change most, or change together, in recent history. These hot spots are where structure costs the most. Split them among the investigators, one area each.
 

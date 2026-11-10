@@ -17,7 +17,7 @@ orchestrator:
     - the test that already covers the same behaviour, or why the test asserts nothing real (no assertion, only restates the implementation, checks a mock)
     - how sure they are that deleting it loses no coverage
 
-    Check the claims yourself: run the suite, then delete or skip each proposed test and run it again to see whether anything that matters stops being caught. Do not delete tests that guard a bug fix or a documented behaviour.
+    Check the claims without changing the person's files: read the code, and run the existing suite as it is. To find out whether removing a test would lose coverage, do it in a scratch copy (a temporary `git worktree` or a copy of the repo outside it) and throw the copy away afterwards. Never delete or skip a test in the person's own tree. Do not propose removing tests that guard a bug fix or a documented behaviour.
 
     Finish with a list of the tests that are safe to remove, the ones that need a person's call, and the ones you checked and kept. Make no changes to the code until the person has picked what to remove.
 

@@ -13,6 +13,8 @@ export { EFFORTS };
 export const VERSION = 1;
 export const ROLES = ["orchestrator", "investigator"];
 export const ROLE_LABELS = { orchestrator: "Orchestrator", investigator: "Investigator" };
+// Neither role has extra prompts (a workflow's orchestrator has planning and retro); same shape as workflow-model.js.
+export const ROLE_PROMPTS = { orchestrator: [], investigator: [] };
 // Where a refactor type is kept, as for workflows but in the refactors folders.
 export const SCOPE_HINTS = {
   global: "Kept in ~/.config/herdr-app/refactors, for every project on this computer.",

@@ -65,11 +65,38 @@ test("the Architecture starter follows the improve-codebase-architecture approac
   assert.match(prompt, /do not write an html report/i);
 });
 
+test("each kind's starter display names match the starters' names, in order", () => {
+  for (const kind of [WORKFLOW, REFACTOR]) {
+    const names = kind.starters.map((n) => kind.model.parse(readFileSync(new URL(`${n}.yaml`, dir), "utf8")).name);
+    assert.deepEqual(kind.labels.starterNames, names);
+  }
+});
+
+test("each kind carries its own change signal and list/editor wording", () => {
+  assert.equal(WORKFLOW.changed, "github-tasks.workflows.changed");
+  assert.equal(REFACTOR.changed, "github-tasks.refactors.changed");
+  assert.deepEqual([WORKFLOW.labels.listTitle, WORKFLOW.labels.newLabel, WORKFLOW.labels.emptyText], ["Workflows", "New workflow", "No workflows yet. Make one with New workflow."]);
+  assert.deepEqual([REFACTOR.labels.listTitle, REFACTOR.labels.newLabel, REFACTOR.labels.emptyText], ["Refactors", "New refactor", "No refactor types yet. Make one with New refactor."]);
+  assert.equal(WORKFLOW.labels.editorNoun, "workflow");
+  assert.equal(REFACTOR.labels.editorNoun, "refactor type");
+});
+
 test("each kind lists exactly its own starters, and together they are every file in starters/", () => {
   assert.deepEqual(WORKFLOW.starters.map((n) => `${n}.yaml`), ["bug.yaml", "story.yaml"]);
   assert.deepEqual(REFACTOR.starters.map((n) => `${n}.yaml`), Object.keys(REFACTOR_STARTERS));
   const files = readdirSync(dir).filter((f) => f.endsWith(".yaml")).sort();
   assert.deepEqual(files, [...WORKFLOW.starters, ...REFACTOR.starters].map((n) => `${n}.yaml`).sort());
+});
+
+test("the redundant-tests starter verifies in a scratch copy and never edits the person's tree", () => {
+  const { prompt } = refactor.parse(readFileSync(new URL("redundant-tests.yaml", dir), "utf8")).orchestrator;
+  assert.match(prompt, /scratch copy/i);
+  assert.match(prompt, /never delete or skip a test in the person's own tree/i);
+  assert.doesNotMatch(prompt, /delete or skip each proposed test/i);
+});
+
+test("no starter names the skill it was inspired by", () => {
+  for (const file of Object.keys(REFACTOR_STARTERS)) assert.doesNotMatch(readFileSync(new URL(file, dir), "utf8"), /mattpocock|improve-codebase/i, file);
 });
 
 test("a workflow starter is not a valid refactor type: it has no refactor prompt", () => {
