@@ -17,6 +17,9 @@
 // so the panel shows host > orchestrator > workers and reviewers, and closing a tab or the space never ends any of them (no
 // agent is owned by a tab or pane). The host ends with the run: Merge, and the clean-up when Start fails, kill it and close its
 // tab. If it can't be opened the run starts as before (no parent) and Start says why the panel won't list the run.
+// An Investigation's agent (investigations.js) gets the same kind of host, labelled herdr.investigation.host=<id> instead (the
+// label is a parameter of the functions below; the default is a ticket run's), and there a host that
+// won't open fails the start (launchRun's hostRequired): the agent has no pane either, so it would never be listed.
 import { FOLDER_LABEL, HOST_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL, shQuote } from "./run.js";
 
 // Where the run's tab is saved (shared state, as herdr.tab labels are gone): { tab, left, space }.
@@ -185,49 +188,49 @@ export function findRepoSpace({ spaces, panes, repoRoot }) {
   return found?.id ?? null;
 }
 
-// The run's live host terminal among `terminals` (found by its label, not by saved ids), or null.
-export const findHost = (terminals, id) => (terminals ?? []).find((k) => k.state === "live" && k.labels?.[HOST_LABEL] === id) ?? null;
+// The live host terminal of this id among `terminals` (found by its label, not by saved ids; a run's by default), or null.
+export const findHost = (terminals, id, label = HOST_LABEL) => (terminals ?? []).find((k) => k.state === "live" && k.labels?.[label] === id) ?? null;
 
-// Opens the run's host: a tab in the repo's space (rooted at the main checkout, so the sidebar keeps it with the repo), or, when
+// Opens the host (a run's, or with `label` and `line` an Investigation's): a tab in the repo's space (rooted at the main checkout, so the sidebar keeps it with the repo), or, when
 // the repo's space isn't open, a space of its own named for the repo with the tab as its first (created: true), so the host
 // is never put in the ticket's space (that is closed by Merge with the person's own tabs) nor in whichever space the person
 // is in. Its terminal gets its labels afterwards (a tab made with an argv takes none). Throws with the reason; what was made is
 // ended again then.
-// A New Task session (investigate.js) has no ticket space but its own: with `own` ({ spaceName, folder, note? }) the host is the first tab
-// of a new space of that name rooted at `folder` (the session's worktree, so the sidebar nests it under the repo's, and the session's
-// agent then opens its tab in that space), never the repo's.
-//   deps: { app(name, args) -> made, hc(args), run(name, args) }; args: { id, name, repoRoot, spaces, panes, own? }
+//   deps: { app(name, args) -> made, hc(args), run(name, args) }; args: { id, name, repoRoot, spaces, panes, label?, note? }
+//   label: the herdr.* label the host carries with the id (a run's host by default; an Investigation's is herdr.investigation.host).
+//   note: the line the host prints (hostArgv's: a ticket run's by default).
 //   Resolves with { address, tab, space, created }.
-export async function openHost(deps, { id, name, repoRoot, spaces, panes, own = null }) {
-  const space = own ? null : findRepoSpace({ spaces, panes, repoRoot });
+export async function openHost(deps, { id, name, repoRoot, spaces, panes, label = HOST_LABEL, note }) {
+  const space = findRepoSpace({ spaces, panes, repoRoot });
   const created = !space;
   let made;
   try {
     made = created
-      ? await deps.app("space.new", { name: own?.spaceName || String(repoRoot).split("/").filter(Boolean).pop() || "repo", tab: name, folder: own?.folder ?? repoRoot, argv: own?.note ? hostArgv(own.note) : hostArgv() })
-      : await deps.app("tab.new", { name, folder: repoRoot, argv: hostArgv(), space });
+      ? await deps.app("space.new", { name: String(repoRoot).split("/").filter(Boolean).pop() || "repo", tab: name, folder: repoRoot, argv: hostArgv(note) })
+      : await deps.app("tab.new", { name, folder: repoRoot, argv: hostArgv(note), space });
   } catch (e) { throw new Error(`the host tab couldn't be made (${why(e)})`); }
   const undo = async () => {
     if (made?.terminal) { await deps.hc(["kill", made.terminal]).catch(() => {}); await deps.hc(["rm", made.terminal]).catch(() => {}); }
     try { if (created && made?.space) deps.run("space.close", { id: made.space, confirmed: true }); else if (made?.tab) deps.run("tab.close", { id: made.tab, confirmed: true }); } catch { /* it stays */ }
   };
   if (!made?.terminal) { await undo(); throw new Error("the host tab has no terminal address"); }
-  const labelled = await deps.hc(["label", made.terminal, `${HOST_LABEL}=${id}`, `${ROLE_LABEL}=host`]).catch((e) => ({ code: 1, stdout: "", stderr: why(e) }));
+  const labelled = await deps.hc(["label", made.terminal, `${label}=${id}`, `${ROLE_LABEL}=host`]).catch((e) => ({ code: 1, stdout: "", stderr: why(e) }));
   if (labelled.code !== 0) { await undo(); throw new Error(`the host couldn't be labelled (${String(labelled.stderr || labelled.stdout || "hc label failed").trim()})`); }
   return { address: made.terminal, tab: made.tab, space: made.space ?? space, created };
 }
 
-// Ends the run's host: every live terminal labelled as its host is killed and removed, then its tab closed (found from the host's
+// Ends the host (`label`: a run's by default): every live terminal labelled as its host is killed and removed, then its tab closed (found from the host's
 // own pane, else the saved record), and the space too when Start made it for the host and it holds nothing else. A host that
 // is gone already is nothing to do; a tab already closed is no failure. A host that is still live after its kill is an error
 // naming it, and its tab is kept.
-//   deps: { id, hc, terminals() , run, spaces, panes, record? ({ tab, space, created }), also? (addresses to end even if their label
+//   deps: { id, label?, hc, terminals() , run, spaces, panes, record? ({ tab, space, created }), also? (addresses to end even if their label
 //   isn't listed yet: a host just made), closeSpace? }. Resolves with { error }.
+//   label: the host's own label (a run's by default), so a ticket's host and an Investigation's never end each other.
 //   closeSpace: a failed start's way (investigate.js): the space this start made for the host is closed by its id, after the host's tab,
-//   whatever `spaces` says: the snapshot may still list the agent's tab that was closed a moment ago, or not list the new space yet.
+//   whatever `spaces` says: the snapshot may not list the new space yet. Safe because the agent's tab is never in it.
 //   Only a space the start made (record.created); one that is already gone is no failure.
-export async function endHost({ id, hc, terminals, run, spaces, panes, record = null, also = [], closeSpace = false }) {
-  const hosts = (terminals() ?? []).filter((k) => k.state === "live" && k.labels?.[HOST_LABEL] === id);
+export async function endHost({ id, label = HOST_LABEL, hc, terminals, run, spaces, panes, record = null, also = [], closeSpace = false }) {
+  const hosts = (terminals() ?? []).filter((k) => k.state === "live" && k.labels?.[label] === id);
   for (const address of also) if (address && !hosts.some((h) => h.address === address)) hosts.push({ address });
   const stuck = [], tabs = new Set();
   for (const h of hosts) {
@@ -237,7 +240,7 @@ export async function endHost({ id, hc, terminals, run, spaces, panes, record = 
     await hc(["rm", h.address]).catch(() => {});
     if (tab) tabs.add(tab);
   }
-  if (stuck.length) return { error: `couldn't end the run's host ${stuck.join("; ")}` };
+  if (stuck.length) return { error: `couldn't end the host ${stuck.join("; ")}` };
   for (const tab of tabs) { try { run("tab.close", { id: tab, confirmed: true }); } catch { /* it closed with its terminal */ } }
   if (closeSpace && record?.created && record.space) { try { run("space.close", { id: record.space, confirmed: true }); } catch { /* it is gone already */ } return { error: null }; }
   const space = record?.created && record.space ? (spaces ?? []).find((s) => s.id === record.space) : null;
@@ -414,14 +417,20 @@ export async function endRun({ id, orchestrator, hc, terminals, run, slot, space
 //   is only a problem to say and the run starts with no parent. A failure that ends the orchestrator ends the host too.
 //   runArgs: the `hc run` arguments for { id, key, workDir, argv, parent } (orchestratorRunArgs; investigate.js has its own labels, and
 //   passes openHost/closeHost too, so its agent runs --parent <host>);
+//   hostRequired: the host must open (an Investigation's agent, which would be listed nowhere without it): when it doesn't, the
+//   start throws with the reason before anything is started, so there is nothing to take back but what the caller made (a start
+//   with no openHost to call fails the same way);
 //   who: what the messages call the agent. Resolves with { orchestrator, problems, host }.
-export async function launchRun(deps, { id, key, workDir, argv, task, props, runArgs = orchestratorRunArgs, who = "orchestrator" }) {
+export async function launchRun(deps, { id, key, workDir, argv, task, props, runArgs = orchestratorRunArgs, who = "orchestrator", hostRequired = false }) {
   const problems = [];
   let host = null;
   if (deps.openHost) {
     try { host = await deps.openHost(); }
-    catch (e) { problems.push(`The Agents panel won't list this ${who === "agent" ? "session" : "run"}'s agents: its host tab didn't open (${why(e)}). The ${who === "agent" ? "session" : "run"} itself is going.`); }
-  }
+    catch (e) {
+      if (hostRequired) throw new Error(`The ${who} didn't start: its host tab didn't open (${why(e)}).`);
+      problems.push(`The Agents panel won't list this ${who === "agent" ? "session" : "run"}'s agents: its host tab didn't open (${why(e)}). The ${who === "agent" ? "session" : "run"} itself is going.`);
+    }
+  } else if (hostRequired) throw new Error(`The ${who} didn't start: it has no host tab to open.`);
   const endHostToo = async () => { if (host) await Promise.resolve(deps.closeHost?.(host)).catch(() => {}); };
   const started = await deps.hc(runArgs({ id, key, workDir, argv, parent: host?.address })).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
   const orchestrator = started.code === 0 ? parseStarted(started.stdout) : null;
