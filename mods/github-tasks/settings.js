@@ -7,6 +7,7 @@ import { v_flex, h_flex, InputState, Input, Popover, TextView } from "gpui-base"
 import { home, run, shared, setShared, theme } from "herdr";
 import { normalizeGroomer, normalizeSubAgent, GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, EFFORTS, PLACE, TASK_SOURCE } from "./model.js";
 import { CHANGED } from "./editor.js";
+import { NEW_TASK_LABELS } from "./workflow-model.js";
 import { CLAUDE_MODELS } from "./models.js";
 import { installedAgents } from "./groom.js";
 import { loadStatusField } from "./loader.js";
@@ -31,8 +32,6 @@ const SUB_AGENTS = [
   { id: "investigator", heading: "Investigators", role: "newTaskInvestigator", about: "Read-only helpers the New Task agent starts to explore the code." },
   { id: "worker", heading: "Workers (prototypes)", role: "newTaskWorker", about: "Helpers it starts to build a throwaway prototype of something complex. Their code is discarded when the session is done." },
 ];
-// What a prompt tab is called, for the prompts that are not a section's own.
-const PROMPT_TITLES = { newTaskInvestigator: "New Task investigator", newTaskWorker: "New Task worker" };
 
 export class TaskSettings {
   constructor(props, cx, onClose, workflows) {
@@ -79,7 +78,7 @@ export class TaskSettings {
   }
 
   openPrompt(role) {
-    const label = SECTIONS.find((s) => s.role === role)?.label ?? PROMPT_TITLES[role];
+    const label = SECTIONS.find((s) => s.role === role)?.label ?? NEW_TASK_LABELS[role];
     run("tab.new", {
       name: `${label} prompt`,
       mod: "github-tasks",

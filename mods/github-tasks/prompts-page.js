@@ -5,7 +5,7 @@ import { div } from "gpui-kit";
 import { v_flex, TextView } from "gpui-base";
 import { theme } from "herdr";
 import { markdownLiteral, promptForRole } from "./settings-model.js";
-import { ROLE_LABELS } from "./workflow-model.js";
+import { NEW_TASK_LABELS, ROLE_LABELS } from "./workflow-model.js";
 import { S, note } from "./ui.js";
 
 const PAGES = [
@@ -18,7 +18,6 @@ const PAGES = [
   ["newTaskWorker", "What a prototype worker the New Task agent starts is told: build a throwaway prototype in its own worktree and report back. Its code is discarded when the session is done."],
 ];
 export const PROMPT_HINTS = Object.fromEntries(PAGES);
-const NEW_TASK_LABELS = { newTask: "New Task", newTaskInvestigator: "New Task investigator", newTaskWorker: "New Task prototype worker" };
 
 export class PromptPage {
   constructor(props = {}) {

@@ -78,7 +78,7 @@ test("the New Task agent keeps its command when it is not Claude, and with no di
 
 // ---- The prompts -------------------------------------------------------------------------------------
 
-const P = { repo: "o/app", dir: DIR, workDir: "/wt/investigate-x", repoRoot: "/src/app", branch: "investigate/x" };
+const P = { workDir: "/wt/investigate-x", repoRoot: "/src/app", branch: "investigate/x" };
 const bodyOf = (text) => text.split("\n\n")[1];
 
 test("each sub-agent prompt is a header, a body of exactly three sentences, then a bulleted list", () => {
@@ -290,11 +290,11 @@ test("the script is safe to read back: an id, folder or branch with quotes and s
 // ---- The session folder's files ----------------------------------------------------------------------
 
 test("the session folder holds the spawn script, investigator.md and worker.md", () => {
-  const files = sessionFiles({ id: "inv-x", dir: DIR, workDir: "/wt/x", repoRoot: "/src/app", repo: "o/app", branch: "investigate/x", argv: { investigator: ["claude"], worker: ["claude"] } });
+  const files = sessionFiles({ id: "inv-x", dir: DIR, workDir: "/wt/x", repoRoot: "/src/app", branch: "investigate/x", argv: { investigator: ["claude"], worker: ["claude"] } });
   assert.deepEqual(Object.keys(files).sort(), ["investigator.md", "spawn", "worker.md"]);
   assert.equal(files.spawn, investigationSpawnScript({ id: "inv-x", dir: DIR, workDir: "/wt/x", branch: "investigate/x", argv: { investigator: ["claude"], worker: ["claude"] } }));
-  assert.equal(files["investigator.md"], newTaskInvestigatorPrompt({ repo: "o/app", dir: DIR, workDir: "/wt/x", repoRoot: "/src/app", branch: "investigate/x" }));
-  assert.equal(files["worker.md"], newTaskWorkerPrompt({ repo: "o/app", dir: DIR, workDir: "/wt/x", repoRoot: "/src/app", branch: "investigate/x" }));
+  assert.equal(files["investigator.md"], newTaskInvestigatorPrompt({ workDir: "/wt/x", repoRoot: "/src/app", branch: "investigate/x" }));
+  assert.equal(files["worker.md"], newTaskWorkerPrompt({ workDir: "/wt/x", repoRoot: "/src/app", branch: "investigate/x" }));
 });
 
 // ---- The agent's command, with its parent ------------------------------------------------------------

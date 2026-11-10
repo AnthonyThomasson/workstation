@@ -9,7 +9,7 @@ import { connectRun, endHost, findHost, guarded, hostKey, hostTabName, launchRun
 import { mainCheckout, prepareWorktree } from "./worktree.js";
 import { app } from "./ui.js";
 import { localTasks, repoHasGithubRemote, tasksConfig } from "./local-tasks-env.js";
-import { blankRole, ROLES } from "./workflow-model.js";
+import { blank, ROLES } from "./workflow-model.js";
 import { out, agentArgv, branchName, FOLDER_LABEL, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
@@ -91,7 +91,7 @@ async function resolveAgents(workflow, runDir) {
   const known = await knownAgents().catch(() => []);
   const argv = {};
   for (const role of ROLES) {
-    const settings = workflow[role] ?? blankRole(); // a workflow from before investigators has none: the defaults
+    const settings = workflow[role] ?? blank()[role]; // a workflow from before investigators has none: the defaults
     if (settings.agent === "custom") {
       if (!settings.command) throw new Error(`The workflow's ${role} needs the command that opens its agent.`);
       argv[role] = agentArgv(role, settings, [], runDir);

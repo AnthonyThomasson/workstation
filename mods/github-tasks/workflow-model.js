@@ -7,6 +7,8 @@ import { EFFORTS } from "./model.js";
 export const VERSION = 1;
 export const ROLES = ["orchestrator", "worker", "reviewer", "investigator"];
 export const ROLE_LABELS = { orchestrator: "Orchestrator", worker: "Worker", reviewer: "Reviewer", investigator: "Investigator" };
+// What the New Task agent's prompts are called, in the settings' prompt tabs and on the prompt page.
+export const NEW_TASK_LABELS = { newTask: "New Task", newTaskInvestigator: "New Task investigator", newTaskWorker: "New Task prototype worker" };
 // The agent kinds `herdr agent start --kind` accepts.
 export const AGENTS = ["claude", "codex", "gemini", "pi", "cursor", "devin", "agy", "cline", "omp", "mastracode", "opencode",
   "copilot", "kimi", "kiro", "droid", "amp", "grok", "hermes", "kilo", "qodercli", "qwen", "letta", "maki", "muse"];

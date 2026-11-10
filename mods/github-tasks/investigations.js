@@ -155,7 +155,7 @@ export async function beginInvestigation(deps, { agent, description, repo, groom
     const known = await deps.knownAgents().catch(() => []);
     const mine = { investigator: normalizeSubAgent(subAgents?.investigator), worker: normalizeSubAgent(subAgents?.worker) };
     const argv = { investigator: subAgentArgv("investigator", mine.investigator, known, dir), worker: subAgentArgv("worker", mine.worker, known, dir) };
-    await deps.writeSession(dir, sessionFiles({ id, dir, workDir, repoRoot, repo: repoName, branch, argv })); // before the agent: it may use them at once
+    await deps.writeSession(dir, sessionFiles({ id, dir, workDir, repoRoot, branch, argv })); // before the agent: it may use them at once
     const launched = await (deps.guard ? deps.guard(id, launch) : launch()); // guarded as a whole, so View never makes a second tab meanwhile
     return { entry: { ...base, agent: launched.orchestrator }, problems: launched.problems };
   } catch (e) {

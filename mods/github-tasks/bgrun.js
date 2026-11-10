@@ -412,8 +412,8 @@ export async function endRun({ id, orchestrator, hc, terminals, run, slot, space
 //   deps: { hc(args), writePaneJson(props), connect(props) -> slot (throws), closeTab(), openHost?() -> host (throws), closeHost?(host) }
 //   The host (openHost, before anything else) is the orchestrator's parent so the Agents panel lists the run; one that won't open
 //   is only a problem to say and the run starts with no parent. A failure that ends the orchestrator ends the host too.
-//   runArgs: the `hc run` arguments for { id, key, workDir, argv, parent } (orchestratorRunArgs; investigate.js has its own labels and
-//   no host: it passes no openHost, so its agent has no parent);
+//   runArgs: the `hc run` arguments for { id, key, workDir, argv, parent } (orchestratorRunArgs; investigate.js has its own labels, and
+//   passes openHost/closeHost too, so its agent runs --parent <host>);
 //   who: what the messages call the agent. Resolves with { orchestrator, problems, host }.
 export async function launchRun(deps, { id, key, workDir, argv, task, props, runArgs = orchestratorRunArgs, who = "orchestrator" }) {
   const problems = [];

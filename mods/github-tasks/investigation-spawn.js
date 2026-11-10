@@ -60,8 +60,8 @@ export function newTaskWorkerPrompt({ workDir, repoRoot, branch }) {
 
 // The files of a session's folder, by name: what the spawn script needs (the sub-agents' commands in argv: { investigator, worker })
 // and the two prompts the helpers are told to read.
-export function sessionFiles({ id, dir, workDir, repoRoot, repo, branch, argv }) {
-  const place = { repo, dir, workDir, repoRoot, branch };
+export function sessionFiles({ id, dir, workDir, repoRoot, branch, argv }) {
+  const place = { workDir, repoRoot, branch };
   return {
     spawn: investigationSpawnScript({ id, dir, workDir, branch, argv }),
     "investigator.md": newTaskInvestigatorPrompt(place),
