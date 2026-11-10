@@ -40,20 +40,17 @@ export const escStep = ({ starting }) => (starting ? "ignore" : "close");
 
 // What a plain or Shift Enter in the text box does. "submit": start the task, as Continue does (it is on). "newline": Shift+Enter,
 // which the text box turns into a line break itself. "ignore": Enter while Continue is off (nothing typed, or a start going); the
-// box must not turn that into a line break either, so the page swallows the key. (gpui doesn't say when an IME is composing, so
-// there is no such input: a key that confirms a composition goes to the IME and doesn't reach the page.)
+// box must not turn that into a line break either, so the page swallows the key. (gpui gives key events no composing state, so there
+// is no such input: the IME is expected to take the Enter that confirms a composition before it reaches the page.)
 export function enterStep({ starting, text, shift }) {
   if (shift) return "newline";
   return !starting && String(text ?? "").trim() !== "" ? "submit" : "ignore";
 }
 
-// Enter is meant to never leave a line break. If the text box adds one anyway (it did where the key wasn't stopped in time), this is
-// `before` again when `now` is `before` with exactly one "\n" put in somewhere; otherwise null (a different edit: leave it).
-export function withoutEnterNewline(before, now) {
-  if (now.length !== before.length + 1) return null;
-  for (let i = 0; i < now.length; i++) if (now[i] === "\n" && now.slice(0, i) + now.slice(i + 1) === before) return before;
-  return null;
-}
+// The text box is 132px tall with a 1px border and 8px padding each side: 114px inside. Rows of text (a line is about 1.5 times the
+// text size, as the ticket editor reckons) that fit in that, so the last line and the caret are never cut off; more text scrolls.
+export const BOX_HEIGHT = 132, BOX_INSET = 2 + 16;
+export const boxRows = (bodySize) => Math.max(1, Math.floor((BOX_HEIGHT - BOX_INSET) / (bodySize * 1.5)));
 
 // The dialog's state and what its buttons do. onChange: called after every change, for the view to redraw.
 export class NewTaskDialog {

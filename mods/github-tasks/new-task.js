@@ -7,7 +7,7 @@ import { shared, theme, closeOverlay } from "herdr";
 import { GROOMER_KEY, STATUSES, normalizeGroomer, spelled } from "./model.js";
 import { loadStatusField } from "./loader.js";
 import { installedAgents, startNewTask, startLocalNewTask } from "./groom.js";
-import { AGENT_KEY, ENTER_HINT, NewTaskDialog, PROMPT, TITLE, chooseAgent, enterStep, panelWidth, withoutEnterNewline } from "./new-task-dialog.js";
+import { AGENT_KEY, ENTER_HINT, NewTaskDialog, PROMPT, TITLE, chooseAgent, boxRows, enterStep, panelWidth } from "./new-task-dialog.js";
 import { PRESS_BUTTONS } from "./popup.js";
 import { S, stop, action, gh } from "./ui.js";
 
@@ -31,7 +31,7 @@ export class NewTaskPage {
   constructor(props, cx) {
     this.props = props ?? {};
     this.handle = cx.focus_handle(); // the root takes Esc when the text box doesn't
-    this.input = TextareaState.new({ value: "", rows: 6 });
+    this.input = TextareaState.new({ value: "", rows: boxRows(S().body) });
     this.dialog = new NewTaskDialog(() => {});
     this.input.on("change", (_e, cx) => { this.dialog.setText(this.input.value()); cx.notify(); });
     this.window = null;
@@ -63,9 +63,6 @@ export class NewTaskPage {
     const step = enterStep({ starting: this.dialog.starting, text: this.dialog.text, shift: Boolean(m.shift) });
     if (step === "newline") return;
     cx.stop_propagation();
-    // If the text box adds the line break anyway, take it out again (as the chat composer does after Enter).
-    const before = this.input.value();
-    cx.timer.after(30, () => { const undone = withoutEnterNewline(before, this.input.value()); if (undone !== null) this.input.set_value(undone); });
     if (step === "submit") this.continue(cx);
   }
 
@@ -76,6 +73,7 @@ export class NewTaskPage {
       .on_size_change((win, cx) => {
         const first = !this.window;
         this.window = win;
+        this.input.set_rows(boxRows(S().body)); // the text size may have changed since the dialog opened
         if (first) cx.timer.after(50, () => this.input.focus?.());
         cx.notify();
       })

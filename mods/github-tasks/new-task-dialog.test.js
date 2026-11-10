@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ENTER_HINT, NewTaskDialog, PROMPT, TITLE, WIDTH, chooseAgent, enterStep, escStep, newTaskOverlay, newTaskProps, panelWidth, withoutEnterNewline } from "./new-task-dialog.js";
+import { ENTER_HINT, NewTaskDialog, PROMPT, TITLE, WIDTH, chooseAgent, enterStep, escStep, newTaskOverlay, newTaskProps, panelWidth, boxRows } from "./new-task-dialog.js";
 import { MARGIN } from "./popup.js";
 
 test("the dialog says what the mock-up says", () => {
@@ -165,15 +165,11 @@ test("a multi-line description reaches the start with its line breaks", async ()
   assert.equal(got, "Fix the login redirect\n\n- lands on /404\n- only on Safari");
 });
 
-test("if the textarea adds Enter's new line anyway, it is taken out again; any other change is left alone", () => {
-  assert.equal(withoutEnterNewline("hello", "hello\n"), "hello");
-  assert.equal(withoutEnterNewline("hello", "he\nllo"), "hello", "Enter in the middle");
-  assert.equal(withoutEnterNewline("", "\n"), "");
-  assert.equal(withoutEnterNewline("hello", "hello"), null, "nothing added");
-  assert.equal(withoutEnterNewline("hello", "hello!"), null, "typed, not Enter");
-  assert.equal(withoutEnterNewline("hello", "hello\n\n"), null, "more than one");
-  assert.equal(withoutEnterNewline("a\nb", "a\n\nb"), "a\nb", "a line break next to one");
-  assert.equal(withoutEnterNewline("hello", "hell\n"), null, "something else changed");
+test("the text box shows only as many rows as fit in its 114px, at any text size", () => {
+  assert.equal(boxRows(13.5), 5, "5 x 20.25px = 101px; a 6th row would be cut off");
+  assert.equal(boxRows(12.5), 6);
+  assert.equal(boxRows(16.5), 4);
+  for (const size of [10, 12, 13.5, 15, 18, 24, 60]) assert.ok(boxRows(size) === 1 || boxRows(size) * size * 1.5 <= 114, `size ${size}`);
 });
 
 test("the hint under the box says what Enter and Shift+Enter do", () => {
