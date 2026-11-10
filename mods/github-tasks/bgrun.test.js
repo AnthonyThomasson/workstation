@@ -312,6 +312,15 @@ test("Merge kills the orchestrator first, then the workers and reviewers it left
   assert.deepEqual(core.log, ["kill t7", "rm t7", "kill t3", "rm t3", "clear", "space.close s1"]);
 });
 
+test("Merge ends a run's investigators too: every live terminal of the run goes, whatever its role", async () => {
+  const alive = new Set(["t7", "t8"]), killed = [];
+  const hc = async (a) => { if (a[0] === "kill") { killed.push(a[1]); alive.delete(a[1]); } return { code: 0, stdout: "", stderr: "" }; };
+  const terminals = () => [...alive].map((address) => ({ address, state: "live", labels: { "herdr.workflow.run": "r1", "herdr.role": address === "t8" ? "investigator" : "orchestrator" } }));
+  const got = await endRun({ id: "r1", orchestrator: "t7", hc, terminals, run() {}, slot: null, spaces: SPACES, panes: PANES, ticketSpace: "s1", clearSlot() {} });
+  assert.deepEqual(killed, ["t7", "t8"]);
+  assert.equal(got.error, null);
+});
+
 test("a worker started while the orchestrator was being killed is still ended (terminals are read again)", async () => {
   const alive = new Set(["t7"]), seen = [];
   const hc = async (a) => {

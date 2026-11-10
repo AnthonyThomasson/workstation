@@ -11,6 +11,8 @@ test("canMerge needs the final reviewer seen and nobody live", () => {
   assert.equal(canMerge({ finalSeen: true, workers: [ended], reviewers: [live] }), false);
   assert.equal(canMerge({ finalSeen: true, workers: [{ live: true, status: "done" }], reviewers: [] }), false);
   assert.equal(canMerge({ finalSeen: true }), true);
+  assert.equal(canMerge({ finalSeen: true, workers: [ended], reviewers: [ended], investigators: [live] }), false); // a live investigator blocks Merge too
+  assert.equal(canMerge({ finalSeen: true, workers: [], reviewers: [ended], investigators: [ended] }), true);
 });
 
 test("finalSeen remembers a final reviewer, in the rows or in what was saved", () => {

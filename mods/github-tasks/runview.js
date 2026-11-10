@@ -46,13 +46,14 @@ export function parseLs(stdout) {
 // That answer has no labels (the query is the filter), so they are put back here from the query.
 const asLabelled = (k, id, role, final) => ({ ...k, labels: { ...k.labels, [RUN]: id, [ROLE]: role, ...(final ? { [FINAL]: "1" } : {}) } });
 
-// Arguments of the three queries, in the order of `listed`: { worker, reviewer, final }.
+// Arguments of the four queries, in the order of `listed`: { worker, reviewer, final, investigator }.
 export const lsQueries = (id) => {
   const q = (...extra) => ["ls", "--all", "--label", `${RUN}=${id}`, ...extra.flatMap((l) => ["--label", l]), "--json"];
   return {
     worker: q(`${ROLE}=worker`),
     reviewer: q(`${ROLE}=reviewer`),
     final: q(`${ROLE}=reviewer`, `${FINAL}=1`),
+    investigator: q(`${ROLE}=investigator`),
   };
 };
 
@@ -66,11 +67,13 @@ export function sameKept(a, b) {
   return key(a) === key(b);
 }
 
-// This run's workers and reviewers: every one the core lists (running or finished), the live ones from terminals() with
+const ROLES = ["worker", "reviewer", "investigator"];
+
+// This run's workers, reviewers and investigators: every one the core lists (running or finished), the live ones from terminals() with
 // their current status and report, and those saved on an earlier visit that the core has forgotten, as finished.
-//   terminals: terminals(). listed: { worker, reviewer, final }, each the terminals of an `hc ls --all` query, or null
+//   terminals: terminals(). listed: { worker, reviewer, final, investigator }, each the terminals of an `hc ls --all` query, or null
 //   when it hasn't answered. saved: the rows kept from before (see keep).
-// Returns { workers, reviewers, needsYou, kept }, kept being what to save for next time.
+// Returns { workers, reviewers, investigators, needsYou, kept }, kept being what to save for next time.
 export function agentsFor({ id, terminals, listed, saved }) {
   const byAddress = new Map();
   const put = (r, { name = true } = {}) => {
@@ -79,20 +82,20 @@ export function agentsFor({ id, terminals, listed, saved }) {
     byAddress.set(r.address, { ...old, ...r, final: old.final || r.final, name: name ? r.name : old.name, detail: r.detail || old.detail, started: r.started || old.started });
   };
   for (const s of saved ?? []) {
-    if (s?.address && (s.role === "worker" || s.role === "reviewer")) put({ ...s, status: "finished", live: false, needsYou: false });
+    if (s?.address && ROLES.includes(s.role)) put({ ...s, status: "finished", live: false, needsYou: false });
   }
-  for (const role of ["worker", "reviewer"]) {
+  for (const role of ["worker", "reviewer", "investigator"]) {
     for (const k of listed?.[role] ?? []) put(row(asLabelled(k, id, role, false)), { name: false });
   }
   for (const k of listed?.final ?? []) put(row(asLabelled(k, id, "reviewer", true)), { name: false });
   for (const k of terminals ?? []) {
-    if (k.labels?.[RUN] !== id || (k.labels?.[ROLE] !== "worker" && k.labels?.[ROLE] !== "reviewer")) continue;
+    if (k.labels?.[RUN] !== id || !ROLES.includes(k.labels?.[ROLE])) continue;
     put(row(k), { name: Boolean(k.labels?.[NAME]) });
   }
   const all = [...byAddress.values()];
   const rows = (role) => inOrder(all.filter((r) => r.role === role));
-  const workers = rows("worker"), reviewers = rows("reviewer");
-  return { workers, reviewers, needsYou: all.filter((r) => r.needsYou).length, kept: [...workers, ...reviewers].map(keep) };
+  const workers = rows("worker"), reviewers = rows("reviewer"), investigators = rows("investigator");
+  return { workers, reviewers, investigators, needsYou: all.filter((r) => r.needsYou).length, kept: [...workers, ...reviewers, ...investigators].map(keep) };
 }
 
 // The orchestrator's terminal as a row, or null when it is gone from the core altogether.

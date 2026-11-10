@@ -93,12 +93,13 @@ test("every status has words and a color", () => {
 
 test("a run with no agents yet has empty lists", () => {
   for (const found of [agentsOf([]), agentsOf(undefined), agentsFor({ id: "r1" })]) {
-    assert.deepEqual(found, { workers: [], reviewers: [], needsYou: 0, kept: [] });
+    assert.deepEqual(found, { workers: [], reviewers: [], investigators: [], needsYou: 0, kept: [] });
   }
 });
 
-test("the queries ask for the run's workers, reviewers and final reviewer, finished ones included", () => {
+test("the queries ask for the run's workers, reviewers, final reviewer and investigators, finished ones included", () => {
   assert.deepEqual(lsQueries("r1"), {
+    investigator: ["ls", "--all", "--label", "herdr.workflow.run=r1", "--label", "herdr.role=investigator", "--json"],
     worker: ["ls", "--all", "--label", "herdr.workflow.run=r1", "--label", "herdr.role=worker", "--json"],
     reviewer: ["ls", "--all", "--label", "herdr.workflow.run=r1", "--label", "herdr.role=reviewer", "--json"],
     final: ["ls", "--all", "--label", "herdr.workflow.run=r1", "--label", "herdr.role=reviewer", "--label", "herdr.workflow.final=1", "--json"],
@@ -223,4 +224,30 @@ test("a row known only from hc ls is named without the run id prefix", () => {
 test("agents with no start time come after those with one", () => {
   const found = agentsFor({ id: "r1", saved: [], terminals: [term("t2", "worker", { created_ms: 9 })], listed: { worker: [ls("t1"), ls("t3", { state: "finished" })], reviewer: [], final: [] } });
   assert.deepEqual(found.workers.map((r) => r.address), ["t2", "t1", "t3"]);
+});
+
+test("a run's investigators are listed like workers and reviewers, from terminals and from the core's list", () => {
+  const found = agentsFor({ id: "r1", saved: [], listed: { investigator: [ls("t5", { state: "finished" })] }, terminals: [term("t4", "investigator", { created_ms: 2, report: { msg: "Reading the code" } }), term("t1", "worker")] });
+  assert.deepEqual(found.investigators.map((r) => [r.address, r.live, r.role]), [["t4", true, "investigator"], ["t5", false, "investigator"]]);
+  assert.equal(found.investigators[0].detail, "Reading the code");
+  assert.deepEqual(found.workers.map((r) => r.address), ["t1"]);
+  assert.deepEqual(found.reviewers, []);
+});
+
+test("a blocked investigator needs the person, a finished one never does", () => {
+  const found = agentsFor({ id: "r1", saved: [], listed: { investigator: [ls("t6", { state: "finished", status: "blocked" })] }, terminals: [term("t4", "investigator", { status: "blocked" })] });
+  assert.equal(found.needsYou, 1);
+  assert.equal(found.investigators.find((r) => r.address === "t4").needsYou, true);
+});
+
+test("a finished investigator survives a reload as a saved row", () => {
+  const first = agentsFor({ id: "r1", listed: null, saved: [], terminals: [term("t4", "investigator", { created_ms: 3 })] });
+  assert.deepEqual(first.kept.map((k) => [k.address, k.role]), [["t4", "investigator"]]);
+  const reloaded = agentsFor({ id: "r1", listed: null, terminals: [], saved: first.kept });
+  assert.deepEqual(reloaded.investigators.map((r) => [r.address, r.live, r.status]), [["t4", false, "finished"]]);
+});
+
+test("another run's investigator is left out", () => {
+  const found = agentsFor({ id: "r1", saved: [], listed: null, terminals: [term("t4", "investigator", { labels: { "herdr.workflow.run": "r2" } })] });
+  assert.deepEqual(found.investigators, []);
 });
