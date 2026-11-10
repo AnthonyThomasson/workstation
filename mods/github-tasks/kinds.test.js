@@ -56,11 +56,19 @@ test("the row menu, the editor header and a new tab use the kind's noun", () => 
   assert.equal(newItemName(REFACTOR), "New refactor type");
 });
 
-test("only workflows have a trigger, and only a workflow's worker and reviewer have permissions", () => {
+test("only workflows have a trigger, and every workflow role but the orchestrator has permissions", () => {
   assert.equal(hasTrigger(WORKFLOW), true);
   assert.equal(hasTrigger(REFACTOR), false);
-  assert.deepEqual(["orchestrator", "worker", "reviewer"].map((r) => hasPermissions(WORKFLOW, r)), [false, true, true]);
+  assert.deepEqual(["orchestrator", "worker", "reviewer", "investigator"].map((r) => hasPermissions(WORKFLOW, r)), [false, true, true, true]);
   assert.deepEqual(["orchestrator", "investigator"].map((r) => hasPermissions(REFACTOR, r)), [false, false]);
+});
+
+test("a 4-role workflow and a 2-role refactor each give every one of their roles a prompt field", () => {
+  for (const kind of [WORKFLOW, REFACTOR]) {
+    for (const role of kind.model.ROLES) assert.ok(promptField(kind, role).label, `${kind.key} ${role}`);
+    assert.deepEqual(Object.keys(kind.editor.prompts).sort(), [...kind.model.ROLES].sort(), `${kind.key} prompts cover exactly its roles`);
+  }
+  assert.equal(promptField(WORKFLOW, "investigator").label, "Prompt");
 });
 
 test("the prompt field is labelled for what the kind's role does", () => {
@@ -72,7 +80,7 @@ test("the prompt field is labelled for what the kind's role does", () => {
 });
 
 test("each kind's roles come from its model, and the editor shows exactly those", () => {
-  assert.deepEqual(WORKFLOW.model.ROLES, ["orchestrator", "worker", "reviewer"]);
+  assert.deepEqual(WORKFLOW.model.ROLES, ["orchestrator", "worker", "reviewer", "investigator"]);
   assert.deepEqual(REFACTOR.model.ROLES, ["orchestrator", "investigator"]);
   assert.deepEqual(REFACTOR.model.ROLE_PROMPTS, { orchestrator: [], investigator: [] });
 });
@@ -89,4 +97,8 @@ test("the roles with permissions come from the model, not a list kept beside it"
     assert.deepEqual(kind.editor.permissionRoles, expected);
     for (const role of kind.model.ROLES) assert.equal(hasPermissions(kind, role), expected.includes(role));
   }
+});
+
+test("the workflow list note names the roles it has", () => {
+  assert.match(WORKFLOW.labels.listNote, /Task Orchestrator, worker, reviewer and investigator/);
 });
