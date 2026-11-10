@@ -1,6 +1,6 @@
 // One workflow, in the center: a tab the Task settings page opens (props.role "workflow-editor", props.id the
 // workflow's id, or null for a new one). The trigger labels, where it is kept (global, or the repo), and for the orchestrator,
-// the worker and the reviewer their agent, model, effort and prompt. Save writes the YAML file.
+// the worker, the reviewer and the investigator their agent, model, effort and prompt. Save writes the YAML file.
 // Not a View of its own: main.js builds one in init and draws it from render.
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
@@ -419,7 +419,7 @@ export class WorkflowEditor {
         .child(`${this.repo} has no label named ${missing.map((l) => `"${l}"`).join(", ")}. ${missing.length > 1 ? "They" : "It"} can't start anything until ${missing.length > 1 ? "they exist" : "it exists"} on GitHub.`)));
   }
 
-  // Orchestrator, worker or reviewer: agent, model, effort, prompt.
+  // Orchestrator, worker, reviewer or investigator: agent, model, effort, prompt.
   renderRole(t, role) {
     const r = this.roles[role];
     return v_flex().id(`role-${role}`).flex_none().p(14).gap(12).rounded(10).border_1().border_color(t.border)

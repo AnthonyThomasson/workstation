@@ -14,9 +14,9 @@ export const stageOf = (agents) => (agents.reviewers?.length ? 2 : agents.worker
 // keeps it. saved: the value kept in shared state, any of 1, "1" or nothing.
 export const finalSeen = ({ reviewers = [], saved } = {}) => reviewers.some((r) => r.final) || Boolean(Number(saved));
 
-// Merge and the automatic pull request wait for the final review to have started and every worker and reviewer to have ended.
-export const canMerge = ({ finalSeen: seen, workers = [], reviewers = [] }) =>
-  Boolean(seen) && !workers.some((w) => w.live) && !reviewers.some((r) => r.live);
+// Merge and the automatic pull request wait for the final review to have started and every worker, reviewer and investigator to have ended.
+export const canMerge = ({ finalSeen: seen, workers = [], reviewers = [], investigators = [] }) =>
+  Boolean(seen) && !workers.some((w) => w.live) && !reviewers.some((r) => r.live) && !investigators.some((i) => i.live);
 
 // The project's Status option for a stage, or null when the project has none by that name.
 // stage 3 is Done.

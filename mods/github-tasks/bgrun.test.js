@@ -312,6 +312,15 @@ test("Merge kills the orchestrator first, then the workers and reviewers it left
   assert.deepEqual(core.log, ["kill t7", "rm t7", "kill t3", "rm t3", "clear", "space.close s1"]);
 });
 
+test("Merge ends a run's investigators too: every live terminal of the run goes, whatever its role", async () => {
+  const alive = new Set(["t7", "t8"]), killed = [];
+  const hc = async (a) => { if (a[0] === "kill") { killed.push(a[1]); alive.delete(a[1]); } return { code: 0, stdout: "", stderr: "" }; };
+  const terminals = () => [...alive].map((address) => ({ address, state: "live", labels: { "herdr.workflow.run": "r1", "herdr.role": address === "t8" ? "investigator" : "orchestrator" } }));
+  const got = await endRun({ id: "r1", orchestrator: "t7", hc, terminals, run() {}, slot: null, spaces: SPACES, panes: PANES, ticketSpace: "s1", clearSlot() {} });
+  assert.deepEqual(killed, ["t7", "t8"]);
+  assert.equal(got.error, null);
+});
+
 test("a worker started while the orchestrator was being killed is still ended (terminals are read again)", async () => {
   const alive = new Set(["t7"]), seen = [];
   const hc = async (a) => {
@@ -1173,3 +1182,62 @@ test("#41 restart: the new orchestrator goes under the run's live host when ther
 });
 
 test("#41 the host's saved record is per run", () => assert.notEqual(hostKey("a"), hostKey("b")));
+
+test("#56 a session's host gets a space of its own at the session's worktree, never the repo's, named for the session", async () => {
+  const f = fakeHostApp();
+  const own = { spaceName: "Fix the login", folder: "/wt/repo/investigate-x", note: "Host of this session's agents." };
+  const host = await openHost(f.deps, { id: "inv-x", name: "agents", repoRoot: REPO, spaces: RSPACES, panes: RPANES, own });
+  assert.deepEqual(host, { address: "t20", tab: "tN", space: "sN", created: true }, "the repo's space is open (sR) and is not used");
+  assert.equal(f.log[0][0], "space.new");
+  assert.deepEqual({ ...f.log[0][1], argv: undefined }, { name: "Fix the login", tab: "agents", folder: "/wt/repo/investigate-x", argv: undefined });
+  assert.deepEqual(f.log[0][1].argv, hostArgv(own.note));
+  assert.deepEqual(f.log[1], ["hc", ["label", "t20", "herdr.workflow.host=inv-x", "herdr.role=host"]]);
+});
+
+test("#56 a session's host that can't be labelled is ended, and its space closed", async () => {
+  const f = fakeHostApp({ label: { code: 1, stdout: "", stderr: "nope" } });
+  await assert.rejects(openHost(f.deps, { id: "inv-x", name: "agents", repoRoot: REPO, spaces: [], panes: [], own: { spaceName: "S", folder: "/wt/x" } }), /couldn't be labelled/);
+  assert.ok(f.log.some(([n, a]) => n === "space.close" && a.id === "sN"));
+});
+
+test("#56 the host's note can be said for a session, and is the ticket's by default", () => {
+  assert.match(hostArgv()[2], /Ends when the ticket is merged/);
+  const text = hostArgv("Host of 'this' session.")[2];
+  assert.match(text, /Host of '\\''this'\\'' session\./);
+  assert.equal(spawnSync("sh", ["-c", text.replace(/exec tail -f \/dev\/null/, "true")], { encoding: "utf8" }).stdout.split("\x07")[1], "Host of 'this' session.\n");
+});
+
+test("#56 a failed start's host takes its space with it by id, even when the snapshot is stale (it still lists the agent's closed tab, or doesn't list the new space at all)", async () => {
+  const stale = fakeEnd();
+  stale.deps.spaces = [{ id: "sH", tabs: [{ id: "tH" }, { id: "tA" }] }]; // tA was closed a moment ago
+  stale.deps.record = { tab: "tH", space: "sH", created: true };
+  await endHost(stale.deps);
+  assert.ok(!stale.log.some(([n]) => n === "space.close"), "by default a space with another tab in the snapshot is kept (Done's way)");
+  const forced = fakeEnd();
+  forced.deps.spaces = stale.deps.spaces;
+  forced.deps.record = stale.deps.record;
+  assert.deepEqual(await endHost({ ...forced.deps, closeSpace: true }), { error: null });
+  assert.deepEqual(forced.log.filter(([n]) => n === "space.close"), [["space.close", { id: "sH", confirmed: true }]], "closed once, after the host's tab");
+  assert.ok(forced.log.findIndex(([n]) => n === "tab.close") < forced.log.findIndex(([n]) => n === "space.close"));
+  const unlisted = fakeEnd();
+  unlisted.deps.spaces = [{ id: "sR", tabs: [{ id: "tR" }] }]; // the snapshot predates the new space
+  unlisted.deps.record = { tab: "tH", space: "sH", created: true };
+  await endHost({ ...unlisted.deps, closeSpace: true });
+  assert.deepEqual(unlisted.log.at(-1), ["space.close", { id: "sH", confirmed: true }]);
+  const notMade = fakeEnd();
+  notMade.deps.record = { tab: "tH", space: "sR", created: false };
+  await endHost({ ...notMade.deps, closeSpace: true });
+  assert.ok(!notMade.log.some(([n]) => n === "space.close"), "a space the start didn't make is never closed");
+  const gone = fakeEnd();
+  gone.deps.record = { tab: "tH", space: "sH", created: true };
+  gone.deps.run = (n) => { if (n === "space.close") throw new Error("no such space"); };
+  assert.deepEqual(await endHost({ ...gone.deps, closeSpace: true }), { error: null }, "already closed is no failure");
+});
+
+test("#56 the agent's tab, not the host's, is the one selected once it is made in the session's space", async () => {
+  const f = fakeApp();
+  await connectRun(f.deps, { ...base, kind: "investigation", space: "sH" }); // sH: the space whose first tab is the host's
+  assert.deepEqual(f.runs.slice(0, 2), [["space.select", { id: "sH" }], ["tab.select", { id: "tNew" }]]);
+  assert.ok(f.runs.every(([n, a]) => n !== "tab.select" || a.id === "tNew"), "no other tab is selected");
+  assert.equal(f.runs.at(-1)[0], "pane.focus");
+});

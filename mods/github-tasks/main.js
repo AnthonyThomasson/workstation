@@ -85,7 +85,8 @@ export default class GitHubTasks extends View {
     }
     if (this.role === "investigation") {
       this.investigationPage = new InvestigationPage(blockProps());
-      cx.timer.every(3000, (cx) => cx.notify()); // the agent's status, and its end
+      this.investigationPage.refresh(cx);
+      cx.timer.every(3000, (cx) => { this.investigationPage.refresh(cx); cx.notify(); }); // the agent's status and end, and its investigators and workers starting and ending
       return;
     }
     if (this.role === "new-task") { this.newTask = new NewTaskPage(blockProps(), cx); return; }

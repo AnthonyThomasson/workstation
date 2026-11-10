@@ -3,17 +3,18 @@ import assert from "node:assert/strict";
 import { markdownLiteral, normalizeSettingsSections, promptForRole } from "./settings-model.js";
 
 test("settings sections start collapsed and only saved booleans reopen them", () => {
-  const closed = { newTask: false, orchestrator: false, worker: false, reviewer: false };
+  const closed = { newTask: false, orchestrator: false, worker: false, reviewer: false, investigator: false };
   assert.deepEqual(normalizeSettingsSections(), closed);
   assert.deepEqual(normalizeSettingsSections(null), closed);
   assert.deepEqual(normalizeSettingsSections({ newTask: true, worker: true }), { ...closed, newTask: true, worker: true });
+  assert.deepEqual(normalizeSettingsSections({ investigator: true }), { ...closed, investigator: true });
   assert.deepEqual(normalizeSettingsSections({ newTask: "true", orchestrator: 1, reviewer: false, unknown: true }), closed);
 });
 
 test("built-in role prompts use the sample run placeholders", () => {
-  for (const role of ["orchestrator", "worker", "reviewer"]) {
+  for (const role of ["orchestrator", "worker", "reviewer", "investigator"]) {
     const prompt = promptForRole(role);
-    assert.match(prompt, new RegExp(`You are (the |a )?${role}`));
+    assert.match(prompt, new RegExp(`You are (the |a |an )?${role}`));
     assert.match(prompt, /<workflow name>/);
     assert.match(prompt, /Ticket: <ticket title> in <owner\/repo>/);
     assert.match(prompt, /<ticket worktree>/);
@@ -23,6 +24,7 @@ test("built-in role prompts use the sample run placeholders", () => {
   assert.match(promptForRole("orchestrator"), /<the workflow's planning prompt goes here>/);
   assert.match(promptForRole("worker"), /<the workflow's worker prompt goes here>/);
   assert.match(promptForRole("reviewer"), /<the workflow's reviewer prompt goes here>/);
+  assert.match(promptForRole("investigator"), /<the workflow's investigator prompt goes here>/);
 });
 
 test("Markdown-ready prompts keep placeholders visible and leave code untouched", () => {
@@ -57,4 +59,32 @@ test("the New Task prompt tab shows the local prompt, with a placeholder id, whe
   assert.match(prompt, /next id is <next id>/);
   assert.match(prompt, /no `gh` calls/);
   assert.doesNotMatch(promptForRole("newTask", { repo: "me/app" }), /no `gh` calls/);
+});
+
+test("the New Task prompt tab names the session folder's spawn commands with a placeholder folder, for GitHub and local tasks", () => {
+  for (const prompt of [promptForRole("newTask", { repo: "me/app" }), promptForRole("newTask", { local: { mainRoot: "/r/app", todoDir: "/t", upNextDir: "/u" } })]) {
+    assert.match(prompt, /<session folder>\/spawn investigator <name> '<brief>'/);
+    assert.match(prompt, /<session folder>\/spawn worker <job> '<brief>'/);
+    assert.match(prompt, /never becomes the ticket's work/);
+  }
+});
+
+test("the New Task investigator and prototype worker prompts have tabs of their own, with placeholders", () => {
+  const investigator = promptForRole("newTaskInvestigator");
+  assert.match(investigator, /^# You are an investigator/);
+  assert.match(investigator, /read-only/);
+  assert.match(investigator, /<session worktree>/);
+  assert.match(investigator, /<main checkout>/);
+  const worker = promptForRole("newTaskWorker");
+  assert.match(worker, /^# You are a prototype worker/);
+  assert.match(worker, /throwaway prototype/);
+  assert.match(worker, /begins with <session worktree>\)/);
+  assert.doesNotMatch(worker, /<job>/);
+  assert.match(worker, /discarded/);
+  assert.notEqual(investigator, promptForRole("investigator"), "not the ticket run's investigator");
+  assert.equal(promptForRole("nope"), null);
+});
+
+test("the settings sections are unchanged by the sub-agents, which live inside New Task", () => {
+  assert.deepEqual(Object.keys(normalizeSettingsSections()), ["newTask", "orchestrator", "worker", "reviewer", "investigator"]);
 });

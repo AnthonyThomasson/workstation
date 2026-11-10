@@ -201,7 +201,7 @@ export class WorkflowList {
       })
       .child(v_flex().gap(2)
         .child(div().text_size(S().title).font_semibold().child("Workflows"))
-        .child(note(t, "How work gets done: the labels that start each one, and how its orchestrator, worker and reviewer run.")))
+        .child(note(t, "How work gets done: the labels that start each one, and how its orchestrator, worker, reviewer and investigator run.")))
       .child(h_flex().gap(8).items_center().flex_wrap()
         .child(h_flex().id("new-workflow").h(30).px(12).gap(6).items_center().rounded(6).cursor_pointer()
           .bg(t.solid).text_color(t.solid_foreground).text_size(S().secondary).font_semibold()

@@ -1,9 +1,10 @@
 // Investigations, Herdr's side: starts a New Task agent the way a workflow starts a run (investigations.js has the logic and
-// says how it works): a branch and worktree of its own, the agent in the background, its own space and tab. Also brings a
+// says how it works): a branch and worktree of its own, a folder of its own for its helpers' spawn script and prompts
+// (investigation-spawn.js), a host terminal that is its parent in the Agents panel, the agent in the background, its own space and tab. Also brings a
 // session's tab to the front again (viewInvestigation) and shows the agents again after an app restart. The tab's page is
 // investigation-page.js. The sidebar lists sessions with investigationsHere and opens them with viewInvestigation.
-import { exec, hc, home, notify, panes, run, setShared, shared, spaces, terminals } from "herdr";
-import { guarded, slotKey, undoRunTab, viewConnect, viewQuick } from "./bgrun.js";
+import { exec, hc, home, knownAgents, notify, panes, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
+import { endHost, guarded, hostKey, openHost, slotKey, undoRunTab, viewConnect, viewQuick } from "./bgrun.js";
 import { connect, connecting } from "./start.js";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
 import { app } from "./ui.js";
@@ -11,7 +12,8 @@ import { localTasks } from "./local-tasks-env.js";
 import { statusDir } from "./local-tasks.js";
 import { localNewTaskPrompt } from "./local-ui.js";
 import { newTaskPrompt } from "./model.js";
-import { worktreePath } from "./run.js";
+import { out, worktreePath } from "./run.js";
+import { sessionFolder } from "./investigation-spawn.js";
 import {
   INVESTIGATIONS_KEY, INVESTIGATION_ROLE, agentOf, beginInvestigation, deleteBranch, investigationsFor, reapplyInvestigations, removeWorktree, tabNameFor,
 } from "./investigations.js";
@@ -20,35 +22,69 @@ export { investigationsFor };
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 
+const HOST_TAB = "agents";
+const HOST_NOTE = "Host of this session's agents in the Agents panel. Ends when the session is done.";
+
 // The sessions to list for a repo: the saved ones started from its main checkout (repoRoot) or for its GitHub name (repo), each with its
 // agent's status, an ended agent's too (only Done removes a session). Read from shared state and the core's terminals, so it follows
 // an agent coming and going within a poll. `where`: { repoRoot, repo }.
 export const investigationsHere = (where) => investigationsFor(shared(INVESTIGATIONS_KEY), where, terminals());
 
 // The first message of the agent: the New Task prompt for GitHub tickets, or for local tasks with the folders and the next id.
-async function promptFor({ description, repo, project, settings, local }) {
-  if (!local) return newTaskPrompt({ repo, project, backlog: settings?.backlog, groomed: settings?.groomed, description });
+// agentsDir: the session's folder, with the spawn script the prompt tells it about.
+async function promptFor({ description, repo, project, settings, local }, agentsDir) {
+  if (!local) return newTaskPrompt({ repo, project, backlog: settings?.backlog, groomed: settings?.groomed, description, agentsDir });
   const nextId = await localTasks(local.mainRoot).nextId();
   return localNewTaskPrompt({
-    mainRoot: local.mainRoot, nextId, description,
+    mainRoot: local.mainRoot, nextId, description, agentsDir,
     todoDir: statusDir(home(), local.mainRoot, "to-do"), upNextDir: statusDir(home(), local.mainRoot, "up-next"),
   });
+}
+
+// Writes the session's folder: the spawn script (runnable) and the prompts its helpers read. Throws with the reason.
+async function writeSession(dir, files) {
+  const made = await exec("mkdir", ["-p", dir]);
+  if (made.code !== 0) throw new Error(`Couldn't make ${dir}: ${out(made)}`);
+  await Promise.all(Object.entries(files).map(([name, text]) => writeTextFile(`${dir}/${name}`, text, null)));
+  const chmod = await exec("chmod", ["+x", `${dir}/spawn`]);
+  if (chmod.code !== 0) throw new Error(`Couldn't make the spawn script runnable: ${out(chmod)}`);
+}
+
+// Takes a folder writeSession made back, once a start fails. Recursive, so only a folder sessionFolder names for its own id is removed.
+async function removeSession(dir) {
+  if (sessionFolder(home(), String(dir).split("/").pop()) === dir) await exec("rm", ["-rf", dir]);
 }
 
 // Starts an Investigation: a New Task agent working in a worktree of its own, from the repo's default branch, in a tab of its own
 // space; its first message is the New Task prompt with `description` in it. It works from a ticket's worktree space too (the branch
 // is cut in the repo's main checkout). Throws with a message for the person when it can't, with nothing left behind.
-//   args: { agent (of knownAgents()), description, repo, project, settings: { backlog, groomed }, groomer, where: { cwd, on }, local: { mainRoot } | null }
+//   args: { agent (of knownAgents()), description, repo, project, settings: { backlog, groomed }, groomer, subAgents: { investigator, worker } (their
+//           saved settings), where: { cwd, on }, local: { mainRoot } | null }
 //   Resolves with { entry } (investigations.js has its shape).
 export async function startInvestigation(args, cx) {
-  let id = null, created = null;
+  let id = null, created = null, hostSpace = null, sessionId = null;
   const { entry, problems } = await beginInvestigation({
     now: () => Date.now(), home: home(), mainCheckout: (cwd) => mainCheckout(git, cwd), prepareWorktree: (repoRoot, branch, target) => prepareWorktree(git, repoRoot, branch, target),
-    worktreePath, task: () => promptFor(args), hc,
+    worktreePath, task: (dir) => promptFor(args, dir), hc, knownAgents: () => knownAgents(), writeSession, removeSession,
+    // The agent's parent, so the Agents panel lists host > agent > its helpers (bgrun.js): the first tab of the session's own space, which the
+    // agent's tab is then added to. Ended again, with the space, when the start fails.
+    openHost: async (info) => {
+      sessionId = info.id;
+      const host = await openHost({ app, hc, run }, { id: info.id, name: HOST_TAB, repoRoot: info.repoRoot, spaces: spaces(), panes: panes(), own: { spaceName: tabNameFor(info.label), folder: info.workDir, note: HOST_NOTE } });
+      setShared(hostKey(info.id), { tab: host.tab, space: host.space, created: host.created });
+      hostSpace = host.space ?? null;
+      return host;
+    },
+    closeHost: async (host) => {
+      await endHost({ id: sessionId, hc, terminals, run, spaces: spaces(), panes: panes(), record: shared(hostKey(sessionId)), also: [host?.address], closeSpace: true });
+      setShared(hostKey(sessionId), null);
+      hostSpace = null;
+    },
     // A new space at the worktree, named for the session, its first tab the agent's; the Spaces sidebar nests it under the repo's.
+    // With a host that space is already there (the host is its first tab), so the agent's tab is added to it.
     connect: async (props) => {
       id = props.id;
-      const slot = await connect({ id, orchestrator: props.orchestrator, title: tabNameFor(props.title), space: null, folder: props.folder, props, kind: "investigation" }, cx);
+      const slot = await connect({ id, orchestrator: props.orchestrator, title: tabNameFor(props.title), space: hostSpace, folder: props.folder, props, kind: "investigation" }, cx);
       created = slot.created ? slot.space : null;
       return slot;
     },

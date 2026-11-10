@@ -1,18 +1,20 @@
 // An Investigation: a New Task agent that works like a workflow run. It has a branch and a git worktree of its own
 // (investigate/<what it is about>-<time>), runs in the background owned by no tab (hc run --bg, like a run's orchestrator),
 // and is shown in the first tab of a space of its own at the worktree, which the Spaces sidebar nests under the repo's.
-// Done ends the agent, closes that space, removes the worktree and deletes the branch. Pure apart from the deps it is handed
+// Done ends the agent and everything it started (investigators and prototype workers, their worktrees and branches, its host and
+// its session folder), closes that space, removes the worktree and deletes the branch. Pure apart from the deps it is handed
 // (no Herdr imports), so node --test runs it; investigate.js is Herdr's side, investigation-page.js the page in the tab.
-import { FOLDER_LABEL, ROLE_LABEL } from "./run.js";
+import { FOLDER_LABEL, ROLE_LABEL, shQuote } from "./run.js";
 import { slug } from "./workflow-model.js";
-import { groomArgv } from "./model.js";
-import { findTicketSpace, launchRun, runTabParts } from "./bgrun.js";
+import { normalizeSubAgent } from "./model.js";
+import { INVESTIGATION_LABEL, newTaskAgentArgv, sessionFiles, sessionFolder, subAgentArgv } from "./investigation-spawn.js";
+import { endHost, findTicketSpace, launchRun, runTabParts } from "./bgrun.js";
 import { row as terminalRow } from "./runview.js";
 
 // The list of investigations still to track (shared state): [{ id, label, repoRoot, repo, branch, workDir, agent }].
 // The tab's own slot ({ tab, left, space }) is kept beside it, per id, by bgrun.js's slotKey, as a run's is.
 export const INVESTIGATIONS_KEY = "github-tasks.investigations";
-export const INVESTIGATION_LABEL = "herdr.investigation"; // on the agent: the investigation's id
+export { INVESTIGATION_LABEL, sessionFolder }; // the label on the agent and on each of its helpers: the investigation's id; the session's folder (both in investigation-spawn.js)
 export const INVESTIGATION_ROLE = "investigation"; // its herdr.role label, and the mod pane's props.role
 export const TAB_NAME_MAX = 40;
 
@@ -31,11 +33,14 @@ export const tabNameFor = (label) => String(label).slice(0, TAB_NAME_MAX).trimEn
 // investigate/fix-the-login-redirect-lq3k9f2: the slug of the first line (40 at most), then the time, so two on one subject never share a branch.
 export const investigationBranch = (description, now = Date.now()) => `investigate/${slug(firstLine(description), 40) || "investigation"}-${now.toString(36)}`;
 
-// `hc run` for the agent: in the background, owned by nothing (no parent, none of the herdr.space / herdr.tab labels that would
-// adopt it into a pane), labelled so it can be found again. `key` is unused: launchRun passes the same fields as for a run.
-export function investigationRunArgs({ id, workDir, argv }) {
+// `hc run` for the agent: in the background, owned by no tab (none of the herdr.space / herdr.tab labels that would adopt it into a
+// pane), labelled so it can be found again. Under `parent` (the session's host, bgrun.js) it outlives it and types no notes into it,
+// so the Agents panel lists host > agent > its helpers; without one it has no parent. `key` is unused: launchRun passes the same
+// fields as for a run.
+export function investigationRunArgs({ id, workDir, argv, parent = null }) {
   const labels = [`${INVESTIGATION_LABEL}=${id}`, `${ROLE_LABEL}=${INVESTIGATION_ROLE}`, `${FOLDER_LABEL}=${workDir}`];
-  return ["run", "--bg", "--json", "--no-parent", "--cwd", workDir, ...labels.flatMap((l) => ["--label", l]), "--", ...argv];
+  const family = parent ? ["--parent", parent, "--outlive-parent", "--no-notify"] : ["--no-parent"];
+  return ["run", "--bg", "--json", ...family, "--cwd", workDir, ...labels.flatMap((l) => ["--label", l]), "--", ...argv];
 }
 
 // ---- The saved list -----------------------------------------------------------------------------------
@@ -112,36 +117,49 @@ export function checkStart({ agent, where }) {
   if (!agent?.run?.length) throw new Error("Pick an agent that is installed on this computer.");
 }
 
-// Makes the branch and worktree, starts the agent with the prompt as its first message and opens its tab; saves the entry as
-// soon as the agent exists. Throws with a message for the person, having taken back what it made: the agent and the tab
-// (launchRun), the saved entry, the worktree and the branch (all brand new, so nothing of the person's is in them).
-//   args: { agent (an entry of knownAgents()), description, repo, groomer ({ model, effort }), where ({ cwd, on }) }
+// Makes the branch and worktree and the session's folder (sessionFolder: the spawn script and the prompts of the helpers the agent may
+// start), opens the host, starts the agent with the prompt as its first message and opens its tab; saves the entry as soon as the agent
+// exists. Throws with a message for the person, having taken back what it made: the agent, the host and the tab (launchRun), the saved
+// entry, the session folder, the worktree and the branch (all brand new, so nothing of the person's is in them).
+//   args: { agent (an entry of knownAgents()), description, repo, groomer ({ model, effort }), subAgents ({ investigator, worker }: each { agent,
+//           model, effort }, as normalizeSubAgent leaves them; the defaults when none), where ({ cwd, on }) }
 //   deps: { now(), home, mainCheckout(cwd) -> path, prepareWorktree(repoRoot, branch, target) -> path,
-//           worktreePath(repoRoot, branch, home), task() -> the first message, hc(args), connect(props) -> slot (throws), closeTab(),
-//           load() -> saved list, save(list), guard?(id, fn) -> Promise (runs fn alone for that id), cleanup?(repoRoot, branch, workDir) -> Promise (removes a worktree and branch) }
+//           worktreePath(repoRoot, branch, home), task(dir) -> the first message (dir: the session folder), knownAgents() -> the core's agents,
+//           writeSession(dir, files { name: text }), removeSession(dir), hc(args), connect(props) -> slot (throws), closeTab(),
+//           load() -> saved list, save(list), guard?(id, fn) -> Promise (runs fn alone for that id), cleanup?(repoRoot, branch, workDir) -> Promise (removes a worktree and branch),
+//           openHost?({ id, label, workDir, repoRoot }) -> host (throws; the agent's parent), closeHost?(host) }
 //   Resolves with { entry, problems }.
-export async function beginInvestigation(deps, { agent, description, repo, groomer, where }) {
+export async function beginInvestigation(deps, { agent, description, repo, groomer, subAgents, where }) {
   checkStart({ agent, where });
   const now = deps.now();
   const repoRoot = await deps.mainCheckout(where.cwd); // the main checkout, even when started from one of its worktrees
   const repoName = repo || repoRoot.split("/").filter(Boolean).pop() || "";
   const label = investigationLabel(description, repoName);
-  const task = await deps.task(); // before anything is made: a failure here leaves nothing behind
   const id = investigationId(now), branch = investigationBranch(description, now);
+  const dir = sessionFolder(deps.home, id);
+  if (!dir) throw new Error(`Couldn't find a folder for the session's helpers: no home folder is known for ${id}.`); // before anything is made
+  const task = await deps.task(dir); // before anything is made: a failure here leaves nothing behind
   const workDir = await deps.prepareWorktree(repoRoot, branch, deps.worktreePath(repoRoot, branch, deps.home));
   const base = { id, label, repoRoot, repo: repoName, branch, workDir };
   const props = { role: INVESTIGATION_ROLE, id, orchestrator: null, title: label, branch, folder: workDir, repoRoot };
   const launchDeps = {
     hc: deps.hc, connect: deps.connect, closeTab: deps.closeTab,
     writePaneJson: async (full) => deps.save(withEntry(deps.load(), { ...base, agent: full.orchestrator })), // saved the moment the agent exists
+    openHost: deps.openHost && (() => deps.openHost({ id, label, workDir, repoRoot })),
+    closeHost: deps.closeHost,
   };
   const launch = () => launchRun(launchDeps, {
-    id, key: label, workDir, argv: groomArgv(agent.key, agent.run, groomer ?? {}), task, props, runArgs: investigationRunArgs, who: "agent",
+    id, key: label, workDir, argv: newTaskAgentArgv(agent, groomer, dir), task, props, runArgs: investigationRunArgs, who: "agent",
   });
   try {
+    const known = await deps.knownAgents().catch(() => []);
+    const mine = { investigator: normalizeSubAgent(subAgents?.investigator), worker: normalizeSubAgent(subAgents?.worker) };
+    const argv = { investigator: subAgentArgv("investigator", mine.investigator, known, dir), worker: subAgentArgv("worker", mine.worker, known, dir) };
+    await deps.writeSession(dir, sessionFiles({ id, dir, workDir, repoRoot, branch, argv })); // before the agent: it may use them at once
     const launched = await (deps.guard ? deps.guard(id, launch) : launch()); // guarded as a whole, so View never makes a second tab meanwhile
     return { entry: { ...base, agent: launched.orchestrator }, problems: launched.problems };
   } catch (e) {
+    await Promise.resolve(deps.removeSession(dir)).catch(() => {});
     deps.save(withoutEntry(deps.load(), id));
     await deps.cleanup?.(repoRoot, branch, workDir).catch(() => {});
     throw e;
@@ -150,11 +168,19 @@ export async function beginInvestigation(deps, { agent, description, repo, groom
 
 // ---- Done ---------------------------------------------------------------------------------------------
 
-// Takes an investigation down: ends the agent, removes the worktree and deletes the branch, forgets the entry and, as the very
-// last step (the page lives in it), closes its space (confirmed, whatever else the person opened in it; only the tab when it was
-// moved to another space). Stops at the first thing that fails, with the reason and nothing after it done, so Done can be
-// pressed again: ending an agent that is gone, removing a worktree that is gone and deleting a branch that is gone all count as done.
-//   deps: { hc(args), terminals(), spaces(), panes(), slot() (the saved one), git(cwd, ...args), run(name, args), save(list), load(), clearSlot() }
+// Takes an investigation down. After the refusal checks (read-only), the New Task agent is ended first, and checked to be no longer
+// live, so it can't start anything more. Then everything the session started: every terminal labelled with the session's id (the
+// investigators and prototype workers: found by label, so it works when the agent had ended already; live ones are killed, finished
+// ones removed), its host, every prototype worktree (`<workDir>--<job>` on `<branch>--<job>`), every `<branch>--*` branch and the
+// session folder (~/.herdr/investigations/<id>/). Then the rest of what Done always did: removes the worktree and deletes the
+// branch, forgets the entry, the tab's slot and the page's saved sub-agent rows and, as the very last step (the page lives in it),
+// closes its space (confirmed, whatever else the person opened in it; only the tab when it was moved to another space). Stops at
+// the first thing that fails, with the reason and nothing after it done, so Done can be pressed again: anything that is already
+// gone (a terminal, host, worktree, branch or folder) counts as done.
+// Whatever isn't the session's own is refused before anything is ended or removed: a branch outside investigate/, the main
+// checkout, a worktree of the `<workDir>--` folders that isn't on a `<branch>--` branch (the message says how to fix that by hand).
+//   deps: { hc(args), terminals(), spaces(), panes(), slot() (the saved one), git(cwd, ...args), run(name, args), save(list), load(), clearSlot(),
+//           home, removeDir(path) -> { code, stderr } (rm -rf), host?() (the saved host record), clearHost?(), clearAgents?() (the page's saved sub-agent rows) }
 //   Resolves with { done, error, closed } (closed: false when no space or tab was found to close).
 export async function endInvestigation(deps, entry) {
   const { id, agent, repoRoot, workDir, branch } = entry;
@@ -163,11 +189,42 @@ export async function endInvestigation(deps, entry) {
 
   const refused = await unsafeToRemove(deps.git, entry);
   if (refused) return fail(`Done refused: ${refused}. Nothing was ended or removed.`);
-  const live = () => (deps.terminals() ?? []).some((k) => k.state === "live" && k.address === agent);
+  const prototypes = await prototypesOf(deps.git, entry);
+  if (prototypes.refused) return fail(`Done refused: ${prototypes.refused}. Nothing was ended or removed.`);
+  const folder = sessionFolder(deps.home, id);
+  if (!folder) return fail(`Done refused: the session id ${id || "(none)"} isn't an investigation's, so its folder can't be found. Nothing was ended or removed.`);
 
+  // The New Task agent first, so it can't start anything more while Done works. A failed kill of a terminal that is still live stops
+  // Done (a kill that exits 0 is believed: the listing may not have refreshed yet, as in endRun and endHost).
   const killed = await deps.hc(["kill", agent]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
-  if (killed.code !== 0 && live()) return fail(`Couldn't end the agent ${agent}: ${said(killed) || "kill failed"}. Nothing else was removed; end it with hc kill.`);
+  if (killed.code !== 0 && (deps.terminals() ?? []).some((k) => k.state === "live" && k.address === agent)) return fail(`Couldn't end the agent ${agent}: ${said(killed) || "kill failed"}. Nothing else was removed; end it with hc kill, then press Done again.`);
   await deps.hc(["rm", agent]).catch(() => {});
+
+  // Everything the session started, found by label (read after the agent ended, so one it started just before is in the list).
+  const subs = () => (deps.terminals() ?? []).filter((k) => k.labels?.[INVESTIGATION_LABEL] === id && k.address !== agent && k.labels?.[ROLE_LABEL] !== INVESTIGATION_ROLE);
+  const stuck = [];
+  for (const k of subs()) {
+    if (k.state === "live") {
+      const r = await deps.hc(["kill", k.address]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+      if (r.code !== 0 && subs().some((x) => x.address === k.address && x.state === "live")) { stuck.push(`${k.address}: ${said(r) || "kill failed"}`); continue; }
+    }
+    await deps.hc(["rm", k.address]).catch(() => {});
+  }
+  if (stuck.length) return fail(`Couldn't end ${stuck.join("; ")}. Nothing else was removed; end ${stuck.length > 1 ? "them" : "it"} with hc kill.`);
+  const hosted = await endHost({ id, hc: deps.hc, terminals: deps.terminals, run: deps.run, spaces: deps.spaces(), panes: deps.panes(), record: deps.host?.() ?? null });
+  if (hosted.error) return fail(`${hosted.error}. Nothing else was removed; end it with hc kill.`);
+  deps.clearHost?.();
+
+  for (const w of prototypes.worktrees) {
+    const gone = await removeWorktree(deps.git, repoRoot, w, "The agent and its sub-agents were ended; press Done again once that is fixed.");
+    if (gone) return fail(gone);
+  }
+  for (const b of prototypes.branches) {
+    const gone = await deleteBranch(deps.git, repoRoot, b, "The agent, its sub-agents and the prototype worktrees are gone; press Done again once that is fixed.");
+    if (gone) return fail(gone);
+  }
+  const rmd = await Promise.resolve(deps.removeDir(folder)).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+  if (rmd && rmd.code !== 0) return fail(`Couldn't remove the session folder ${folder}: ${said(rmd) || "rm failed"}. Press Done again once that is fixed.`);
 
   // Where its tab is, read before anything is closed.
   const spaces = deps.spaces(), panes = deps.panes();
@@ -181,10 +238,51 @@ export async function endInvestigation(deps, entry) {
 
   deps.save(withoutEntry(deps.load(), id));
   deps.clearSlot();
+  deps.clearAgents?.();
   if (parts && parts.space !== own) deps.run("tab.close", { id: parts.tab }); // not its own space: the person's other tabs stay
   else if (own) deps.run("space.close", { id: own, confirmed: true });
   else return { done: true, error: null, closed: false };
   return { done: true, error: null, closed: true };
+}
+
+// What the session's prototype workers made: the worktrees of `git worktree list` whose folder starts `<workDir>--` and whose
+// branch starts `<branch>--`, and every branch starting `<branch>--` (a worker's worktree may be gone while its branch isn't).
+// A worktree in those folders that is on some other branch, or none, isn't the session's: it is `refused`, with why and how to fix
+// it by hand, as is a main checkout there. A branch that doesn't start with investigate/ is refused up front: the `<branch>--`
+// prefix is only the session's own when `branch` itself is an investigation's. Folders are matched as git lists them (real paths),
+// so the entry's folder is first resolved the same way (`rev-parse --show-toplevel`; as given when it is gone).
+// Resolves with { worktrees, branches, refused }.
+export async function prototypesOf(git, { repoRoot, workDir, branch }) {
+  const clean = (p) => String(p ?? "").replace(/\/+$/, "");
+  const out = { worktrees: [], branches: [], refused: null };
+  if (typeof branch !== "string" || !branch.startsWith("investigate/")) return { ...out, refused: `the branch ${branch || "(none)"} isn't an investigation's (investigate/...)` };
+  const branchPrefix = `${branch}--`;
+  const list = await git(repoRoot, "worktree", "list", "--porcelain");
+  if (list.code !== 0) return { ...out, refused: `couldn't list the worktrees: ${String(list.stderr || list.stdout || "").trim() || "git failed"}` };
+  const top = await git(workDir, "rev-parse", "--show-toplevel").catch(() => null);
+  const real = top?.code === 0 && clean(top.stdout.trim()) ? clean(top.stdout.trim()) : clean(workDir);
+  const prefixes = [...new Set([`${clean(workDir)}--`, `${real}--`])];
+  const blocks = list.stdout.split("\n\n").map((b) => b.split("\n"));
+  const main = clean(blocks[0]?.find((l) => l.startsWith("worktree "))?.slice(9));
+  for (const lines of blocks) {
+    const path = clean(lines.find((l) => l.startsWith("worktree "))?.slice(9));
+    const prefix = prefixes.find((p) => path.startsWith(p));
+    if (!prefix) continue;
+    if (path === main || path === clean(repoRoot)) return { ...out, refused: `${path} is the repo's main checkout` };
+    const name = (lines.find((l) => l.startsWith("branch "))?.slice(7) ?? "").replace(/^refs\/heads\//, "");
+    if (!name.startsWith(branchPrefix)) {
+      const job = path.slice(prefix.length);
+      return { ...out, refused: `the worktree ${path} is on ${name || "no branch (detached)"}, not one of this session's ${branchPrefix}... branches. To fix it by hand, switch it to one (git -C ${shQuote(path)} switch ${shQuote(`${branchPrefix}${job}`)}) or remove it yourself (git -C ${shQuote(repoRoot)} worktree remove --force ${shQuote(path)}), then press Done again` };
+    }
+    out.worktrees.push(path);
+  }
+  const refs = await git(repoRoot, "for-each-ref", "--format=%(refname)", "refs/heads/");
+  if (refs.code !== 0) return { ...out, refused: `couldn't list the branches: ${String(refs.stderr || refs.stdout || "").trim() || "git failed"}` };
+  for (const line of refs.stdout.split("\n")) {
+    const name = line.trim().replace(/^refs\/heads\//, "");
+    if (name.startsWith(branchPrefix)) out.branches.push(name);
+  }
+  return out;
 }
 
 // Done removes a worktree with --force and deletes a branch with -D, so before anything is touched it makes sure the entry points at an
@@ -202,20 +300,20 @@ export async function unsafeToRemove(git, { repoRoot, workDir, branch }) {
 }
 
 // `git worktree remove --force` (the person's uncommitted changes go with it). A worktree whose folder was deleted by hand is pruned instead.
-// Resolves with null, or the error to say.
-export async function removeWorktree(git, repoRoot, workDir) {
+// Resolves with null, or the error to say, ending in `tail` (what the person should know has happened and what to do).
+export async function removeWorktree(git, repoRoot, workDir, tail = "The agent was ended; press Done again once that is fixed.") {
   const r = await git(repoRoot, "worktree", "remove", "--force", workDir);
   if (r.code === 0) return null;
   await git(repoRoot, "worktree", "prune");
   const list = await git(repoRoot, "worktree", "list", "--porcelain");
   if (list.code === 0 && !list.stdout.split("\n").includes(`worktree ${workDir}`)) return null;
-  return `Couldn't remove the worktree ${workDir}: ${String(r.stderr || r.stdout || "").trim() || "git failed"}. The agent was ended; press Done again once that is fixed.`;
+  return `Couldn't remove the worktree ${workDir}: ${String(r.stderr || r.stdout || "").trim() || "git failed"}. ${tail}`;
 }
 
-// `git branch -D`, from the main checkout. A branch that is already gone is fine. Resolves with null, or the error to say.
-export async function deleteBranch(git, repoRoot, branch) {
+// `git branch -D`, from the main checkout. A branch that is already gone is fine. Resolves with null, or the error to say, ending in `tail`.
+export async function deleteBranch(git, repoRoot, branch, tail = "The worktree was removed; press Done again once that is fixed.") {
   const r = await git(repoRoot, "branch", "-D", branch);
   if (r.code === 0) return null;
   if ((await git(repoRoot, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`)).code !== 0) return null;
-  return `Removed the worktree, but couldn't delete the branch ${branch}: ${String(r.stderr || r.stdout || "").trim() || "git failed"}. Press Done again once that is fixed.`;
+  return `Couldn't delete the branch ${branch}: ${String(r.stderr || r.stdout || "").trim() || "git failed"}. ${tail}`;
 }

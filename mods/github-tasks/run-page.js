@@ -1,5 +1,5 @@
 // One workflow run, beside its orchestrator: the mod pane Start opens to the right of the orchestrator's terminal
-// (props.role "run"). It lists the workers and reviewers the orchestrator has started, live from the core, and a
+// (props.role "run"). It lists the workers, reviewers and investigators the orchestrator has started, live from the core, and a
 // click looks in on one. The agents come from `hc ls --all` (running or finished, asked every few seconds) and from the
 // core's live terminals; the rows are saved per run, so a reload still lists those that ended. Not a View of its own:
 // main.js builds one in init, calls refresh on a timer and draws it from render.
@@ -18,7 +18,7 @@ const stageKey = (id) => `github-tasks.run.${id}.stage`;
 const prKey = (id) => `github-tasks.run.${id}.pr`;
 const finalKey = (id) => `github-tasks.run.${id}.final`; // the final reviewer has been seen: Merge waits for that
 const autoPrKey = (id) => `github-tasks.run.${id}.autopr`; // the page has tried to open the pull request by itself: it does that once per run
-const agentsKey = (id) => `github-tasks.run.${id}.agents`; // the workers and reviewers seen, so a reload still lists the finished ones
+const agentsKey = (id) => `github-tasks.run.${id}.agents`; // the workers, reviewers and investigators seen, so a reload still lists the finished ones
 const failureKey = (id) => `github-tasks.run.${id}.mergefailure`; // the red Merge button: { kind, label, error }
 const fixingKey = (id) => `github-tasks.run.${id}.fixing`; // the orchestrator is fixing it: { label, error, seenWorking, turn, busy }
 const leadKey = (id) => `github-tasks.run.${id}.orchestrator`; // the address of the orchestrator, when a new one was started for the run
@@ -58,11 +58,11 @@ export class RunPage {
     this.polling = false;
     const saved = shared(agentsKey(this.id));
     this.saved = Array.isArray(saved) ? saved : []; // the rows kept from before (runview.js keep)
-    this.listed = { worker: null, reviewer: null, final: null }; // the last answer of each `hc ls --all` query
+    this.listed = { worker: null, reviewer: null, final: null, investigator: null }; // the last answer of each `hc ls --all` query
     this.listing = false;
   }
 
-  // Asks the core for this run's workers, reviewers and final reviewer, finished ones too (the answer has no labels: the
+  // Asks the core for this run's workers, reviewers, final reviewer and investigators, finished ones too (the answer has no labels: the
   // query is the filter). A query that fails keeps its last answer. Called every few seconds by main.js.
   async refresh(cx) {
     if (this.listing || !this.id) return;
@@ -96,23 +96,24 @@ export class RunPage {
 
   render(cx) {
     const t = theme(), all = terminals();
-    const { workers, reviewers, needsYou } = this.agents(all);
+    const { workers, reviewers, investigators, needsYou } = this.agents(all);
     const lead = orchestratorOf(all, this.orchestrator);
     this.noteFinal(reviewers);
     this.healSlot();
     this.checkFixing(lead);
-    if (cx) { this.advance(cx, workers, reviewers); this.autoPr(cx, workers, reviewers); this.startPolling(cx); }
+    if (cx) { this.advance(cx, workers, reviewers); this.autoPr(cx, workers, reviewers, investigators); this.startPolling(cx); }
     return v_flex().id("workflow-run").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
-      .child(this.renderHeader(t, lead, cx, workers, reviewers))
+      .child(this.renderHeader(t, lead, cx, workers, reviewers, investigators))
       .when(needsYou > 0, (el) => el.child(h_flex().flex_none().px(16).py(8).border_b(1).border_color(t.border).text_size(S().secondary).text_color(t.blocked)
         .child(`${needsYou === 1 ? "An agent is" : `${needsYou} agents are`} waiting for you. Click to answer.`)))
       .child(div().id("workflow-run-agents").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(8).py(10).gap(14)
           .child(this.renderSection(t, "Workers", workers, "The orchestrator hasn't started a worker yet."))
-          .child(this.renderSection(t, "Reviewers", reviewers, "Reviewers start once the work is done."))));
+          .child(this.renderSection(t, "Reviewers", reviewers, "Reviewers start once the work is done."))
+          .child(this.renderSection(t, "Investigators", investigators, "The orchestrator hasn't started an investigator."))));
   }
 
-  renderHeader(t, lead, cx, workers = [], reviewers = []) {
+  renderHeader(t, lead, cx, workers = [], reviewers = [], investigators = []) {
     const ended = !lead?.live;
     const color = ended ? t.dim : statusColor(lead.status, t);
     const words = ended ? "Ended. Its agents ended with it, and the work stays on the branch." : `Orchestrator: ${statusLabel(lead.status)}`;
@@ -122,7 +123,7 @@ export class RunPage {
       .child(h_flex().gap(7).items_center().text_size(S().secondary).text_color(ended ? t.muted : t.foreground)
         .child(div().w(8).h(8).flex_none().rounded_full().bg(color))
         .child(div().min_w(0).truncate().child(words)))
-      .child(this.renderActions(t, lead, cx, workers, reviewers)); // also once the orchestrator has ended: the work stays on the branch, and Merge is still gated
+      .child(this.renderActions(t, lead, cx, workers, reviewers, investigators)); // also once the orchestrator has ended: the work stays on the branch, and Merge is still gated
   }
 
   // The final reviewer is seen once and remembered, so a restart of the page still lets Merge through.
@@ -134,9 +135,9 @@ export class RunPage {
 
   // When Merge would be allowed and the run has no pull request, open it by itself, once: the attempt is saved before it
   // is made, so neither a reload nor a failure tries again. A failure shows its error; pressing Merge opens the pull request again.
-  autoPr(cx, workers, reviewers) {
+  autoPr(cx, workers, reviewers, investigators = []) {
     if (!this.folder || !this.branch || this.noPr()) return;
-    const ready = canMerge({ finalSeen: this.finalSeen, workers, reviewers });
+    const ready = canMerge({ finalSeen: this.finalSeen, workers, reviewers, investigators });
     if (!shouldAutoPr({ ready, pr: this.pr, tried: this.autoPrTried, busy: this.busy })) return;
     this.autoPrTried = true;
     setShared(autoPrKey(this.id), 1);
@@ -198,9 +199,9 @@ export class RunPage {
     });
   }
 
-  renderActions(t, lead, cx, workers = [], reviewers = []) {
-    // Merge waits for the final review and for every worker and reviewer to end. With no pull request yet it opens one first.
-    const ready = canMerge({ finalSeen: this.finalSeen, workers, reviewers }) && Boolean(this.folder && this.branch);
+  renderActions(t, lead, cx, workers = [], reviewers = [], investigators = []) {
+    // Merge waits for the final review and for every worker, reviewer and investigator to end. With no pull request yet it opens one first.
+    const ready = canMerge({ finalSeen: this.finalSeen, workers, reviewers, investigators }) && Boolean(this.folder && this.branch);
     const view = mergeView({ ready, busy: this.busy, failure: this.failure, fixing: this.fixing });
     const red = view.mode === "red";
     const tip = view.mode === "fixing" ? this.fixing.error : red ? this.failure.error
@@ -424,7 +425,7 @@ export class RunPage {
 
   ticketSpace() { return findTicketSpace({ spaces: spaces(), panes: panes(), folder: this.folder, repoRoot: this.repoRoot }); }
 
-  // Looks in on a worker or reviewer. From the ticket's space first, so that keeping its terminal as a tab puts it there and
+  // Looks in on a worker, reviewer or investigator. From the ticket's space first, so that keeping its terminal as a tab puts it there and
   // not in whichever space (the repo's) the person last looked at.
   peek(address) {
     const space = peekSpace({ slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes(), folder: this.folder, repoRoot: this.repoRoot });
@@ -432,7 +433,7 @@ export class RunPage {
     run("terminal.peek", { terminal: address });
   }
 
-  // Ends the run: its orchestrator, workers and reviewers are killed on purpose (a background run ends no other way), then
+  // Ends the run: its orchestrator, workers, reviewers and investigators are killed on purpose (a background run ends no other way), then
   // the ticket's space is closed, with this page in it: the very last thing Merge does. Says what to do when something couldn't
   // be ended or the space couldn't be found: it never leaves the page on "Merging…". Resolves true when the space was closed.
   async closeSession(ticketSpace = this.ticketSpace()) {

@@ -4,7 +4,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea } from "gpui-base";
 import { shared, theme, closeOverlay } from "herdr";
-import { GROOMER_KEY, STATUSES, normalizeGroomer, spelled } from "./model.js";
+import { GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, STATUSES, normalizeGroomer, normalizeSubAgent, spelled } from "./model.js";
 import { loadStatusField } from "./loader.js";
 import { installedAgents, startNewTask, startLocalNewTask } from "./groom.js";
 import { AGENT_KEY, ENTER_HINT, NewTaskDialog, PROMPT, TITLE, chooseAgent, boxRows, enterStep, panelWidth } from "./new-task-dialog.js";
@@ -20,11 +20,12 @@ export async function startTask(props, description, cx) {
   if (!agent) throw new Error("Pick an agent that is installed on this computer.");
   const where = { cwd: props.where?.cwd, on: props.where?.on };
   const groomer = normalizeGroomer(shared(GROOMER_KEY));
-  if (props.local) return startLocalNewTask({ agent, description, mainRoot: props.local.mainRoot, groomer, where }, cx);
+  const subAgents = { investigator: normalizeSubAgent(shared(INVESTIGATOR_KEY)), worker: normalizeSubAgent(shared(WORKER_KEY)) }; // saved apart from the New Task agent's
+  if (props.local) return startLocalNewTask({ agent, description, mainRoot: props.local.mainRoot, groomer, subAgents, where }, cx);
   if (!props.project) throw new Error("This repo has no project to put the ticket on.");
   // The prompt names the statuses as the project spells them ("Todo", not the fixed "To Do").
   const options = (await loadStatusField(gh, props.project.id, where).catch(() => null))?.options ?? [];
-  return startNewTask({ agent, description, repo: props.repo, project: props.project, settings: { backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) }, groomer, where }, cx);
+  return startNewTask({ agent, description, repo: props.repo, project: props.project, settings: { backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) }, groomer, subAgents, where }, cx);
 }
 
 export class NewTaskPage {

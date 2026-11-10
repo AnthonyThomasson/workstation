@@ -8,7 +8,7 @@ const ALL = Object.values(STATUSES).map((name) => ({ name }));
 const role = (agent = "claude") => ({ agent, command: "", prompt: "", model: "", effort: "medium" });
 const workflow = (name, agents = {}, labels = []) => ({
   id: name.toLowerCase(), name, trigger: { labels, match: "any" },
-  orchestrator: role(agents.orchestrator), worker: role(agents.worker), reviewer: role(agents.reviewer),
+  orchestrator: role(agents.orchestrator), worker: role(agents.worker), reviewer: role(agents.reviewer), investigator: role(agents.investigator),
 });
 // Everything is fine unless a test says otherwise.
 const healthy = (over = {}) => ({
@@ -122,11 +122,11 @@ test("no saved grooming agent means nothing to check there", () => {
 test("each missing workflow agent is one issue listing every role that uses it", () => {
   const workflows = { errors: [], items: [
     workflow("Bug", { orchestrator: "gemini", worker: "codex", reviewer: "gemini" }),
-    workflow("Story", { worker: "gemini" }),
+    workflow("Story", { worker: "gemini", investigator: "gemini" }),
   ] };
   const issues = diagnose(healthy({ workflows, groomerAgent: "gemini" }));
   assert.deepEqual(issues.map((i) => i.agent), ["gemini"]);
-  assert.deepEqual(issues[0].usedBy, ["Task agent", "Bug orchestrator", "Bug reviewer", "Story worker"]);
+  assert.deepEqual(issues[0].usedBy, ["Task agent", "Bug orchestrator", "Bug reviewer", "Story worker", "Story investigator"]);
 });
 
 test("an unknown project, repo or statuses carry the last check's project issues", () => {

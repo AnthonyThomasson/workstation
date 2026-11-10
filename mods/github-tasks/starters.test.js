@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { parse as parseYaml } from "./yaml.js";
-import { normalize, validate } from "./workflow-model.js";
+import { blank, normalize, validate } from "./workflow-model.js";
 
 const dir = new URL("./starters/", import.meta.url);
 const load = (file) => parseYaml(readFileSync(new URL(file, dir), "utf8"));
@@ -13,6 +13,12 @@ for (const file of ["bug.yaml", "story.yaml"]) {
     const data = load(file);
     assert.deepEqual(validate(normalize(data)), []);
     assert.equal(normalize(data).id, data.id);
+  });
+
+  test(`${file} has no investigator section and loads with the investigator defaults`, () => {
+    const data = load(file);
+    assert.equal("investigator" in data, false);
+    assert.deepEqual(normalize(data).investigator, blank().investigator);
   });
 
   test(`${file} retro proposes follow-up tickets with the question tool and adds the picked ones to To Do`, () => {

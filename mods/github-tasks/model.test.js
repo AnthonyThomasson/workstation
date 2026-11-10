@@ -152,7 +152,7 @@ test("a save needs a title and a status the project has", () => {
   assert.equal(checkTask({ title: "T", status: null }, options), null);
 });
 
-import { groupByStage, newTaskPrompt, newTaskStart, groomArgv, normalizeGroomer, STATUSES, spelled, sameStatus, recentlyDone, middleEllipsis, pickableStatuses, wontDoOption, wontDoDisabledReason } from "./model.js";
+import { groupByStage, newTaskPrompt, newTaskStart, groomArgv, normalizeGroomer, normalizeSubAgent, INVESTIGATOR_KEY, WORKER_KEY, GROOMER_KEY, STATUSES, spelled, sameStatus, recentlyDone, middleEllipsis, pickableStatuses, wontDoOption, wontDoDisabledReason } from "./model.js";
 
 test("the statuses are fixed", () => {
   assert.deepEqual(STATUSES, { backlog: "To Do", groomed: "Up Next", inProgress: "In Progress", inReview: "In Review", done: "Done", wontDo: "Won't Do" });
@@ -303,4 +303,20 @@ test("the rest of the New Task prompt is the same with and without a description
 test("newTaskStart: the typed description is trimmed and left otherwise as typed", () => {
   assert.match(newTaskStart("  fix it  "), /^The person has already said what they want to make:\n\n> fix it\n\n/);
   assert.equal(newTaskStart(undefined), WAIT_LINE);
+});
+
+test("the investigators' and workers' settings have their own keys, distinct from the New Task agent's", () => {
+  assert.equal(INVESTIGATOR_KEY, "github-tasks.investigator");
+  assert.equal(WORKER_KEY, "github-tasks.protoWorker");
+  assert.equal(new Set([INVESTIGATOR_KEY, WORKER_KEY, GROOMER_KEY]).size, 3);
+});
+
+test("a sub-agent's saved settings default to claude, the agent's own model and medium effort, however little or much is saved", () => {
+  const fresh = { agent: "claude", model: "", effort: "medium" };
+  for (const raw of [undefined, null, {}, "nope", 3, [], { agent: null }, { agent: "  ", model: 4, effort: "bogus" }]) assert.deepEqual(normalizeSubAgent(raw), fresh, JSON.stringify(raw));
+  assert.deepEqual(normalizeSubAgent({ agent: " codex ", model: " gpt-x ", effort: "high" }), { agent: "codex", model: "gpt-x", effort: "high" });
+  assert.deepEqual(normalizeSubAgent({ model: "opus" }), { agent: "claude", model: "opus", effort: "medium" });
+  assert.equal(normalizeSubAgent({ agent: "custom" }).agent, "claude", "a custom command has no place here");
+  assert.deepEqual(normalizeSubAgent({ agent: "kimi", extra: 1 }), { agent: "kimi", model: "", effort: "medium" }, "old or unknown fields are dropped");
+  assert.deepEqual(normalizeGroomer(undefined), { agent: null, model: "", effort: "medium" }, "the New Task agent's own default is unchanged");
 });
