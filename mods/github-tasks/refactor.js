@@ -6,12 +6,10 @@ import { v_flex, h_flex, TextareaState, Textarea } from "gpui-base";
 import { shared, setShared, theme, closeOverlay } from "herdr";
 import { REFACTOR } from "./kinds.js";
 import { store, repoRootOf } from "./workflow-env.js";
-import { startTask } from "./new-task.js";
-import { PRESS_BUTTONS } from "./popup.js";
+import { startTask, stopPresses } from "./new-task.js";
 import { S, stop, action, note } from "./ui.js";
 import { EMPTY_TEXT, ENTER_HINT, FOCUS_HEIGHT, FOCUS_LABEL, FOCUS_PLACEHOLDER, RefactorDialog, SUBTITLE, TITLE, enterStep, focusRows, panelWidth, pickKey, pickValue, typeRows } from "./refactor-dialog.js";
 
-const stopPresses = (el, except) => PRESS_BUTTONS.filter((b) => b !== except).reduce((e, b) => e.on_mouse_down(b, stop), el);
 const baseName = (path) => String(path ?? "").split("/").filter(Boolean).pop() ?? "";
 
 // The repo the pick is remembered for: the main checkout in local mode, the GitHub repo otherwise.
@@ -89,20 +87,23 @@ export class RefactorPage {
     const t = theme(), width = panelWidth(this.window), d = this.dialog;
     const backdrop = div().id("refactor-popup").size_full().flex().items_center().justify_center().bg("#000000a6")
       .on_size_change((win, cx) => {
+        const first = !this.window;
         this.window = win;
         this.input.set_rows(focusRows(S().body)); // the text size may have changed since the dialog opened
+        if (first) cx.timer.after(50, () => this.input.focus?.()); // the window is there now, so the keyboard goes to the box
         cx.notify();
       })
       .on_mouse_down("left", (_e, cx) => { this.close(); cx.stop_propagation(); });
     const list = !d.loaded ? note(t, "Loading…")
       : d.empty() ? note(t, EMPTY_TEXT)
+      : !d.rows.length ? null // reading the types failed: only the error shows
       : div().id("refactor-types").max_h(220).overflow_y_scrollbar().child(v_flex().gap(2).children(d.rows.map((r) => this.row(t, r))));
     const panel = v_flex().id("refactor").track_focus(this.handle).w(width ?? 0).flex_none().p(16).gap(12).rounded(12).border_1().border_color(t.border)
       .bg(t.background).text_color(t.foreground).text_size(S().body).shadow_lg()
       .on_key_down((e, cx) => this.onKey(e, cx))
       .child(div().text_size(S().title).font_semibold().child(TITLE))
       .child(div().text_size(S().secondary).text_color(t.muted).child(SUBTITLE))
-      .child(list)
+      .when(Boolean(list), (el) => el.child(list))
       .child(v_flex().gap(6)
         .child(div().text_size(S().secondary).text_color(t.muted).child(FOCUS_LABEL))
         .child(div().id("refactor-focus").h(FOCUS_HEIGHT).flex_none().min_h(0).overflow_hidden().rounded(8).border_1().border_color(t.border).bg(t.chrome).p(8)

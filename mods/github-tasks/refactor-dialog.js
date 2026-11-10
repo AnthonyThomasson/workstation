@@ -86,7 +86,7 @@ export class RefactorDialog {
     this.onChange();
   }
 
-  empty() { return this.loaded && !this.rows.length; }
+  empty() { return this.loaded && !this.rows.length && !this.error; } // no types, and not because reading them failed
 
   choose(key) {
     if (this.starting || !this.rows.some((r) => r.key === key)) return;

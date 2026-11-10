@@ -11,7 +11,7 @@ import { AGENT_KEY, ENTER_HINT, NewTaskDialog, PROMPT, TITLE, chooseAgent, boxRo
 import { PRESS_BUTTONS } from "./popup.js";
 import { S, stop, action, gh } from "./ui.js";
 
-const stopPresses = (el, except) => PRESS_BUTTONS.filter((b) => b !== except).reduce((e, b) => e.on_mouse_down(b, stop), el);
+export const stopPresses = (el, except) => PRESS_BUTTONS.filter((b) => b !== except).reduce((e, b) => e.on_mouse_down(b, stop), el);
 
 // Starts the New Task session for `description` from what the sidebar passed (newTaskProps). Throws with a message for the person:
 // no agent installed, a space on another machine, no folder, anything startInvestigation refuses. refactor: { type, focus } from the

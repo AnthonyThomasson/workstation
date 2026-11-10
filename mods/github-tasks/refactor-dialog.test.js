@@ -151,6 +151,7 @@ test("a failure to read the types is shown and Start stays off", () => {
   assert.equal(d.loaded, true);
   assert.equal(d.error, "Permission denied");
   assert.equal(d.canStart(), false);
+  assert.equal(d.empty(), false); // only the error shows, not the "No refactor types yet" text
 });
 
 test("the focus box shows as many rows as fit inside its 54px, at least one", () => {
