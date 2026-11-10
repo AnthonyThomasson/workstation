@@ -32,7 +32,7 @@ export const escStep = ({ starting }) => (starting ? "ignore" : "close");
 export const labelsLine = (d) => `Matched on labels: ${d.labels.length ? d.labels.join(", ") : "none"}`;
 export const scopeBadge = (w) => (w.scope === "global" ? "Global" : "Repo");
 export const rowDetail = (w) => (w.trigger.labels.length ? `${w.trigger.match === "all" ? "All of" : "Any of"}: ${w.trigger.labels.join(", ")}` : "Fallback: no labels");
-export const STARTING = "Getting the branch ready and starting the orchestrator…";
+export const STARTING = "Getting the branch ready and starting the Task Orchestrator…";
 
 // What the dialog shows now: its title, which body (loading, the error alone, the starting message, the list of workflows, or the
 // explanation that there is none), the error to show above the list, and the explanation's lines.

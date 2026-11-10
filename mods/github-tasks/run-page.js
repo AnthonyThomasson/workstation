@@ -108,15 +108,15 @@ export class RunPage {
         .child(`${needsYou === 1 ? "An agent is" : `${needsYou} agents are`} waiting for you. Click to answer.`)))
       .child(div().id("workflow-run-agents").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(8).py(10).gap(14)
-          .child(this.renderSection(t, "Workers", workers, "The orchestrator hasn't started a worker yet."))
+          .child(this.renderSection(t, "Workers", workers, "The Task Orchestrator hasn't started a worker yet."))
           .child(this.renderSection(t, "Reviewers", reviewers, "Reviewers start once the work is done."))
-          .child(this.renderSection(t, "Investigators", investigators, "The orchestrator hasn't started an investigator."))));
+          .child(this.renderSection(t, "Investigators", investigators, "The Task Orchestrator hasn't started an investigator."))));
   }
 
   renderHeader(t, lead, cx, workers = [], reviewers = [], investigators = []) {
     const ended = !lead?.live;
     const color = ended ? t.dim : statusColor(lead.status, t);
-    const words = ended ? "Ended. Its agents ended with it, and the work stays on the branch." : `Orchestrator: ${statusLabel(lead.status)}`;
+    const words = ended ? "Ended. Its agents ended with it, and the work stays on the branch." : `Task Orchestrator: ${statusLabel(lead.status)}`;
     return v_flex().flex_none().px(16).py(12).gap(4).border_b(1).border_color(t.border)
       .child(div().truncate().text_size(S().title).font_semibold().child(this.title))
       .child(div().truncate().text_size(S().secondary).text_color(t.muted).child([this.workflow, this.branch].filter(Boolean).join(" · ")))
@@ -222,7 +222,7 @@ export class RunPage {
       .when(Boolean(said), (el) => el.child(h_flex().gap(8).items_center()
         .child(div().id("run-merge-note").min_w(0).text_size(S().secondary).text_color(t.muted).tooltip(said.detail).child(said.text))
         .when(Boolean(this.fixing), (el) => el.child(div().id("run-merge-dismiss").flex_none().text_size(S().secondary).text_color(t.foreground).cursor_pointer()
-          .hover((s) => s.text_color(t.muted)).tooltip("Stop waiting for the orchestrator: Merge works again.").on_mouse_down("left", stop)
+          .hover((s) => s.text_color(t.muted)).tooltip("Stop waiting for the Task Orchestrator: Merge works again.").on_mouse_down("left", stop)
           .on_click((_e, cx) => this.dismissFixing(cx)).child("Dismiss")))))
       .when(red, (el) => el.child(v_flex().gap(2)
         .child(div().id("run-merge-error").text_size(S().secondary).text_color(t.blocked).child(this.failure.error))
@@ -284,7 +284,7 @@ export class RunPage {
         let record;
         if (lead?.live) {
           const sent = await hc(["send", lead.address, fixMessage(input)]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
-          if (sent.code !== 0) throw new Error(`Couldn't hand it to the orchestrator: ${out(sent) || "hc send failed"}`);
+          if (sent.code !== 0) throw new Error(`Couldn't hand it to the Task Orchestrator: ${out(sent) || "hc send failed"}`);
           record = fixingStart({ failure, status: lead.status, turn: lead.turn });
         } else {
           await this.restartLead(restartTask({ runDir: `${home()}/.herdr/workflow-runs/${this.id}`, ...input }));
@@ -325,7 +325,7 @@ export class RunPage {
         if (parts?.left) await app("terminal.show", { terminal: address, pane: parts.left }); // no tab left: View connects it
       },
     }, { id: this.id, key: this.props.ticketLabel, workDir: this.folder, argv: this.props.orchestratorArgv, task, props: this.props });
-    if (problems.length) notify({ title: "The new orchestrator started, with a problem", body: problems.join(" "), level: "warning" });
+    if (problems.length) notify({ title: "The new Task Orchestrator started, with a problem", body: problems.join(" "), level: "warning" });
   }
 
   // Works out what a failed Merge turns into: a red button with a fix label (mergeFailure), or plain red text when the work is

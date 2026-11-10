@@ -16,7 +16,7 @@ export function sessionFolder(home, id) {
   return `${String(home).replace(/\/+$/, "")}/.herdr/investigations/${id}`;
 }
 
-// What the New Task agent may run without asking, in Claude's terms: the spawn script and the hc commands it needs to hear from
+// What the New Task Orchestrator may run without asking, in Claude's terms: the spawn script and the hc commands it needs to hear from
 // its helpers and end them. Bare `hc run` is left out: it would run anything.
 export const NEW_TASK_PLUMBING = (dir) => [`Bash(${dir}/spawn:*)`, "Bash(hc send:*)", "Bash(hc read:*)", "Bash(hc wait:*)", "Bash(hc ls:*)", "Bash(hc kill:*)"];
 
@@ -29,7 +29,7 @@ export function subAgentArgv(role, settings, known, dir) {
   return role === "investigator" ? readOnlyArgv(own, base, dir) : agentArgv("worker", own, base, dir);
 }
 
-// The New Task agent's command: the one New Task always opened (model.js groomArgv) and, when it is Claude and has a session folder,
+// The New Task Orchestrator's command: the one New Task always opened (model.js groomArgv) and, when it is Claude and has a session folder,
 // the right to run that folder's spawn script and hc. Nothing is restricted: in local mode it writes the task's file itself.
 export function newTaskAgentArgv(agent, groomer, dir) {
   const argv = groomArgv(agent.key, agent.run, groomer ?? {});
@@ -42,8 +42,8 @@ export function newTaskAgentArgv(agent, groomer, dir) {
 export function newTaskInvestigatorPrompt({ workDir, repoRoot, branch }) {
   return [
     "# You are an investigator for a New Task session", "",
-    "Investigate read-only: edit nothing, commit nothing and check out no other commit. Explore the session worktree to answer the New Task agent's brief, saying what you found with its file, line and proof. Send your findings to it with `hc send` and as your last message, then stay available for follow-up questions.", "",
-    `- You work in the session worktree ${workDir} on ${branch}, the same one as the New Task agent; read and search it freely, see an old file with \`git show <commit>:<path>\`, and run the repo's tests if that helps.`,
+    "Investigate read-only: edit nothing, commit nothing and check out no other commit. Explore the session worktree to answer the New Task Orchestrator's brief, saying what you found with its file, line and proof. Send your findings to it with `hc send` and as your last message, then stay available for follow-up questions.", "",
+    `- You work in the session worktree ${workDir} on ${branch}, the same one as the New Task Orchestrator; read and search it freely, see an old file with \`git show <commit>:<path>\`, and run the repo's tests if that helps.`,
     "- Never push, merge or open a pull request.",
     `- Stay out of the main checkout ${repoRoot}, and don't start other agents.`,
   ].join("\n");
@@ -52,7 +52,7 @@ export function newTaskInvestigatorPrompt({ workDir, repoRoot, branch }) {
 export function newTaskWorkerPrompt({ workDir, repoRoot, branch }) {
   return [
     "# You are a prototype worker for a New Task session", "",
-    "Build a throwaway prototype of what the New Task agent's brief asks, in your own worktree, so it can find out whether the idea works. Commit as you go, never push, merge or open a pull request, and when you are done send the New Task agent what you built, your commits and what you learned with `hc send`. Your code is discarded when the person presses Done and never becomes the ticket's work, so build only as much as answers the brief.", "",
+    "Build a throwaway prototype of what the New Task Orchestrator's brief asks, in your own worktree, so it can find out whether the idea works. Commit as you go, never push, merge or open a pull request, and when you are done send the New Task Orchestrator what you built, your commits and what you learned with `hc send`. Your code is discarded when the person presses Done and never becomes the ticket's work, so build only as much as answers the brief.", "",
     `- You start in your own worktree, whose path ends in \`--\` and your job's name (it begins with ${workDir}) and which is on a branch that ends the same way (it begins with ${branch}), cut from the session branch ${branch}; leave the session worktree ${workDir} and the main checkout ${repoRoot} alone.`,
     "- Don't start other agents.",
   ].join("\n");
@@ -129,7 +129,7 @@ fi
 term="$session_id-$name"
 hc run --bg --name "$term" --cwd "$cwd" --label "${INVESTIGATION_LABEL}=$session_id" --label "${ROLE_LABEL}=$role" --label "${NAME_LABEL}=$name" --label "${FOLDER_LABEL}=$cwd" -- "$@" >/dev/null || { echo "spawn: could not start $term" >&2; exit 1; }
 hc wait "$term" --timeout 60 >/dev/null 2>&1 || true
-message="Read $session_dir/$role.md and follow it. The New Task agent that started you is the terminal \${HC_TERMINAL_ID:-that started you}; reach it with hc send.
+message="Read $session_dir/$role.md and follow it. The New Task Orchestrator that started you is the terminal \${HC_TERMINAL_ID:-that started you}; reach it with hc send.
 
 Your brief:
 

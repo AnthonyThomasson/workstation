@@ -16,7 +16,7 @@ export const DOCTOR_KEY = "github-tasks.doctor"; // { issues, repo, project }: w
 //   carried        the project, status and label issues of the last check of this same place, kept for whatever above is not known
 //   auth           { installed, signedIn: true | false | null (not known), scopes: [string] | null (gh did not list them) } | undefined
 //   agents         what knownAgents() knows: [{ key, installed }] | null (not known)
-//   groomerAgent   the task agent saved on the settings page, or null
+//   groomerAgent   the New Task Orchestrator agent saved on the settings page, or null
 //   source         "local" when the repo's tasks are local files: no project, status or label checks, no gh-scope, and gh-auth only
 //                  when githubRemote (the repo's origin is on GitHub); anything else is github, as it always was
 //   workflows      { items: [workflow], errors: ["file.yaml: why"] } as store.loadAll gives them
@@ -95,8 +95,8 @@ function checkAgents(agents, groomerAgent, items) {
   const missing = new Set(agents.filter((a) => !a.installed).map((a) => a.key));
   const uses = new Map(); // agent key -> what uses it, in the order found
   const add = (agent, user) => { if (agent && agent !== CUSTOM && missing.has(agent)) uses.set(agent, [...(uses.get(agent) ?? []), user]); };
-  add(groomerAgent, "Task agent");
-  for (const w of items) for (const role of ROLES) add(w[role]?.agent, `${w.name} ${ROLE_LABELS[role].toLowerCase()}`);
+  add(groomerAgent, "New Task Orchestrator");
+  for (const w of items) for (const role of ROLES) add(w[role]?.agent, `${w.name} ${role === "orchestrator" ? "Task Orchestrator" : ROLE_LABELS[role].toLowerCase()}`);
   return [...uses].map(([agent, usedBy]) => ({
     kind: "agent-missing", agent, usedBy, message: `The agent "${agent}" isn't installed (used by ${usedBy.join(", ")}).`,
   }));

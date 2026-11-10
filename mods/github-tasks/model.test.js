@@ -305,7 +305,7 @@ test("newTaskStart: the typed description is trimmed and left otherwise as typed
   assert.equal(newTaskStart(undefined), WAIT_LINE);
 });
 
-test("the investigators' and workers' settings have their own keys, distinct from the New Task agent's", () => {
+test("the investigators' and workers' settings have their own keys, distinct from the New Task Orchestrator's", () => {
   assert.equal(INVESTIGATOR_KEY, "github-tasks.investigator");
   assert.equal(WORKER_KEY, "github-tasks.protoWorker");
   assert.equal(new Set([INVESTIGATOR_KEY, WORKER_KEY, GROOMER_KEY]).size, 3);
@@ -318,5 +318,5 @@ test("a sub-agent's saved settings default to claude, the agent's own model and 
   assert.deepEqual(normalizeSubAgent({ model: "opus" }), { agent: "claude", model: "opus", effort: "medium" });
   assert.equal(normalizeSubAgent({ agent: "custom" }).agent, "claude", "a custom command has no place here");
   assert.deepEqual(normalizeSubAgent({ agent: "kimi", extra: 1 }), { agent: "kimi", model: "", effort: "medium" }, "old or unknown fields are dropped");
-  assert.deepEqual(normalizeGroomer(undefined), { agent: null, model: "", effort: "medium" }, "the New Task agent's own default is unchanged");
+  assert.deepEqual(normalizeGroomer(undefined), { agent: null, model: "", effort: "medium" }, "the New Task Orchestrator's own default is unchanged");
 });

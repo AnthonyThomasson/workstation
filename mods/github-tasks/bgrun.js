@@ -53,10 +53,10 @@ export function parseStarted(stdout) {
 // The program the tab's own terminal runs: a note, then it waits for ever (a program that exits closes its pane).
 // The orchestrator is shown over it, so the note only reads when the connection is lost; it says nothing about the run's
 // state, which may well have ended by then.
-// kind: "run" (the default), "investigation" (investigate.js: the tab of a New Task agent, which works like a run's), or
+// kind: "run" (the default), "investigation" (investigate.js: the tab of a New Task Orchestrator, which works like a run's), or
 // "investigation-ended" (the same tab opened again after its agent ended on its own: it says so).
 const NOTES = {
-  run: (a) => `This tab shows orchestrator ${a} of the run. When it is not showing, View reconnects it.`,
+  run: (a) => `This tab shows Task Orchestrator ${a} of the run. When it is not showing, View reconnects it.`,
   investigation: (a) => `This tab shows agent ${a} of an investigation. When it is not showing, View reconnects it.`,
   "investigation-ended": (a) => `Agent ${a} of this investigation has ended. Press Done to remove its worktree and branch.`,
 };
@@ -278,7 +278,7 @@ const why = (e) => String(e?.message ?? e);
 //   agent's terminal is shown if the app still has it, and not being able to show it is no failure.
 export async function connectRun(deps, { id, orchestrator, name, space, spaceName, folder, props, existing = null, kind = "run" }) {
   const ended = kind === "investigation-ended";
-  const who = kind.startsWith("investigation") ? "agent" : "orchestrator";
+  const who = kind.startsWith("investigation") ? "agent" : "Task Orchestrator";
   let made = null, tab = existing?.tab, left = existing?.left ?? null, page = existing?.page ?? null, createdSpace = false;
   try {
     if (!existing) {
@@ -321,7 +321,7 @@ export async function connectRun(deps, { id, orchestrator, name, space, spaceNam
     const held = ended ? null : await holdShown(deps, { orchestrator, left, show });
     if (held === false) deps.warn?.(who === "agent"
       ? `The agent ${orchestrator} may not be showing in its tab yet. Click its row under Investigations to show it again; the agent itself is going.`
-      : `The orchestrator ${orchestrator} may not be showing in its tab yet. Press View on the ticket to show it again; the run itself is going.`);
+      : `The Task Orchestrator ${orchestrator} may not be showing in its tab yet. Press View on the ticket to show it again; the run itself is going.`);
     return createdSpace ? { ...slot, created: true } : slot;
   } catch (e) {
     if (made) {
@@ -357,7 +357,7 @@ export async function waitReady({ hc, orchestrator, tries = 3, timeout = 20 }) {
     let got = null;
     try { got = JSON.parse(r.stdout); } catch { /* no answer to read: wait again */ }
     if (["idle", "done", "blocked"].includes(got?.status)) return { ok: true };
-    if (got && (got.exit_code != null || ["exit", "exited", "killed", "ended"].includes(got.reason))) return { ok: false, why: `the orchestrator ended while starting (${got.reason ?? "exit"})` };
+    if (got && (got.exit_code != null || ["exit", "exited", "killed", "ended"].includes(got.reason))) return { ok: false, why: `the Task Orchestrator ended while starting (${got.reason ?? "exit"})` };
   }
   return { ok: true, unconfirmed: true };
 }
@@ -421,7 +421,7 @@ export async function endRun({ id, orchestrator, hc, terminals, run, slot, space
 //   start throws with the reason before anything is started, so there is nothing to take back but what the caller made (a start
 //   with no openHost to call fails the same way);
 //   who: what the messages call the agent. Resolves with { orchestrator, problems, host }.
-export async function launchRun(deps, { id, key, workDir, argv, task, props, runArgs = orchestratorRunArgs, who = "orchestrator", hostRequired = false }) {
+export async function launchRun(deps, { id, key, workDir, argv, task, props, runArgs = orchestratorRunArgs, who = "Task Orchestrator", hostRequired = false }) {
   const problems = [];
   let host = null;
   if (deps.openHost) {
@@ -463,14 +463,14 @@ export async function launchRun(deps, { id, key, workDir, argv, task, props, run
 //   key (the ticket label) and argv (the orchestrator's command): as start.js saved them in pane.json; without them the run can't be started again.
 //   Resolves with { orchestrator, problems }.
 export async function restartOrchestrator(deps, { id, key, workDir, argv, task, props }) {
-  if (!key || !Array.isArray(argv) || !argv.length) throw new Error("This run's orchestrator can't be started again: it was started before the command that opens it was saved. Fix it by hand.");
+  if (!key || !Array.isArray(argv) || !argv.length) throw new Error("This run's Task Orchestrator can't be started again: it was started before the command that opens it was saved. Fix it by hand.");
   const parent = deps.findHost?.()?.address ?? null;
   const started = await deps.hc(orchestratorRunArgs({ id, key, workDir, argv, parent })).catch((e) => ({ code: 1, stdout: "", stderr: why(e) }));
   const orchestrator = started.code === 0 ? parseStarted(started.stdout) : null;
-  if (!orchestrator) throw new Error(`The orchestrator didn't start: ${String(started.stderr || started.stdout || "").trim() || "hc gave no address"}`);
+  if (!orchestrator) throw new Error(`The Task Orchestrator didn't start: ${String(started.stderr || started.stdout || "").trim() || "hc gave no address"}`);
   const problems = [];
   try { await deps.writePaneJson({ ...props, orchestrator }); }
-  catch (e) { problems.push(`The run's pane.json wasn't updated with the new orchestrator: ${why(e)}. View may connect to the old address until it is.`); }
+  catch (e) { problems.push(`The run's pane.json wasn't updated with the new Task Orchestrator: ${why(e)}. View may connect to the old address until it is.`); }
   deps.saveOrchestrator(orchestrator);
   try { await deps.show(orchestrator); }
   catch (e) { problems.push(`It isn't showing in the run's tab: ${why(e)}. It is running; View shows it.`); }
@@ -480,9 +480,9 @@ export async function restartOrchestrator(deps, { id, key, workDir, argv, task, 
     throw new Error(message);
   };
   const ready = await waitReady({ hc: deps.hc, orchestrator });
-  if (!ready.ok) await abort(`The new orchestrator didn't start properly, so it was ended: ${ready.why}`);
+  if (!ready.ok) await abort(`The new Task Orchestrator didn't start properly, so it was ended: ${ready.why}`);
   const sent = await deps.hc(["send", orchestrator, task]).catch((e) => ({ code: 1, stdout: "", stderr: why(e) }));
-  if (sent.code !== 0) await abort(`The new orchestrator didn't take its task, so it was ended: ${String(sent.stderr || sent.stdout || "").trim() || "hc send failed"}`);
+  if (sent.code !== 0) await abort(`The new Task Orchestrator didn't take its task, so it was ended: ${String(sent.stderr || sent.stdout || "").trim() || "hc send failed"}`);
   return { orchestrator, problems };
 }
 

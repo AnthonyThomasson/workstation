@@ -54,7 +54,7 @@ export function localNewTaskPrompt({ mainRoot, todoDir, upNextDir, nextId, descr
   const name = String(mainRoot ?? "").split("/").filter(Boolean).pop() || "<repo>";
   const example = `${nextId}-fix-login-redirect.yml`;
   return [
-    `# You are helping the person write a new task for ${name}`, "",
+    `# You are the New Task Orchestrator, helping the person write a new task for ${name}`, "",
     "## Context", "",
     `- The repo is at ${mainRoot || "<repo>"}. You are working in its folder, so you can read the code.`,
     "- Its tasks are YAML files on this computer, not GitHub issues. The folder a file is in is the task's status.",

@@ -69,16 +69,16 @@ test("#57 with a parent the agent outlives it, types no notes into it, and has n
 test("#57 the host tab is named for the first line of the description cut at 40, or New task", () => {
   assert.equal(investigationHostName("Fix the login redirect\nmore"), "Fix the login redirect agents");
   assert.equal(investigationHostName("  \n\n  Second line first"), "Second line first agents");
-  assert.equal(investigationHostName(""), "New task agents");
-  assert.equal(investigationHostName(undefined), "New task agents");
+  assert.equal(investigationHostName(""), "New Task Orchestrator agents");
+  assert.equal(investigationHostName(undefined), "New Task Orchestrator agents");
   const long = "Investigate why the sidebar flickers when a run ends";
   assert.equal(investigationHostName(long), `${long.slice(0, 40).trimEnd()} agents`);
 });
 
-test("#57 start with no description: the host is New task agents", async () => {
+test("#57 start with no description: the host is New Task Orchestrator agents", async () => {
   const f = fakeStart();
   await beginInvestigation(f.deps, { ...ARGS, description: "" });
-  assert.equal(f.hostCalls[0].name, "New task agents");
+  assert.equal(f.hostCalls[0].name, "New Task Orchestrator agents");
 });
 
 test("#57 the host carries its own label, never the agent's", () => {
@@ -224,7 +224,7 @@ test("one agent that can't be shown doesn't stop the rest", async () => {
 
 test("a run's tab finder and an investigation's placeholder agree: the placeholder says it is an investigation's", () => {
   assert.match(placeholderArgv("t7", "investigation")[2], /agent t7 of an investigation/);
-  assert.match(placeholderArgv("t7")[2], /orchestrator t7 of the run/, "a run's note is unchanged");
+  assert.match(placeholderArgv("t7")[2], /Task Orchestrator t7 of the run/, "a run's note is unchanged");
 });
 
 // ---- Starting ------------------------------------------------------------------------------------------
@@ -629,7 +629,7 @@ test("Done goes on when the agent's kill exits 0 even if terminals() still lists
   assert.match((await endInvestigation(g.deps, entryOf(t))).error, /^Couldn't end the agent t1: terminal busy\./);
 });
 
-test("Done ends the New Task agent before it lists the sub-agents, so one started a moment before the agent died is found too", async () => {
+test("Done ends the New Task Orchestrator before it lists the sub-agents, so one started a moment before the agent died is found too", async () => {
   const s = await scratch();
   const f = fakeDone(s, { terms: [sub("t2")] });
   const hc = f.deps.hc;
@@ -694,11 +694,11 @@ test("Done ends every sub-agent of the session (found by label, not parentage), 
   const f = fakeDone(s, { terms });
   assert.equal((await endInvestigation(f.deps, entryOf(s))).done, true);
   const kills = f.log.filter((l) => l.startsWith("hc kill"));
-  assert.deepEqual(kills, ["hc kill t1", "hc kill t2", "hc kill t3"], "the New Task agent first, so it can't start more");
+  assert.deepEqual(kills, ["hc kill t1", "hc kill t2", "hc kill t3"], "the New Task Orchestrator first, so it can't start more");
   assert.deepEqual(f.log.filter((l) => l.startsWith("hc rm")), ["hc rm t1", "hc rm t2", "hc rm t3", "hc rm t6"], "and the finished sub-agent's terminal is removed too");
 });
 
-test("Done ends the sub-agents even when the New Task agent has already ended", async () => {
+test("Done ends the sub-agents even when the New Task Orchestrator has already ended", async () => {
   const s = await scratch();
   const f = fakeDone(s, { terms: [sub("t2"), sub("t3", "worker")], killed: { code: 1, stdout: "", stderr: "no such terminal" } });
   const got = await endInvestigation(f.deps, entryOf(s));
@@ -707,7 +707,7 @@ test("Done ends the sub-agents even when the New Task agent has already ended", 
   assert.deepEqual(f.deps.terminals(), []);
 });
 
-test("Done leaves the New Task agent's own terminal to its own step: it isn't counted among the sub-agents", async () => {
+test("Done leaves the New Task Orchestrator's own terminal to its own step: it isn't counted among the sub-agents", async () => {
   const s = await scratch();
   const agent = { address: "t1", state: "live", labels: { [INVESTIGATION_LABEL]: "inv-1", "herdr.role": "investigation" } };
   const f = fakeDone(s, { terms: [agent, sub("t2")] });

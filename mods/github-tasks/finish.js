@@ -225,7 +225,7 @@ export const fixingStart = ({ failure, status, turn }) => {
 };
 
 // What the page says under the disabled Merge while the orchestrator is fixing it.
-export const fixingNote = (fixing) => `The orchestrator is fixing it (${fixing.label}). Merge comes back when it is done.`;
+export const fixingNote = (fixing) => `The Task Orchestrator is fixing it (${fixing.label}). Merge comes back when it is done.`;
 
 // Whether the "orchestrator is fixing it" state is over. fixing: the record (fixingStart); status: the orchestrator's status
 // word; live: whether its terminal is still there; turn: its turn counter now. Returns the record to keep, or null when the state
