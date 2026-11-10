@@ -1,6 +1,6 @@
 // Pure state and prompt selection for the Task settings sections and their read-only prompt tabs.
-import { newTaskPrompt, spelled, STATUSES } from "./model.js";
-import { localNewTaskPrompt } from "./local-ui.js";
+import { newTaskPrompt, refactorPrompt, spelled, STATUSES } from "./model.js";
+import { localNewTaskPrompt, localRefactorPrompt } from "./local-ui.js";
 import { orchestratorPrompt, workerPrompt, reviewerPrompt, investigatorPrompt } from "./run.js";
 import { newTaskInvestigatorPrompt, newTaskWorkerPrompt } from "./investigation-spawn.js";
 
@@ -11,7 +11,7 @@ export const SETTINGS_GROUPS = [
   { key: "orchestrators", label: "Orchestrators", entries: [
     { role: "newTask", label: "New Task", title: "New Task Orchestrator", note: null },
     { role: "orchestrator", label: "Task", title: "Task Orchestrator", note: "Runs a workflow: plans it, starts Workers, Reviewers and Investigators, and decides what to fix." },
-    { role: "refactor", label: "Refactor", title: "Refactor Orchestrator", note: "Runs a refactor type and starts Investigators." },
+    { role: "refactor", label: "Refactor", title: "Refactor Orchestrator", note: "Runs a refactor type, and starts Investigators and Workers (prototypes)." },
   ] },
   { key: "agents", label: "Agents", entries: [
     { role: "worker", label: "Worker", title: "Worker", note: "Started by the Task Orchestrator, used only in workflow runs: does one job the Task Orchestrator gives it." },
@@ -41,25 +41,25 @@ export function promptTitle(role) {
   return entry ? `${entry.title} prompt` : SUB_TITLES[role] ? `${SUB_TITLES[role]} prompt` : "Prompt";
 }
 
-// What a prompt tab says in place of a prompt that has none yet (null for the roles that have one).
-export function promptPlaceholder(role) {
-  if (role !== "refactor") return null;
-  return "The built-in prompt comes with the Refactor Orchestrator ticket. There is no prompt text yet.";
-}
-
 // local: { mainRoot, todoDir, upNextDir } when the repo's tasks are local files; the id is a placeholder, as a run's are.
-// "newTask" is the New Task Orchestrator's; "newTaskInvestigator" and "newTaskWorker" are what its investigators and prototype workers read.
+// "newTask" is the New Task Orchestrator's; "refactor" is the Refactor Orchestrator's, for a sample refactor type; "newTaskInvestigator" and "newTaskWorker" are what its investigators and prototype workers read.
 export function promptForRole(role, { repo = "", project = null, options = [], local = null } = {}) {
   if (role === "newTask" && local) return localNewTaskPrompt({ ...local, nextId: "<next id>", agentsDir: SESSION_FOLDER });
   if (role === "newTask") {
     return newTaskPrompt({ repo, project, backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed), agentsDir: SESSION_FOLDER });
   }
+  if (role === "refactor" && local) return localRefactorPrompt({ ...local, nextId: "<next id>", type: SAMPLE_REFACTOR, agentsDir: SESSION_FOLDER });
+  if (role === "refactor") {
+    return refactorPrompt({ repo, project, backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed), type: SAMPLE_REFACTOR, agentsDir: SESSION_FOLDER });
+  }
   if (role === "newTaskInvestigator") return newTaskInvestigatorPrompt(SESSION);
   if (role === "newTaskWorker") return newTaskWorkerPrompt(SESSION);
-  if (role === "refactor") return null; // see promptPlaceholder
   const build = { orchestrator: orchestratorPrompt, worker: workerPrompt, reviewer: reviewerPrompt, investigator: investigatorPrompt }[role];
   return build ? clean(build(SAMPLE)).trim() : null;
 }
+
+// The refactor type the Refactor Orchestrator's prompt tab is drawn for.
+const SAMPLE_REFACTOR = { name: "<refactor type name>", orchestrator: { prompt: "<the refactor type's orchestrator prompt goes here>" } };
 
 // What a session fills in: its folder, worktree and branch are placeholders, as a run's are.
 const SESSION_FOLDER = "<session folder>";

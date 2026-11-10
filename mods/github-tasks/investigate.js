@@ -10,8 +10,9 @@ import { mainCheckout, prepareWorktree } from "./worktree.js";
 import { app } from "./ui.js";
 import { localTasks } from "./local-tasks-env.js";
 import { statusDir } from "./local-tasks.js";
-import { localNewTaskPrompt } from "./local-ui.js";
-import { newTaskPrompt } from "./model.js";
+import { localNewTaskPrompt, localRefactorPrompt } from "./local-ui.js";
+import { newTaskPrompt, refactorPrompt } from "./model.js";
+import { normalize as normalizeRefactor } from "./refactor-model.js";
 import { out, worktreePath } from "./run.js";
 import { sessionFolder } from "./investigation-spawn.js";
 import {
@@ -29,15 +30,18 @@ const HOST_NOTE = "Host of this session's agents in the Agents panel. Ends when 
 // an agent coming and going within a poll. `where`: { repoRoot, repo }.
 export const investigationsHere = (where) => investigationsFor(shared(INVESTIGATIONS_KEY), where, terminals());
 
-// The first message of the agent: the New Task prompt for GitHub tickets, or for local tasks with the folders and the next id.
+// The first message of the agent: the New Task prompt for GitHub tickets, or for local tasks with the folders and the next id; the Refactor
+// Orchestrator's instead when `refactor` is set.
 // agentsDir: the session's folder, with the spawn script the prompt tells it about.
-async function promptFor({ description, repo, project, settings, local }, agentsDir) {
-  if (!local) return newTaskPrompt({ repo, project, backlog: settings?.backlog, groomed: settings?.groomed, description, agentsDir });
+async function promptFor({ description, repo, project, settings, local, refactor }, agentsDir) {
+  const type = refactor && normalizeRefactor(refactor.type), focus = refactor?.focus ?? "";
+  if (!local) {
+    const common = { repo, project, backlog: settings?.backlog, groomed: settings?.groomed, agentsDir };
+    return type ? refactorPrompt({ ...common, type, focus }) : newTaskPrompt({ ...common, description });
+  }
   const nextId = await localTasks(local.mainRoot).nextId();
-  return localNewTaskPrompt({
-    mainRoot: local.mainRoot, nextId, description, agentsDir,
-    todoDir: statusDir(home(), local.mainRoot, "to-do"), upNextDir: statusDir(home(), local.mainRoot, "up-next"),
-  });
+  const place = { mainRoot: local.mainRoot, nextId, agentsDir, todoDir: statusDir(home(), local.mainRoot, "to-do"), upNextDir: statusDir(home(), local.mainRoot, "up-next") };
+  return type ? localRefactorPrompt({ ...place, type, focus }) : localNewTaskPrompt({ ...place, description });
 }
 
 // Writes the session's folder: the spawn script (runnable) and the prompts its helpers read. Throws with the reason.
@@ -59,7 +63,7 @@ async function removeSession(dir) {
 // panel lists it; a host that won't open fails the start. It works from a ticket's worktree space too (the branch
 // is cut in the repo's main checkout). Throws with a message for the person when it can't, with nothing left behind.
 //   args: { agent (of knownAgents()), description, repo, project, settings: { backlog, groomed }, groomer, subAgents: { investigator, worker } (their
-//           saved settings), where: { cwd, on }, local: { mainRoot } | null }
+//           saved settings), where: { cwd, on }, local: { mainRoot } | null, refactor: { type, focus } | null (investigations.js beginInvestigation) }
 //   Resolves with { entry } (investigations.js has its shape).
 export async function startInvestigation(args, cx) {
   let id = null, created = null, sessionId = null;

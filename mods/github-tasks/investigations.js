@@ -12,7 +12,8 @@
 import { FOLDER_LABEL, ROLE_LABEL, shQuote } from "./run.js";
 import { slug } from "./workflow-model.js";
 import { normalizeSubAgent } from "./model.js";
-import { INVESTIGATION_LABEL, newTaskAgentArgv, sessionFiles, sessionFolder, subAgentArgv } from "./investigation-spawn.js";
+import { INVESTIGATION_LABEL, newTaskAgentArgv, refactorAgentArgv, sessionFiles, sessionFolder, subAgentArgv } from "./investigation-spawn.js";
+import { normalize as normalizeRefactor, validate as validateRefactor } from "./refactor-model.js";
 import { endHost, findTicketSpace, launchRun, runTabParts } from "./bgrun.js";
 import { row as terminalRow } from "./runview.js";
 
@@ -41,6 +42,13 @@ export const investigationBranch = (description, now = Date.now()) => `investiga
 
 // The session's host tab name: its description's first line cut at 40 and trimmed, and " agents" (`New task agents` with no description).
 export const investigationHostName = (description) => `${tabNameFor(firstLine(description) || "New task")} agents`;
+
+// A refactor session's names. Label (the sidebar row, the tab and space, and the host's name before " agents"): `Refactor · <Name>`, with
+// `: <first line of the focus>` when there is one; the tab and host cut it at 40 as for any session. Branch: `investigate/refactor-<type id>-<time>`,
+// the id cut so that `refactor-<id>` is 40 at most. It starts investigate/, so Done accepts it as it does any session's.
+export const refactorLabel = (type, focus) => `Refactor · ${type.name}${firstLine(focus) ? `: ${firstLine(focus)}` : ""}`;
+export const refactorBranch = (type, now = Date.now()) => `investigate/${slug(`refactor-${type.id || slug(type.name)}`, 40)}-${now.toString(36)}`;
+export const refactorHostName = (type, focus) => `${tabNameFor(refactorLabel(type, focus))} agents`;
 
 // `hc run` for the agent: in the background, owned by no tab (none of the herdr.space / herdr.tab labels that would adopt it into a
 // pane), labelled so it can be found again. Under `parent` (the session's host, bgrun.js) it outlives it and types no notes into it,
@@ -120,10 +128,18 @@ export async function reapplyInvestigations({ saved, terminals, slot, spaces, pa
 // ---- Starting one -------------------------------------------------------------------------------------
 
 // What Start checks first, before anything is made. Throws with a message for the person.
-export function checkStart({ agent, where }) {
+// A refactor session runs the agent its type names, so it needs none chosen here (refactor: set).
+export function checkStart({ agent, where, refactor = null }) {
   if (where?.on) throw new Error(`This space is on ${where.on}. Tasks' agents only start on this computer for now.`);
   if (!where?.cwd) throw new Error("This space has no folder to work in.");
-  if (!agent?.run?.length) throw new Error("Pick an agent that is installed on this computer.");
+  if (!refactor && !agent?.run?.length) throw new Error("Pick an agent that is installed on this computer.");
+}
+
+// The refactor type as a session runs it (refactor-model.js's shape), or throws, with nothing made, saying what is missing from it.
+function refactorTypeOf(raw) {
+  const type = normalizeRefactor(raw), problems = validateRefactor(type);
+  if (problems.length) throw new Error(`The ${type.name || "refactor"} refactor can't start: ${problems.map((p) => p.message).join(" ")}`);
+  return type;
 }
 
 // Makes the branch and worktree and the session's folder (sessionFolder: the spawn script and the prompts of the helpers the agent may
@@ -131,7 +147,8 @@ export function checkStart({ agent, where }) {
 // exists. Throws with a message for the person, having taken back what it made: the agent, the host and the tab (launchRun), the saved
 // entry, the session folder, the worktree and the branch (all brand new, so nothing of the person's is in them). A host that won't open
 // fails the start, with the reason, before the agent is started (and with no openHost to call, the start fails the same way).
-//   args: { agent (an entry of knownAgents()), description, repo, groomer ({ model, effort }), subAgents ({ investigator, worker }: each { agent,
+//   args: { agent (an entry of knownAgents()), description, repo, refactor ({ type: a refactor type as refactor-model.js normalizes it, focus: string } or null: the
+//           session is then a Refactor Orchestrator's, with the type's own agents and prompts, and agent, description and groomer are not used), groomer ({ model, effort }), subAgents ({ investigator, worker }: each { agent,
 //           model, effort }, as normalizeSubAgent leaves them; the defaults when none), where ({ cwd, on }) }
 //   deps: { now(), home, mainCheckout(cwd) -> path, prepareWorktree(repoRoot, branch, target) -> path,
 //           worktreePath(repoRoot, branch, home), task(dir) -> the first message (dir: the session folder), knownAgents() -> the core's agents,
@@ -139,13 +156,15 @@ export function checkStart({ agent, where }) {
 //           load() -> saved list, save(list), guard?(id, fn) -> Promise (runs fn alone for that id), cleanup?(repoRoot, branch, workDir) -> Promise (removes a worktree and branch),
 //           openHost({ id, name, label, workDir, repoRoot }) -> host (throws; the agent's parent; saves the host's record), closeHost(host) (ends it, clears the record) }
 //   Resolves with { entry, problems }.
-export async function beginInvestigation(deps, { agent, description, repo, groomer, subAgents, where }) {
-  checkStart({ agent, where });
+export async function beginInvestigation(deps, { agent, description, repo, groomer, subAgents, where, refactor = null }) {
+  checkStart({ agent, where, refactor });
   const now = deps.now();
+  const type = refactor && refactorTypeOf(refactor.type); // refused before anything is made when it can't run
+  const focus = String(refactor?.focus ?? "");
   const repoRoot = await deps.mainCheckout(where.cwd); // the main checkout, even when started from one of its worktrees
   const repoName = repo || repoRoot.split("/").filter(Boolean).pop() || "";
-  const label = investigationLabel(description, repoName);
-  const id = investigationId(now), branch = investigationBranch(description, now);
+  const label = type ? refactorLabel(type, focus) : investigationLabel(description, repoName);
+  const id = investigationId(now), branch = type ? refactorBranch(type, now) : investigationBranch(description, now);
   const dir = sessionFolder(deps.home, id);
   if (!dir) throw new Error(`Couldn't find a folder for the session's helpers: no home folder is known for ${id}.`); // before anything is made
   const task = await deps.task(dir); // before anything is made: a failure here leaves nothing behind
@@ -155,17 +174,19 @@ export async function beginInvestigation(deps, { agent, description, repo, groom
   const launchDeps = {
     hc: deps.hc, connect: deps.connect, closeTab: deps.closeTab,
     writePaneJson: async (full) => deps.save(withEntry(deps.load(), { ...base, agent: full.orchestrator })), // saved the moment the agent exists
-    openHost: deps.openHost && (() => deps.openHost({ id, name: investigationHostName(description), label, workDir, repoRoot })),
+    openHost: deps.openHost && (() => deps.openHost({ id, name: type ? refactorHostName(type, focus) : investigationHostName(description), label, workDir, repoRoot })),
     closeHost: deps.closeHost,
   };
-  const launch = () => launchRun(launchDeps, {
-    id, key: label, workDir, argv: newTaskAgentArgv(agent, groomer, dir), task, props, runArgs: investigationRunArgs, who: "agent", hostRequired: true,
-  });
   try {
     const known = await deps.knownAgents().catch(() => []);
-    const mine = { investigator: normalizeSubAgent(subAgents?.investigator), worker: normalizeSubAgent(subAgents?.worker) };
+    // In a refactor session every role is the type's own (agent, command, model, effort); otherwise the New Task settings'.
+    const mine = type ? { investigator: type.investigator, worker: type.worker } : { investigator: normalizeSubAgent(subAgents?.investigator), worker: normalizeSubAgent(subAgents?.worker) };
     const argv = { investigator: subAgentArgv("investigator", mine.investigator, known, dir), worker: subAgentArgv("worker", mine.worker, known, dir) };
-    await deps.writeSession(dir, sessionFiles({ id, dir, workDir, repoRoot, branch, argv })); // before the agent: it may use them at once
+    const launch = () => launchRun(launchDeps, {
+      id, key: label, workDir, argv: type ? refactorAgentArgv(type.orchestrator, known, dir) : newTaskAgentArgv(agent, groomer, dir), task, props, runArgs: investigationRunArgs, who: "agent", hostRequired: true,
+    });
+    const prompts = type && { investigator: type.investigator.prompt, worker: type.worker.prompt };
+    await deps.writeSession(dir, sessionFiles({ id, dir, workDir, repoRoot, branch, argv, refactor: prompts })); // before the agent: it may use them at once
     const launched = await (deps.guard ? deps.guard(id, launch) : launch()); // guarded as a whole, so View never makes a second tab meanwhile
     return { entry: { ...base, agent: launched.orchestrator }, problems: launched.problems };
   } catch (e) {

@@ -5,13 +5,13 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  NEW_TASK_PLUMBING, investigationSpawnScript, newTaskAgentArgv, newTaskInvestigatorPrompt, newTaskWorkerPrompt, sessionFiles, sessionFolder, subAgentArgv,
+  NEW_TASK_PLUMBING, investigationSpawnScript, newTaskAgentArgv, newTaskInvestigatorPrompt, newTaskWorkerPrompt, refactorAgentArgv, sessionFiles, sessionFolder, subAgentArgv,
 } from "./investigation-spawn.js";
 import { INVESTIGATION_LABEL, beginInvestigation, investigationRunArgs } from "./investigations.js";
 import { hostKey } from "./bgrun.js";
 import { shQuote, worktreePath } from "./run.js";
-import { newTaskPrompt } from "./model.js";
-import { localNewTaskPrompt } from "./local-ui.js";
+import { newTaskPrompt, refactorPrompt, ASK_WITH_TOOL } from "./model.js";
+import { localNewTaskPrompt, localRefactorPrompt } from "./local-ui.js";
 
 const DIR = "/home/me/.herdr/investigations/inv-x";
 // The values of a flag that takes any number of them, up to the next flag.
@@ -444,4 +444,91 @@ test("start: a prompt that can't be made leaves nothing behind, and no folder is
 
 test("the host is found again under its own key", () => {
   assert.equal(hostKey("inv-x"), "github-tasks.host.inv-x");
+});
+
+// ---- A refactor session ---------------------------------------------------------------------------------
+
+const TYPE = { id: "isolation", name: "Isolation", orchestrator: { agent: "claude", command: "", model: "opus", effort: "high", prompt: "Find modules that reach into each other.\n\nRate each one." } };
+
+test("the Refactor Orchestrator runs with its type's orchestrator settings, not New Task's, and the same Claude extras", () => {
+  const known = [{ key: "claude", run: ["claude", "--x"], installed: true }];
+  const argv = refactorAgentArgv({ agent: "claude", command: "", model: "opus", effort: "high" }, known, DIR);
+  assert.deepEqual(argv.slice(0, 5), ["claude", "--x", "--model", "opus", "--effort"]);
+  assert.equal(argv[5], "high");
+  assert.deepEqual(argv, newTaskAgentArgv({ key: "claude", run: ["claude", "--x"] }, { model: "opus", effort: "high" }, DIR), "the same command New Task's agent would run, with the type's model and effort");
+  assert.deepEqual(values(argv, "--add-dir"), [DIR]);
+  assert.deepEqual(values(argv, "--allowedTools"), NEW_TASK_PLUMBING(DIR));
+});
+
+test("the Refactor Orchestrator's agent: codex gets -m and an effort, a custom one runs its command, an unlisted one runs as its key, no folder means no extras", () => {
+  assert.deepEqual(refactorAgentArgv({ agent: "codex", model: "m", effort: "low" }, [{ key: "codex", run: ["codex", "--y"] }], DIR), ["codex", "--y", "-m", "m", "-c", "model_reasoning_effort=low"]);
+  assert.deepEqual(refactorAgentArgv({ agent: "custom", command: "my-agent --go", model: "m", effort: "low" }, [], DIR), ["sh", "-c", "my-agent --go"]);
+  assert.deepEqual(refactorAgentArgv({ agent: "claude", model: "", effort: "" }, undefined, null), ["claude", "--effort", "medium"]);
+});
+
+test("a refactor session's helpers answer to the Refactor Orchestrator, and read their type's prompt after the built-in text", () => {
+  const inv = newTaskInvestigatorPrompt({ ...P, refactor: true, rolePrompt: "Look for imports across mods.\n" });
+  const wor = newTaskWorkerPrompt({ ...P, refactor: true, rolePrompt: "  Keep the prototype tiny.  " });
+  for (const text of [inv, wor]) {
+    assert.ok(text.includes("Refactor session") && text.includes("Refactor Orchestrator"));
+    assert.doesNotMatch(text, /New Task/);
+  }
+  assert.ok(inv.startsWith(newTaskInvestigatorPrompt({ ...P, refactor: true })), "the built-in text comes first, unchanged");
+  assert.ok(inv.endsWith("\n\n## This refactor's instructions\n\nLook for imports across mods."));
+  assert.ok(wor.endsWith("\n\n## This refactor's instructions\n\nKeep the prototype tiny."));
+  assert.match(bodyOf(newTaskWorkerPrompt({ ...P, refactor: true })), /never push, merge or open a pull request/);
+});
+
+test("no prompt of the type for a role: the built-in text only; a New Task session is unchanged", () => {
+  for (const rolePrompt of ["", "  \n", undefined]) assert.equal(newTaskInvestigatorPrompt({ ...P, refactor: true, rolePrompt }), newTaskInvestigatorPrompt({ ...P, refactor: true }));
+  assert.equal(newTaskInvestigatorPrompt({ ...P, refactor: false }), newTaskInvestigatorPrompt(P));
+  assert.match(newTaskInvestigatorPrompt(P), /New Task Orchestrator/);
+});
+
+test("sessionFiles for a refactor: each role's file has its own type prompt, the spawn script names the Refactor Orchestrator", () => {
+  const argv = { investigator: ["claude"], worker: ["claude"] };
+  const files = sessionFiles({ id: "inv-x", dir: DIR, workDir: "/wt/x", repoRoot: "/src/app", branch: "investigate/x", argv, refactor: { investigator: "I prompt", worker: "" } });
+  assert.ok(files["investigator.md"].endsWith("## This refactor's instructions\n\nI prompt"));
+  assert.ok(!files["worker.md"].includes("This refactor's instructions"), "an empty prompt adds nothing");
+  assert.equal(files.spawn, investigationSpawnScript({ id: "inv-x", dir: DIR, workDir: "/wt/x", branch: "investigate/x", argv, refactor: true }));
+  assert.match(files.spawn, /The Refactor Orchestrator that started you is the terminal/);
+  assert.match(files.spawn, /for Refactor session inv-x/);
+  assert.doesNotMatch(files.spawn, /New Task/);
+  assert.match(sessionFiles({ id: "inv-x", dir: DIR, workDir: "/wt/x", repoRoot: "/src/app", branch: "investigate/x", argv }).spawn, /The New Task Orchestrator that started you/);
+});
+
+test("the Refactor prompts (GitHub and local): the header, the same Context, the type's prompt quoted, the focus, the steps and the helpers", () => {
+  const github = refactorPrompt({ repo: "o/app", project: { title: "Board", url: "https://x/p" }, type: TYPE, focus: "", agentsDir: DIR });
+  const local = localRefactorPrompt({ mainRoot: "/r/app", todoDir: "/t/to-do", upNextDir: "/t/up-next", nextId: 7, type: TYPE, focus: "", agentsDir: DIR });
+  assert.ok(github.startsWith("# You are the Refactor Orchestrator, running the Isolation refactor for o/app\n"));
+  assert.ok(local.startsWith("# You are the Refactor Orchestrator, running the Isolation refactor for app\n"));
+  const between = (t) => t.slice(t.indexOf("## Context"), t.indexOf("## What to do"));
+  assert.equal(between(github), between(newTaskPrompt({ repo: "o/app", project: { title: "Board", url: "https://x/p" } })), "the GitHub Context is New Task's");
+  assert.equal(between(local), between(localNewTaskPrompt({ mainRoot: "/r/app", todoDir: "/t/to-do", upNextDir: "/t/up-next", nextId: 7 })), "so is the local one");
+  for (const text of [github, local]) {
+    assert.ok(text.includes("> Find modules that reach into each other.\n>\n> Rate each one."), "the type's orchestrator prompt, quoted line by line");
+    assert.ok(text.includes("look at the whole repo"), "no focus: the whole repo");
+    assert.ok(!text.includes("asked you to focus"));
+    for (const step of ["start investigators", "rate each one", "List them to the person", "which of them to keep", "show the "]) assert.ok(text.includes(step), step);
+    assert.ok(text.includes("a short title, a description, and the acceptance criteria as a checklist"));
+    assert.ok(text.includes("Create it only when they say yes."));
+    assert.ok(text.includes("Ask one question at a time. " + ASK_WITH_TOOL));
+    assert.match(text, /Don't write code yourself\. Never push, merge or open a pull request\./);
+    assert.ok(text.includes(`\`${DIR}/spawn investigator <name> '<brief>'\``) && text.includes(`\`${DIR}/spawn worker <job> '<brief>'\``));
+    assert.match(text, /thrown away/);
+    assert.match(text, /never becomes a ticket's work/);
+    assert.doesNotMatch(text, /Don't do anything yet/);
+  }
+  assert.ok(github.includes('whether it should be in "Up Next" or "To Do"') && github.includes('the GitHub Project "Board"'));
+  assert.ok(local.includes('whether it should be in "Up Next" or "To Do"') && local.includes("Make no `gh` calls"));
+  assert.doesNotMatch(refactorPrompt({ repo: "o/app", type: TYPE }), /spawn/, "no session folder, no helpers section");
+  assert.doesNotMatch(localRefactorPrompt({ mainRoot: "/r/app", todoDir: "/t", upNextDir: "/u", nextId: 1, type: TYPE }), /spawn/);
+});
+
+test("the Refactor prompts with a focus say what to focus on; several lines are quoted; the project's own status names are used", () => {
+  assert.ok(refactorPrompt({ repo: "o/app", type: TYPE, focus: "  the sidebar  " }).includes("The person asked you to focus on: the sidebar\n"));
+  const many = refactorPrompt({ repo: "o/app", type: TYPE, focus: "the sidebar\nand the popup" });
+  assert.ok(many.includes("The person asked you to focus on:\n\n> the sidebar\n> and the popup"));
+  assert.ok(localRefactorPrompt({ mainRoot: "/r/app", todoDir: "/t", upNextDir: "/u", nextId: 1, type: TYPE, focus: "x" }).includes("The person asked you to focus on: x"));
+  assert.ok(refactorPrompt({ repo: "o/app", type: TYPE, backlog: "Todo", groomed: "Ready" }).includes('"Ready" or "Todo"'));
 });
