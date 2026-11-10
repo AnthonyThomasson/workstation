@@ -55,7 +55,7 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
     // the ticket's own space with it.
     const partial = {
       role: "run", id, orchestrator: running.address, title: name, workflow: "", branch: branchName(ticket), folder: folder ?? "",
-      ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null }, projectId: project?.id ?? null,
+      ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null, status: ticket?.status ?? null }, projectId: project?.id ?? null,
       ...(ticket?.local ? { taskSource: "local", mainRoot: ticket.mainRoot, repoRoot: ticket.mainRoot } : {}),
     };
     const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
@@ -175,7 +175,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   const name = ticketName(ticket);
   const props = {
     role: "run", id, orchestrator: null, title: name, workflow: workflow.name, branch, folder: workDir,
-    repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null },
+    repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null, status: ticket.status ?? null }, // status: what it is now, so a launch never moves it back
     projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
     // What a new orchestrator needs if this one ends and the person presses the red Merge button (bgrun.js restartOrchestrator).
     orchestratorArgv: argv.orchestrator, ticketLabel: key,

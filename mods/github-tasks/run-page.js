@@ -10,7 +10,7 @@ import { endRun, findHost, findTicketSpace, hostKey, mergeOutcome, peekSpace, re
 import { S, app, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
 import { agentsFor, liveOrchestratorFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
-import { branchArgs, canMerge, finalSeen, fixMessage, fixingDone, fixingNote, fixingStart, mergeFailure, mergeSteps, mergeView, openPullRequest, optionFor, parsePr, parsePrState, prStateArgs, prViewArgs, restartTask, restoreFailure, restoreFixing, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
+import { branchArgs, canMerge, finalSeen, fixMessage, fixingDone, fixingNote, fixingStart, mergeFailure, mergeSteps, mergeView, movesTo, openPullRequest, optionFor, parsePr, parsePrState, prStateArgs, prViewArgs, restartTask, restoreFailure, restoreFixing, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
 import { defaultBranchOf, localMergeSteps, localPrBody, moveToStage, squashMessage } from "./local-runs.js";
 import { localTasks, repoHasGithubRemote } from "./local-tasks-env.js";
 
@@ -149,16 +149,21 @@ export class RunPage {
     });
   }
 
-  // The ticket follows the run: In Progress once a worker has started, In Review once a reviewer has. It never goes back.
+  // The ticket follows the run: In Progress as soon as the run has launched (this page is open: Start opens it right after the orchestrator
+  // starts), In Review once a reviewer has. It never goes back: a ticket already at or past the stage (a re-run of one In Review or Done)
+  // keeps its status. A local task's status is the folder its file is in now; a GitHub ticket's is what Start was given.
   advance(cx, workers, reviewers) {
-    const stage = stageOf({ workers, reviewers });
+    const stage = stageOf({ workers, reviewers, launched: true });
     if (stage <= this.stage || this.moving) return;
     if (this.local ? !this.mainRoot || !this.ticket?.number : !this.statusField || !this.projectId || !this.ticket?.key) return;
     this.moving = true;
     cx.spawn(async (cx) => {
       try {
-        if (this.local) await moveToStage(localTasks(this.mainRoot), this.ticket.number, stage); // the task's file goes to the stage's folder
-        else {
+        if (this.local) {
+          const tasks = localTasks(this.mainRoot);
+          const task = await tasks.get(this.ticket.number).catch(() => null);
+          if (movesTo(task?.status, stage)) await moveToStage(tasks, this.ticket.number, stage); // the task's file goes to the stage's folder
+        } else if (movesTo(this.ticket.status, stage)) {
           const option = optionFor(this.statusField.options, stage);
           if (option) {
             const r = await exec("gh", statusArgs({ projectId: this.projectId, itemId: this.ticket.key, fieldId: this.statusField.id, optionId: option.id }));

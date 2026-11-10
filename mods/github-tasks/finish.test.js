@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, optionFor, statusArgs, mergeSteps, runSteps, prArgs, prViewArgs, parsePrUrl, prNumber, parsePr, LABELS, prStateArgs, parsePrState, mergeFailure, fixMessage, restartTask, fixingDone, fixingStart, fixingNote, mergeView, restoreFailure, restoreFixing, openPullRequest } from "./finish.js";
+import { worktreeArgs, branchArgs, canMerge, finalSeen, shouldAutoPr, stageOf, statusStage, movesTo, optionFor, statusArgs, mergeSteps, runSteps, prArgs, prViewArgs, parsePrUrl, prNumber, parsePr, LABELS, prStateArgs, parsePrState, mergeFailure, fixMessage, restartTask, fixingDone, fixingStart, fixingNote, mergeView, restoreFailure, restoreFixing, openPullRequest } from "./finish.js";
 
 test("canMerge needs the final reviewer seen and nobody live", () => {
   const ended = { live: false }, live = { live: true, status: "idle" };
@@ -29,6 +29,36 @@ test("stageOf follows the agents started", () => {
   assert.equal(stageOf({ workers: [], reviewers: [] }), 0);
   assert.equal(stageOf({ workers: [{}], reviewers: [] }), 1);
   assert.equal(stageOf({ workers: [{}], reviewers: [{}] }), 2);
+});
+
+test("stageOf: a launched run is at stage 1 before any agent starts; a reviewer still makes it 2", () => {
+  assert.equal(stageOf({ workers: [], reviewers: [], launched: true }), 1);
+  assert.equal(stageOf({ workers: [{}], reviewers: [], launched: true }), 1);
+  assert.equal(stageOf({ workers: [], reviewers: [{}], launched: true }), 2);
+  assert.equal(stageOf({ launched: true }), 1);
+  assert.equal(stageOf({ workers: [], reviewers: [], launched: false }), 0);
+});
+
+test("statusStage reads a status as the stage it is: 0 for one before the run's stages", () => {
+  assert.equal(statusStage("In Progress"), 1);
+  assert.equal(statusStage("In review"), 2);
+  assert.equal(statusStage("Done"), 3);
+  assert.equal(statusStage("Up Next"), 0);
+  assert.equal(statusStage("To Do"), 0);
+  assert.equal(statusStage(undefined), 0);
+  assert.equal(statusStage(null), 0);
+});
+
+test("movesTo: a ticket only moves forward, never back to an earlier stage or to the one it is in", () => {
+  assert.equal(movesTo("Up Next", 1), true);
+  assert.equal(movesTo("To Do", 1), true);
+  assert.equal(movesTo(undefined, 1), true, "an unknown status moves");
+  assert.equal(movesTo("In Progress", 1), false, "already there");
+  assert.equal(movesTo("In Progress", 2), true);
+  assert.equal(movesTo("In Review", 1), false, "a re-run of a ticket in review stays in review");
+  assert.equal(movesTo("Done", 1), false, "a re-run of a done ticket stays done");
+  assert.equal(movesTo("Done", 2), false);
+  assert.equal(movesTo("In Review", 2), false);
 });
 
 test("optionFor matches status names loosely", () => {
