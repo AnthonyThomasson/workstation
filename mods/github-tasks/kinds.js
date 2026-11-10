@@ -29,11 +29,12 @@ export const WORKFLOW = { key: "workflow", noun: "workflow", plural: "workflows"
 };
 export const REFACTOR = { key: "refactor", noun: "refactor", plural: "refactors", folder: "refactors", model: refactorModel, starters: ["redundant-tests", "architecture", "isolation"],
   changed: REFACTORS_CHANGED,
-  labels: { listTitle: "Refactors", listNote: "How a refactor type runs: the Refactor Orchestrator's prompt, and the investigators it starts.", newLabel: "New refactor", emptyText: "No refactor types yet. Make one with New refactor.", editorNoun: "refactor type", namePlaceholder: "Dead code", starterNames: ["Redundant tests", "Architecture", "Isolation"] },
+  labels: { listTitle: "Refactors", listNote: "How a refactor type runs: the Refactor Orchestrator's prompt, and the investigators and prototype workers it starts.", newLabel: "New refactor", emptyText: "No refactor types yet. Make one with New refactor.", editorNoun: "refactor type", namePlaceholder: "Dead code", starterNames: ["Redundant tests", "Architecture", "Isolation"] },
   editor: { trigger: false, permissionRoles: permissionRolesOf(refactorModel),
     prompts: {
       orchestrator: { label: "Refactor prompt", hint: "what the refactor looks for and how to report it" },
       investigator: { label: "Prompt", hint: "optional: extra instructions for every investigator" },
+      worker: { label: "Prompt", hint: "optional: extra instructions for every prototype worker" },
     } },
 };
 export const KINDS = { workflow: WORKFLOW, refactor: REFACTOR };

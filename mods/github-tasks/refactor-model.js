@@ -1,4 +1,4 @@
-// What a refactor type is: how its orchestrator and its investigators run (agent, model, effort and prompt).
+// What a refactor type is: how its orchestrator, its investigators and its prototype workers run (agent, model, effort and prompt).
 // It mirrors workflow-model.js and reuses its helpers; there is no trigger, no permissions and no planning or
 // retro prompt. Pure: no Herdr imports, so node --test runs it.
 
@@ -11,17 +11,17 @@ export { slug, AGENTS, CUSTOM, AGENT_LABELS, SCOPES, SCOPE_LABELS, blankRole } f
 export { EFFORTS };
 
 export const VERSION = 1;
-export const ROLES = ["orchestrator", "investigator"];
-export const ROLE_LABELS = { orchestrator: "Orchestrator", investigator: "Investigator" };
-// Neither role has extra prompts (a workflow's orchestrator has planning and retro); same shape as workflow-model.js.
-export const ROLE_PROMPTS = { orchestrator: [], investigator: [] };
+export const ROLES = ["orchestrator", "investigator", "worker"];
+export const ROLE_LABELS = { orchestrator: "Orchestrator", investigator: "Investigator", worker: "Worker" };
+// No role has extra prompts (a workflow's orchestrator has planning and retro); same shape as workflow-model.js.
+export const ROLE_PROMPTS = { orchestrator: [], investigator: [], worker: [] };
 // Where a refactor type is kept, as for workflows but in the refactors folders.
 export const SCOPE_HINTS = {
   global: "Kept in ~/.config/herdr-app/refactors, for every project on this computer.",
   repo: "Kept in the repo's .herdr/refactors folder, to commit with the repo. Listed only while a space in that repo is selected.",
 };
 
-export const blank = () => ({ version: VERSION, id: "", name: "", orchestrator: blankRole(), investigator: blankRole() });
+export const blank = () => ({ version: VERSION, id: "", name: "", orchestrator: blankRole(), investigator: blankRole(), worker: blankRole() });
 
 const text = (v) => (typeof v === "string" ? v : "");
 
@@ -34,6 +34,7 @@ export function normalize(raw) {
     name: text(r.name).trim(),
     orchestrator: normalizeRole(r.orchestrator),
     investigator: normalizeRole(r.investigator),
+    worker: normalizeRole(r.worker), // a file from before prototype workers has none: the defaults, and it gains the section on its next save
   };
 }
 
@@ -68,6 +69,7 @@ export function serialize(refactor) {
     version: x.version, id: x.id, name: x.name,
     orchestrator: role(x.orchestrator),
     investigator: role(x.investigator),
+    worker: role(x.worker),
   });
 }
 

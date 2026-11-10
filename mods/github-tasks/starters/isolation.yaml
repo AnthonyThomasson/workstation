@@ -19,7 +19,7 @@ orchestrator:
 
     For each finding give the files, what crosses the boundary, and what the interface would have to be for the units to be independent. Check whether a test or script already enforces the boundary, and say so.
 
-    Finish with the worst offenders first, rated by how much they couple the code and how easy they are to untangle. Make no changes until the person picks what to isolate.
+    Finish with the worst offenders first, rated by how much they couple the code and how easy they are to untangle. Make no changes: once the person picks what to isolate, each becomes a ticket.
 
 investigator:
   agent: claude
@@ -28,3 +28,11 @@ investigator:
   effort: medium
   prompt: |-
     Trace the units you are given: what each imports from the others, what they share, and what they assume of each other. Report every place one reaches into another's internals, and the parts that could stand alone. Report only; do not change any file.
+
+worker:
+  agent: claude
+  command: ""
+  model: sonnet
+  effort: high
+  prompt: |-
+    Build a throwaway prototype of the one candidate you are given, to find out whether the refactor works. Commit it in your worktree and report what you learned: what worked, what broke, and what the real change would involve. The code is discarded, so go for the answer, not polish.

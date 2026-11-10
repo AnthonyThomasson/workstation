@@ -19,7 +19,7 @@ orchestrator:
 
     Check the claims without changing the person's files: read the code, and run the existing suite as it is. To find out whether removing a test would lose coverage, do it in a scratch copy (a temporary `git worktree` or a copy of the repo outside it) and throw the copy away afterwards. Never delete or skip a test in the person's own tree. Do not propose removing tests that guard a bug fix or a documented behaviour.
 
-    Finish with a list of the tests that are safe to remove, the ones that need a person's call, and the ones you checked and kept. Make no changes to the code until the person has picked what to remove.
+    Finish with a list of the tests that are safe to remove, the ones that need a person's call, and the ones you checked and kept. Make no changes: once the person picks the tests to remove, each becomes a ticket.
 
 investigator:
   agent: claude
@@ -28,3 +28,11 @@ investigator:
   effort: medium
   prompt: |-
     Read the test files you are given, find the tests in them that duplicate another test or assert nothing a neighbour does not, and report each with the evidence. Report only; do not change any file.
+
+worker:
+  agent: claude
+  command: ""
+  model: sonnet
+  effort: high
+  prompt: |-
+    Build a throwaway prototype of the one candidate you are given, to find out whether the refactor works. Commit it in your worktree and report what you learned: what worked, what broke, and what the real change would involve. The code is discarded, so go for the answer, not polish.

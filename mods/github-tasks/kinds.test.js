@@ -76,13 +76,15 @@ test("the prompt field is labelled for what the kind's role does", () => {
   assert.equal(promptField(REFACTOR, "orchestrator").label, "Refactor prompt");
   assert.equal(promptField(REFACTOR, "investigator").label, "Prompt");
   assert.match(promptField(REFACTOR, "investigator").hint, /optional/i);
+  assert.equal(promptField(REFACTOR, "worker").label, "Prompt");
+  assert.match(promptField(REFACTOR, "worker").hint, /optional/i);
   assert.ok(!promptField(REFACTOR, "orchestrator").hint.match(/optional/i), "the refactor prompt is required");
 });
 
 test("each kind's roles come from its model, and the editor shows exactly those", () => {
   assert.deepEqual(WORKFLOW.model.ROLES, ["orchestrator", "worker", "reviewer", "investigator"]);
-  assert.deepEqual(REFACTOR.model.ROLES, ["orchestrator", "investigator"]);
-  assert.deepEqual(REFACTOR.model.ROLE_PROMPTS, { orchestrator: [], investigator: [] });
+  assert.deepEqual(REFACTOR.model.ROLES, ["orchestrator", "investigator", "worker"]);
+  assert.deepEqual(REFACTOR.model.ROLE_PROMPTS, { orchestrator: [], investigator: [], worker: [] });
 });
 
 test("each kind announces its saves on its own shared key, so a workflow's save does not refresh the refactor list", () => {

@@ -45,16 +45,25 @@ for (const [file, name] of Object.entries(REFACTOR_STARTERS)) {
     assert.equal(r.version, 1);
   });
 
-  test(`${file} runs a Claude opus/high orchestrator and a Claude sonnet/medium investigator`, () => {
-    const { orchestrator, investigator } = refactor.parse(readFileSync(new URL(file, dir), "utf8"));
+  test(`${file} runs a Claude opus/high orchestrator, a sonnet/medium investigator and a sonnet/high prototype worker`, () => {
+    const { orchestrator, investigator, worker } = refactor.parse(readFileSync(new URL(file, dir), "utf8"));
     assert.deepEqual([orchestrator.agent, orchestrator.model, orchestrator.effort], ["claude", "opus", "high"]);
     assert.deepEqual([investigator.agent, investigator.model, investigator.effort], ["claude", "sonnet", "medium"]);
+    assert.deepEqual([worker.agent, worker.model, worker.effort], ["claude", "sonnet", "high"]);
+    assert.match(worker.prompt, /throwaway prototype/);
+    assert.match(worker.prompt, /commit/i);
+    assert.match(worker.prompt, /discarded/);
     assert.ok(orchestrator.prompt.trim());
   });
 
-  test(`${file} is a refactor type, not a workflow: no trigger, worker, reviewer, planning or retro`, () => {
+  test(`${file} orchestrator makes no changes itself: the candidates the person keeps become tickets`, () => {
+    const { prompt } = refactor.parse(readFileSync(new URL(file, dir), "utf8")).orchestrator;
+    assert.match(prompt, /make no changes: once the person picks .*, each becomes a ticket/i);
+  });
+
+  test(`${file} is a refactor type, not a workflow: no trigger, reviewer, planning or retro`, () => {
     const data = load(file);
-    assert.deepEqual(Object.keys(data), ["version", "id", "name", "orchestrator", "investigator"]);
+    assert.deepEqual(Object.keys(data), ["version", "id", "name", "orchestrator", "investigator", "worker"]);
     assert.deepEqual(Object.keys(data.orchestrator), ["agent", "command", "model", "effort", "prompt"]);
   });
 }

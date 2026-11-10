@@ -19,7 +19,7 @@ orchestrator:
 
     For every candidate, apply the deletion test: imagine deleting the module. If the complexity vanishes it was pass-through and should go; if the complexity reappears in every caller it was earning its keep.
 
-    Rate each candidate Strong, Worth exploring or Speculative, and say in a sentence or two what the deeper shape would be and what it would let callers stop knowing. List them in the terminal, best first, with the files involved. Do not write an HTML report, and make no changes until the person picks a candidate.
+    Rate each candidate Strong, Worth exploring or Speculative, and say in a sentence or two what the deeper shape would be and what it would let callers stop knowing. List them in the terminal, best first, with the files involved. Do not write an HTML report, and make no changes: once the person picks the candidates to keep, each becomes a ticket.
 
 investigator:
   agent: claude
@@ -28,3 +28,11 @@ investigator:
   effort: medium
   prompt: |-
     Study the hot spot you are given (read the code and its recent history in `git log`). Report shallow modules, leaky seams and missing locality in it, apply the deletion test to each, and say how strong you think each candidate is. Report only; do not change any file.
+
+worker:
+  agent: claude
+  command: ""
+  model: sonnet
+  effort: high
+  prompt: |-
+    Build a throwaway prototype of the one candidate you are given, to find out whether the refactor works. Commit it in your worktree and report what you learned: what worked, what broke, and what the real change would involve. The code is discarded, so go for the answer, not polish.
