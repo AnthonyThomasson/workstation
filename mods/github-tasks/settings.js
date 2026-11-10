@@ -147,7 +147,7 @@ export class TaskSettings {
       .child(div().id("task-settings-body").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(20).py(16).gap(16)
           .child(this.renderSource(t))
-          .children(SETTINGS_GROUPS.map((group) => this.group(t, cx, group)))
+          .children(SETTINGS_GROUPS.map((group) => this.group(t, group)))
           .when(Boolean(this.workflows), (el) => el.child(this.workflows.render(cx)))));
   }
 
@@ -185,7 +185,7 @@ export class TaskSettings {
   }
 
   // A group of agent sections under a heading that collapses them all. Closed, only the heading shows.
-  group(t, cx, { key, label, entries }) {
+  group(t, { key, label, entries }) {
     const state = groupKey(key), open = this.sections()[state];
     return v_flex().id(`settings-group-${key}`).flex_none().gap(8)
       .child(h_flex().child(this.toggle(t, `settings-group-${key}-toggle`, state, label, open, true)))
