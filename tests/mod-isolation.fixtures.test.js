@@ -79,6 +79,10 @@ const EXPECTED = [
   "alpha/run-time-paths.js:4 file-path",
   "alpha/run-time-paths.js:7 file-path",
   "alpha/run-time-paths.js:8 file-path",
+  // join("mods", "<name>"): a literal name after "mods" is judged like a mods/<name> path; join("mods", name) is not flagged
+  "alpha/join-paths.js:3 file-path",
+  "alpha/join-paths.js:4 file-path",
+  "alpha/join-paths.js:5 file-path",
   // a key passed through an exported function (declaration, default, arrow, or via a namespace) is followed into the importing files;
   // an exported function that is also used as a plain value has callers the check can't see
   "alpha/exported-key-user.js:3 shared-key",
@@ -105,6 +109,7 @@ const EXPECTED = [
   "alpha/fake.test.js:6 file-path",
   "alpha/fake.test.js:9 overlay",
   "alpha/fake.test.js:11 shared-key",
+  "alpha/fake.test.js:13 file-path",
 ];
 
 test("reports exactly the expected failures on the fixtures", () => {

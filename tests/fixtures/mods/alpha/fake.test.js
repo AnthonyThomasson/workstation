@@ -10,3 +10,4 @@ openOverlay({ mod: "beta" });
 shared("skillshare.x");
 shared("beta.x");
 export const all = [x, sample, real, own, fake, realPath, mine];
+export const joined = [join("mods", "demo"), join("mods", "beta")];

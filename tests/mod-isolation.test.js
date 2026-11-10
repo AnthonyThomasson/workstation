@@ -693,6 +693,17 @@ export function checkMods(root) {
         }
       }
     }
+    // join("mods", "beta", ...) (path.join, posix.join or a bare join): a string literal after "mods" is a mod name. A name that is
+    // not a literal (join("mods", name)) is left alone.
+    for (const call of info.calls) {
+      const c = call.callee;
+      const isJoin = c.type === "Identifier" ? c.name === "join" : c.type === "MemberExpression" && !c.computed && c.property.name === "join" && c.object.type !== "ArrayExpression";
+      const [first, second] = call.arguments;
+      if (call.type !== "CallExpression" || !isJoin || first?.type !== "Literal" || first.value !== "mods" || second?.type !== "Literal" || typeof second.value !== "string") continue;
+      const name = second.value.split("/")[0];
+      const why = name && name !== ".." ? judgeName(info, name) : null;
+      if (why) fail(info, second, "file-path", name, `path join("mods", "${name}", ...) ${why}`);
+    }
     // overlays and key sinks. openOverlay is found by name, and through whatever binds it to herdr's.
     for (const call of info.calls) {
       const c = call.callee;
