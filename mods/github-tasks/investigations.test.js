@@ -1037,3 +1037,22 @@ test("without a refactor the start is a New Task session as before", async () =>
   assert.equal(entry.label, "Fix the login redirect");
   assert.ok(entry.branch.startsWith("investigate/fix-the-login-redirect-"));
 });
+
+for (const role of ["orchestrator", "investigator", "worker"]) {
+  test(`start a refactor: a ${role} whose agent isn't installed refuses the start, with nothing made`, async () => {
+    const f = fakeStart();
+    f.deps.knownAgents = async () => [{ key: "claude", name: "Claude", run: ["claude"], installed: true }, { key: "codex", name: "Codex", run: ["codex"], installed: false }];
+    const type = { ...RTYPE, orchestrator: { ...RTYPE.orchestrator }, investigator: { ...RTYPE.investigator, agent: "claude" }, worker: { ...RTYPE.worker, agent: "claude", command: "" } };
+    type[role] = { ...type[role], agent: "codex" };
+    await assert.rejects(beginInvestigation(f.deps, { agent: null, description: "", where: WHERE, refactor: { type, focus: "" } }),
+      new RegExp(`^Error: The Isolation refactor's ${role} runs Codex, which isn't installed on this computer\\.$`));
+    assert.deepEqual(f.log, [], "no worktree, host or agent");
+  });
+}
+
+test("start a refactor: a custom agent isn't checked, and an agent the core doesn't list runs as its key", async () => {
+  const f = fakeStart();
+  f.deps.knownAgents = async () => [{ key: "custom", name: "Custom", run: [], installed: false }];
+  await beginInvestigation(f.deps, { agent: null, description: "", where: WHERE, refactor: { type: RTYPE, focus: "" } });
+  assert.equal(f.hcCalls[0][0], "run");
+});

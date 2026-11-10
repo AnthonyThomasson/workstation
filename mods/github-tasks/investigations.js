@@ -142,6 +142,16 @@ function refactorTypeOf(raw) {
   return type;
 }
 
+// A refactor session's roles must each run an agent that is on this computer (start.js resolveAgents' check for a run): throws for the first
+// one that is known but not installed. A custom agent runs its own command, and an agent the core doesn't list runs as its key.
+function checkInstalled(type, known) {
+  for (const role of ["orchestrator", "investigator", "worker"]) {
+    const { agent } = type[role];
+    const entry = agent === "custom" ? null : (known ?? []).find((a) => a.key === agent);
+    if (entry && !entry.installed) throw new Error(`The ${type.name} refactor's ${role} runs ${entry.name ?? agent}, which isn't installed on this computer.`);
+  }
+}
+
 // Makes the branch and worktree and the session's folder (sessionFolder: the spawn script and the prompts of the helpers the agent may
 // start), opens the host, starts the agent with the prompt as its first message and opens its tab; saves the entry as soon as the agent
 // exists. Throws with a message for the person, having taken back what it made: the agent, the host and the tab (launchRun), the saved
@@ -161,6 +171,8 @@ export async function beginInvestigation(deps, { agent, description, repo, groom
   const now = deps.now();
   const type = refactor && refactorTypeOf(refactor.type); // refused before anything is made when it can't run
   const focus = String(refactor?.focus ?? "");
+  const known = await deps.knownAgents().catch(() => []);
+  if (type) checkInstalled(type, known); // before anything is made
   const repoRoot = await deps.mainCheckout(where.cwd); // the main checkout, even when started from one of its worktrees
   const repoName = repo || repoRoot.split("/").filter(Boolean).pop() || "";
   const label = type ? refactorLabel(type, focus) : investigationLabel(description, repoName);
@@ -178,7 +190,6 @@ export async function beginInvestigation(deps, { agent, description, repo, groom
     closeHost: deps.closeHost,
   };
   try {
-    const known = await deps.knownAgents().catch(() => []);
     // In a refactor session every role is the type's own (agent, command, model, effort); otherwise the New Task settings'.
     const mine = type ? { investigator: type.investigator, worker: type.worker } : { investigator: normalizeSubAgent(subAgents?.investigator), worker: normalizeSubAgent(subAgents?.worker) };
     const argv = { investigator: subAgentArgv("investigator", mine.investigator, known, dir), worker: subAgentArgv("worker", mine.worker, known, dir) };
