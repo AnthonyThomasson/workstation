@@ -374,11 +374,11 @@ test("start: with no settings saved the sub-agents are Claude at medium effort a
   for (const role of ["investigator", "worker"]) assert.ok(line(role).startsWith(`  ${role}) set -- 'claude'`) && line(role).includes("'--effort' 'medium'") && !line(role).includes("'--model'"), role);
 });
 
-test("start: the host opens first, in the session's own space (told what it's for), and the agent starts under it", async () => {
+test("start: the host opens first, named for the description, and the agent starts under it", async () => {
   const f = fakeStart();
   const { entry } = await beginInvestigation(f.deps, ARGS);
   const info = f.written.find((w) => w.host).host;
-  assert.deepEqual(info, { id: entry.id, label: "Fix the login redirect", workDir: entry.workDir, repoRoot: "/repo/app" });
+  assert.deepEqual(info, { id: entry.id, name: "Fix the login redirect agents", label: "Fix the login redirect", workDir: entry.workDir, repoRoot: "/repo/app" });
   const run = f.hcCalls[0];
   assert.equal(run[run.indexOf("--parent") + 1], "tH");
   assert.ok(run.includes("--outlive-parent") && !run.includes("--no-parent"));
@@ -386,13 +386,14 @@ test("start: the host opens first, in the session's own space (told what it's fo
   assert.ok(!f.log.some((l) => l.startsWith("close host")), "the host stays while the session lives");
 });
 
-test("start: a host that won't open is a problem to say, and the agent starts with no parent", async () => {
+test("#57 start: a host that won't open fails the start with the reason: no agent, no tab, and the session folder, entry and worktree are taken back", async () => {
   const f = fakeStart({ hostFails: true });
-  const { problems } = await beginInvestigation(f.deps, ARGS);
-  assert.equal(problems.length, 1);
-  assert.match(problems[0], /Agents panel.*host tab didn't open \(no room\)/);
-  assert.ok(f.hcCalls[0].includes("--no-parent") && !f.hcCalls[0].includes("--parent"));
-  assert.ok(!f.log.some((l) => l.startsWith("close host")));
+  await assert.rejects(beginInvestigation(f.deps, ARGS), /The agent didn't start: its host tab didn't open \(no room\)/);
+  assert.ok(!f.hcCalls.length, "no agent was started");
+  assert.ok(!f.log.includes("connect") && !f.log.some((l) => l.startsWith("close host")));
+  assert.ok(f.log.includes(`remove session /home/me/.herdr/investigations/inv-${T}`));
+  assert.ok(f.log.findIndex((l) => l.startsWith("remove session")) < f.log.findIndex((l) => l.startsWith("cleanup")));
+  assert.deepEqual(f.saved(), []);
 });
 
 test("start: an agent that doesn't start ends the host, takes the session folder back, then the worktree", async () => {

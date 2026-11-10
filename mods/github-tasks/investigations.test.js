@@ -5,11 +5,11 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  INVESTIGATION_LABEL, INVESTIGATIONS_KEY, beginInvestigation, checkStart, deleteBranch, endInvestigation, firstLine, investigationBranch,
-  investigationId, investigationLabel, investigationRow, investigationRunArgs, investigationsFor, liveInvestigations, reapplyInvestigations, removeWorktree,
+  INVESTIGATION_HOST_LABEL, INVESTIGATION_LABEL, INVESTIGATIONS_KEY, beginInvestigation, checkStart, deleteBranch, endInvestigation, firstLine, investigationBranch,
+  investigationHostName, investigationId, investigationLabel, investigationRow, investigationRunArgs, investigationsFor, liveInvestigations, reapplyInvestigations, removeWorktree,
   prototypesOf, savedList, sessionFolder, tabNameFor, unsafeToRemove, withEntry, withoutEntry,
 } from "./investigations.js";
-import { placeholderArgv, slotKey } from "./bgrun.js";
+import { hostKey, placeholderArgv, slotKey } from "./bgrun.js";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
 import { shQuote, worktreePath } from "./run.js";
 import { slug } from "./workflow-model.js";
@@ -54,6 +54,42 @@ test("the agent runs in the background with no parent, labelled with its id, rol
   assert.ok(!labels.some((l) => l.startsWith("herdr.space") || l.startsWith("herdr.tab")), "those would adopt it into a pane");
 });
 
+test("#57 with a parent the agent outlives it, types no notes into it, and has no --no-parent; its labels stay the same", () => {
+  const args = investigationRunArgs({ id: "inv-x", workDir: "/w", argv: ["claude"], parent: "tH" });
+  assert.ok(!args.includes("--no-parent"));
+  assert.equal(args[args.indexOf("--parent") + 1], "tH");
+  assert.ok(args.includes("--outlive-parent") && args.includes("--no-notify"));
+  assert.deepEqual(args.slice(0, 3), ["run", "--bg", "--json"]);
+  assert.equal(args[args.indexOf("--cwd") + 1], "/w");
+  assert.deepEqual(args.slice(args.indexOf("--") + 1), ["claude"]);
+  const labels = args.flatMap((a, i) => (args[i - 1] === "--label" ? [a] : []));
+  assert.deepEqual(labels.sort(), ["herdr.investigation=inv-x", "herdr.role=investigation", "herdr.workflow.folder=/w"]);
+});
+
+test("#57 the host tab is named for the first line of the description cut at 40, or New task", () => {
+  assert.equal(investigationHostName("Fix the login redirect\nmore"), "Fix the login redirect agents");
+  assert.equal(investigationHostName("  \n\n  Second line first"), "Second line first agents");
+  assert.equal(investigationHostName(""), "New task agents");
+  assert.equal(investigationHostName(undefined), "New task agents");
+  const long = "Investigate why the sidebar flickers when a run ends";
+  assert.equal(investigationHostName(long), `${long.slice(0, 40).trimEnd()} agents`);
+});
+
+test("#57 start with no description: the host is New task agents", async () => {
+  const f = fakeStart();
+  await beginInvestigation(f.deps, { ...ARGS, description: "" });
+  assert.equal(f.hostCalls[0].name, "New task agents");
+});
+
+test("#57 the host carries its own label, never the agent's", () => {
+  assert.equal(INVESTIGATION_HOST_LABEL, "herdr.investigation.host");
+  assert.notEqual(INVESTIGATION_HOST_LABEL, INVESTIGATION_LABEL);
+});
+
+test("#57 the host's record is kept in the shared key bgrun keeps a run's in, per session", () => {
+  assert.equal(hostKey("inv-1"), "github-tasks.host.inv-1");
+});
+
 test("the saved state has one shared key", () => {
   assert.equal(INVESTIGATIONS_KEY, "github-tasks.investigations");
 });
@@ -91,6 +127,17 @@ test("a terminal that took over an address but isn't the investigation's agent c
   const saved = [E("a", "/r", "t1")];
   assert.deepEqual(investigationsFor(saved, "/r", [{ address: "t1", state: "live", status: "working", labels: { [INVESTIGATION_LABEL]: "other" } }]).map((e) => [e.live, e.status]), [[false, "finished"]]);
   assert.deepEqual(investigationsFor(saved, "/r", [{ address: "t1", state: "live", status: "working" }]).map((e) => [e.live, e.status]), [[false, "finished"]]);
+});
+
+test("#57 the host is not the agent: a session reports its agent's status, never its host's", () => {
+  const host = { address: "tH", state: "live", status: "idle", labels: { [INVESTIGATION_HOST_LABEL]: "a", "herdr.role": "host" } };
+  const saved = [E("a", "/r", "t1")];
+  assert.deepEqual(investigationsFor(saved, "/r", [host, live("a", "t1", { status: "working" })]).map((e) => [e.live, e.status]), [[true, "working"]]);
+  assert.deepEqual(investigationsFor(saved, "/r", [live("a", "t1", { status: "working" }), host]).map((e) => [e.live, e.status]), [[true, "working"]]);
+  assert.deepEqual(investigationsFor(saved, "/r", [host]).map((e) => [e.live, e.status]), [[false, "finished"]], "a live host doesn't make an ended agent look alive");
+  assert.deepEqual(liveInvestigations(saved, [host]), []);
+  const ended = [{ address: "t1", state: "ended", labels: { [INVESTIGATION_LABEL]: "a" } }, host];
+  assert.deepEqual(investigationsFor(saved, "/r", ended).map((e) => [e.live, e.status]), [[false, "finished"]], "an agent that ended on its own: finished, though its host lives on");
 });
 
 test("a session shows in any space of its repo: found by the main checkout, or by the repo's name for a GitHub repo", () => {
@@ -155,6 +202,16 @@ test("after a restart each live agent is shown again over the left pane of its o
   assert.deepEqual(shown, [{ terminal: "t1", pane: "pA" }]);
 });
 
+test("#57 after a restart only the agent is shown again; its host terminal (a tab's own, kept by the core) is left alone", async () => {
+  const saved = [E("a", "/r", "t1")];
+  const host = { address: "tH", state: "live", labels: { [INVESTIGATION_HOST_LABEL]: "a", "herdr.role": "host" } };
+  const slots = { a: { tab: "tA", left: "pA", space: "s1" } };
+  const shown = [];
+  const n = await reapplyInvestigations({ saved, terminals: [host, live("a", "t1")], slot: (id) => slots[id], spaces: SPACES, panes: [...PANES, { pane: "pH", tab: "tH", terminal: "tH" }], show: async (a) => { shown.push(a); } });
+  assert.equal(n, 1);
+  assert.deepEqual(shown, [{ terminal: "t1", pane: "pA" }]);
+});
+
 test("one agent that can't be shown doesn't stop the rest", async () => {
   const saved = [E("a", "/r", "t1"), E("b", "/r", "t2")];
   const slots = { a: { tab: "tA", left: "pA", space: "s1" }, b: { tab: "tB", left: "pB", space: "s2" } };
@@ -186,8 +243,8 @@ test("a space on another machine, no folder, and no agent are refused, each with
 });
 
 // A fake core that records what is done, in order.
-function fakeStart({ run = { code: 0, stdout: '{"address":"t9"}', stderr: "" }, ready = { code: 0, stdout: '{"status":"idle"}', stderr: "" }, send = { code: 0, stdout: "", stderr: "" }, connect, task, mainCheckout } = {}) {
-  const log = [], hcCalls = [];
+function fakeStart({ run = { code: 0, stdout: '{"address":"t9"}', stderr: "" }, ready = { code: 0, stdout: '{"status":"idle"}', stderr: "" }, send = { code: 0, stdout: "", stderr: "" }, connect, task, mainCheckout, hostFails = null } = {}) {
+  const log = [], hcCalls = [], hostCalls = [];
   let saved = [];
   const deps = {
     now: () => 1_000_000, home: "/home/me",
@@ -200,11 +257,13 @@ function fakeStart({ run = { code: 0, stdout: '{"address":"t9"}', stderr: "" }, 
     removeSession: async (dir) => { log.push(`remove session ${dir}`); },
     hc: async (a) => { hcCalls.push(a); log.push(`hc ${a[0]}`); return a[0] === "run" ? run : a[0] === "wait" ? ready : a[0] === "send" ? send : { code: 0, stdout: "", stderr: "" }; },
     connect: async (props) => { log.push("connect"); return connect ? connect(props) : { tab: "tX", left: "pX", space: "s1" }; },
+    openHost: async (a) => { hostCalls.push(a); log.push("open host"); if (hostFails) throw hostFails; return { address: "tH", tab: "tHT", space: "sR", created: false }; },
+    closeHost: async (h) => { log.push(`close host ${h?.address}`); },
     closeTab: () => log.push("close tab"),
     load: () => saved, save: (list) => { saved = list; log.push(`save ${list.map((e) => e.id).join(",")}`); },
     cleanup: async (repoRoot, branch, workDir) => { log.push(`cleanup ${repoRoot} ${branch} ${workDir}`); },
   };
-  return { deps, log, hcCalls, saved: () => saved };
+  return { deps, log, hcCalls, hostCalls, saved: () => saved };
 }
 const ARGS = { agent: AGENT, description: "Fix the login redirect\nIt lands on /404", repo: "o/app", groomer: { effort: "high" }, where: WHERE };
 
@@ -215,12 +274,58 @@ test("start: the worktree is made from the main checkout, the entry saved once t
   const workDir = `/home/me/.herdr/worktrees/app/investigate-fix-the-login-redirect-${t}`;
   assert.deepEqual(f.log, [
     "mainCheckout /repo/app", "task", `worktree /repo/app investigate/fix-the-login-redirect-${t} ${workDir}`,
-    `write session /home/me/.herdr/investigations/inv-${t}`, "hc run", `save inv-${t}`, "connect", "hc wait", "hc send",
+    `write session /home/me/.herdr/investigations/inv-${t}`, "open host", "hc run", `save inv-${t}`, "connect", "hc wait", "hc send",
   ]);
   assert.deepEqual(problems, []);
   assert.deepEqual(entry, { id: `inv-${t}`, label: "Fix the login redirect", repoRoot: "/repo/app", repo: "o/app", branch: `investigate/fix-the-login-redirect-${t}`, workDir, agent: "t9" });
   assert.deepEqual(f.saved(), [entry]);
   assert.deepEqual(f.hcCalls.at(-1), ["send", "t9", "THE PROMPT"], "its first message is the prompt");
+});
+
+test("#57 start: the host opens first, for this session, its worktree and repo, and the agent starts under it", async () => {
+  const f = fakeStart();
+  await beginInvestigation(f.deps, ARGS);
+  const id = `inv-${(1_000_000).toString(36)}`;
+  const workDir = `/home/me/.herdr/worktrees/app/investigate-fix-the-login-redirect-${(1_000_000).toString(36)}`;
+  assert.deepEqual(f.hostCalls, [{ id, name: "Fix the login redirect agents", label: "Fix the login redirect", workDir, repoRoot: "/repo/app" }]);
+  const run = f.hcCalls[0];
+  assert.equal(run[run.indexOf("--parent") + 1], "tH");
+  assert.ok(run.includes("--outlive-parent") && run.includes("--no-notify") && !run.includes("--no-parent"));
+  assert.deepEqual(run, investigationRunArgs({ id, workDir: run[run.indexOf("--cwd") + 1], argv: run.slice(run.indexOf("--") + 1), parent: "tH" }));
+  assert.deepEqual(run.slice(run.indexOf("--") + 1, run.indexOf("--") + 4), ["claude", "--effort", "high"]);
+});
+
+test("#57 start: a host that won't open fails the start with the reason; no agent, tab or entry, and the worktree and branch go", async () => {
+  const f = fakeStart({ hostFails: new Error("the host tab couldn't be made (no room)") });
+  await assert.rejects(beginInvestigation(f.deps, ARGS), /The agent didn't start: its host tab didn't open \(the host tab couldn't be made \(no room\)\)/);
+  assert.ok(!f.hcCalls.length, "no agent was started");
+  assert.ok(!f.log.includes("connect") && !f.log.includes("close tab") && !f.log.some((l) => l.startsWith("close host")), "no tab, nothing else to close");
+  assert.deepEqual(f.saved(), []);
+  assert.equal(f.log.at(-1).startsWith("cleanup /repo/app investigate/"), true, "the worktree and branch made for it are taken back");
+});
+
+test("#57 start: whichever step fails later, the host is ended again (and the agent, tab, entry and worktree go as before)", async () => {
+  for (const [over, message] of [
+    [{ run: { code: 1, stdout: "", stderr: "no such program" } }, /The agent didn't start: no such program/],
+    [{ ready: { code: 0, stdout: '{"reason":"exit","exit_code":1}', stderr: "" } }, /didn't start properly/],
+    [{ send: { code: 1, stdout: "", stderr: "busy" } }, /didn't take its task/],
+  ]) {
+    const f = fakeStart(over);
+    await assert.rejects(beginInvestigation(f.deps, ARGS), message);
+    assert.equal(f.log.filter((l) => l === "close host tH").length, 1, message.source);
+    assert.ok(f.log.indexOf("close host tH") > f.log.indexOf("open host"));
+    assert.deepEqual(f.saved(), []);
+    assert.equal(f.log.at(-1).startsWith("cleanup "), true);
+  }
+});
+
+test("#57 start: a good start keeps its host; a tab that won't open is still only a problem to say", async () => {
+  const f = fakeStart();
+  await beginInvestigation(f.deps, ARGS);
+  assert.ok(!f.log.some((l) => l.startsWith("close host")));
+  const g = fakeStart({ connect: async () => { throw new Error("no room"); } });
+  await beginInvestigation(g.deps, ARGS);
+  assert.ok(!g.log.some((l) => l.startsWith("close host")));
 });
 
 test("start: the agent is the chosen one with the groomer's effort, in the worktree, labelled for the investigation", async () => {
@@ -386,6 +491,60 @@ test("Done ends the agent, removes the worktree, deletes the branch, forgets the
   assert.equal(sh(s.repo, "branch", "--list", s.branch), "", "the branch is gone");
   assert.deepEqual(f.saved().map((e) => e.id), ["other"], "only its own entry was removed");
   assert.equal(sh(s.repo, "worktree", "list", "--porcelain").includes(s.workDir), false);
+});
+
+const hostTerm = (id = "inv-1", address = "tH") => ({ address, state: "live", labels: { [INVESTIGATION_HOST_LABEL]: id, "herdr.role": "host" } });
+
+test("#57 Done ends the agent, THEN its host and the host's tab, then the worktree, branch, entry, slot and space", async () => {
+  const s = await scratch();
+  const f = fakeDone(s, { terms: [hostTerm()] });
+  f.deps.host = () => ({ tab: "tH", space: "s0", created: false });
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.deepEqual(got, { done: true, error: null, closed: true });
+  const order = ["hc kill t1", "hc kill tH", 'tab.close {"id":"tH","confirmed":true}', "clear host", "git worktree remove --force <wt>", "git branch -D investigate/fix-it-abc", "save", "clear slot", 'space.close {"id":"s1","confirmed":true}'];
+  assert.deepEqual(f.log.filter((l) => order.includes(l)), order);
+  assert.equal(existsSync(s.workDir), false);
+});
+
+test("#57 a host that is already gone counts as done: nothing is killed for it and Done finishes", async () => {
+  const s = await scratch();
+  const f = fakeDone(s);
+  f.deps.host = () => ({ tab: "tH", space: "s0", created: false }); // its record is still saved, the terminal is not
+  assert.equal((await endInvestigation(f.deps, entryOf(s))).done, true);
+  assert.ok(!f.log.some((l) => l.includes("tH ") || l === "hc kill tH"));
+  assert.ok(f.log.includes("clear host"), "the record is cleared on success");
+});
+
+test("#57 a host still live after its kill stops Done with the reason: nothing after it is done, and pressing Done again finishes", async () => {
+  const s = await scratch();
+  const stuck = fakeDone(s, { terms: [hostTerm()], stuck: ["tH"] });
+  const got = await endInvestigation(stuck.deps, entryOf(s));
+  assert.equal(got.done, false);
+  assert.match(got.error, /host tH: terminal busy/);
+  assert.ok(!stuck.log.some((l) => l.includes("worktree remove") || l.includes("branch -D") || l === "clear host" || l === "save" || l.startsWith("space.close")), "no worktree, branch, entry, slot or space; the record stays");
+  assert.equal(existsSync(s.workDir), true);
+  assert.equal(stuck.saved().some((e) => e.id === "inv-1"), true);
+  const again = fakeDone(s, { terms: [hostTerm()] }); // Done again, the host now ends
+  assert.equal((await endInvestigation(again.deps, entryOf(s))).done, true);
+  assert.equal(existsSync(s.workDir), false);
+});
+
+test("#57 Done doesn't end another session's host, nor a ticket run's: only the host labelled for this session", async () => {
+  const s = await scratch();
+  const f = fakeDone(s, { terms: [hostTerm(), hostTerm("inv-other", "tO"), { address: "tR", state: "live", labels: { "herdr.workflow.host": "inv-1" } }] });
+  assert.equal((await endInvestigation(f.deps, entryOf(s))).done, true);
+  assert.ok(f.log.includes("hc kill tH"));
+  assert.ok(!f.log.some((l) => l.includes("tO") || l.includes("tR")));
+});
+
+test("#57 an agent that ended on its own leaves its host until Done is pressed", async () => {
+  const s = await scratch();
+  const f = fakeDone(s, { terms: [hostTerm()] });
+  // nothing in Done runs on its own: the host is still listed live while the agent is gone
+  assert.deepEqual(f.deps.terminals().map((k) => k.address), ["tH"]);
+  assert.deepEqual(f.log, []);
+  assert.equal((await endInvestigation(f.deps, entryOf(s))).done, true);
+  assert.ok(f.log.includes("hc kill tH"));
 });
 
 test("Done removes the worktree even with uncommitted changes in it", async () => {
@@ -576,7 +735,7 @@ test("Done stops when a sub-agent won't die, naming it: nothing else is removed,
 
 test("Done ends the session's host through endHost, and a host that is already gone is done", async () => {
   const s = await scratch();
-  const host = { address: "th", state: "live", labels: { "herdr.workflow.host": "inv-1", "herdr.role": "host" } };
+  const host = { address: "th", state: "live", labels: { [INVESTIGATION_HOST_LABEL]: "inv-1", "herdr.role": "host" } };
   const f = fakeDone(s, { terms: [host, sub("t2")] });
   f.deps.panes = () => [{ pane: "pH", tab: "tH", terminal: "th" }, ...fakeDone(s).deps.panes()];
   f.deps.host = () => ({ tab: "tH", space: "s1", created: false });
@@ -588,24 +747,39 @@ test("Done ends the session's host through endHost, and a host that is already g
   assert.equal((await endInvestigation(none.deps, entryOf(s))).done, true);
 });
 
-test("#56 Done with the host as the first tab of the session's own space (created: true): the host's tab goes, then the whole space once, as the last step", async () => {
+test("#57 Done with the host alone in a space Start made for it (created: true): the host's tab goes, that space, and the session's own space last", async () => {
   const s = await scratch();
-  const host = { address: "th", state: "live", labels: { "herdr.workflow.host": "inv-1", "herdr.role": "host" } };
+  const host = { address: "th", state: "live", labels: { [INVESTIGATION_HOST_LABEL]: "inv-1", "herdr.role": "host" } };
   const f = fakeDone(s, { terms: [host] });
   const base = fakeDone(s).deps;
-  f.deps.spaces = () => [{ id: "s1", tabs: [{ id: "tH" }, { id: "tA" }] }, { id: "s0", tabs: [{ id: "tZ" }] }];
-  f.deps.panes = () => [{ pane: "pH", tab: "tH", terminal: "th", cwd: s.workDir }, ...base.panes()];
-  f.deps.host = () => ({ tab: "tH", space: "s1", created: true }); // what investigate.js saves under hostKey(<id>)
+  f.deps.spaces = () => [{ id: "sH", tabs: [{ id: "tH" }] }, { id: "s1", tabs: [{ id: "tA" }] }, { id: "s0", tabs: [{ id: "tZ" }] }];
+  f.deps.panes = () => [{ pane: "pH", tab: "tH", terminal: "th", cwd: s.repo }, ...base.panes()];
+  f.deps.host = () => ({ tab: "tH", space: "sH", created: true }); // what investigate.js saves under hostKey(<id>)
   const got = await endInvestigation(f.deps, entryOf(s));
   assert.deepEqual([got.done, got.closed], [true, true]);
-  assert.ok(f.log.includes('tab.close {"id":"tH","confirmed":true}'));
-  assert.equal(f.log.filter((l) => l.startsWith("space.close")).length, 1, "the space holds the agent's tab too, so only Done's own last step closes it");
-  assert.equal(f.log.at(-1), 'space.close {"id":"s1","confirmed":true}');
+  const closes = f.log.filter((l) => l.startsWith("tab.close") || l.startsWith("space.close"));
+  assert.deepEqual(closes, ['tab.close {"id":"tH","confirmed":true}', 'space.close {"id":"sH","confirmed":true}', 'space.close {"id":"s1","confirmed":true}']);
+  assert.equal(f.log.at(-1), 'space.close {"id":"s1","confirmed":true}', "the session's space is the last step, found by its worktree, not by the host");
+});
+
+test("#57 Done never closes the repo's space the host sat in (created: false), and keeps a space Start made when something else is in it", async () => {
+  const s = await scratch();
+  const host = { address: "th", state: "live", labels: { [INVESTIGATION_HOST_LABEL]: "inv-1", "herdr.role": "host" } };
+  const open = fakeDone(s, { terms: [host] });
+  open.deps.spaces = () => [{ id: "s1", tabs: [{ id: "tA" }] }, { id: "sR", tabs: [{ id: "tR" }, { id: "tH" }] }];
+  open.deps.host = () => ({ tab: "tH", space: "sR", created: false });
+  await endInvestigation(open.deps, entryOf(s));
+  assert.ok(!open.log.some((l) => l.startsWith("space.close") && l.includes("sR")), "the repo's space stays");
+  const made = fakeDone(s, { terms: [host] });
+  made.deps.spaces = () => [{ id: "s1", tabs: [{ id: "tA" }] }, { id: "sH", tabs: [{ id: "tH" }, { id: "tMine" }] }];
+  made.deps.host = () => ({ tab: "tH", space: "sH", created: true });
+  await endInvestigation(made.deps, entryOf(s));
+  assert.ok(!made.log.some((l) => l.includes("sH") && l.startsWith("space.close")), "a space the person added a tab to is kept");
 });
 
 test("Done stops when the host won't die", async () => {
   const s = await scratch();
-  const host = { address: "th", state: "live", labels: { "herdr.workflow.host": "inv-1" } };
+  const host = { address: "th", state: "live", labels: { [INVESTIGATION_HOST_LABEL]: "inv-1" } };
   const f = fakeDone(s, { terms: [host], stuck: ["th"] });
   const got = await endInvestigation(f.deps, entryOf(s));
   assert.equal(got.done, false);

@@ -1,6 +1,11 @@
 // An Investigation: a New Task agent that works like a workflow run. It has a branch and a git worktree of its own
 // (investigate/<what it is about>-<time>), runs in the background owned by no tab (hc run --bg, like a run's orchestrator),
 // and is shown in the first tab of a space of its own at the worktree, which the Spaces sidebar nests under the repo's.
+// Like a ticket run's orchestrator it has a **host** (bgrun.js): a tiny terminal in a tab of the repo's space (a space of its own named for the repo
+// when that isn't open) that is the agent's parent, so Herdr's Agents panel (which lists only terminals in a pane, and their children) lists host > agent > its helpers. A host
+// that won't open fails the start (the agent would be listed nowhere). It is labelled herdr.investigation.host=<id>; the agent's own
+// label stays herdr.investigation=<id>.
+// The host is not in the session's space, so closing that space or its tab ends neither the host nor the agent.
 // Done ends the agent and everything it started (investigators and prototype workers, their worktrees and branches, its host and
 // its session folder), closes that space, removes the worktree and deletes the branch. Pure apart from the deps it is handed
 // (no Herdr imports), so node --test runs it; investigate.js is Herdr's side, investigation-page.js the page in the tab.
@@ -14,6 +19,7 @@ import { row as terminalRow } from "./runview.js";
 // The list of investigations still to track (shared state): [{ id, label, repoRoot, repo, branch, workDir, agent }].
 // The tab's own slot ({ tab, left, space }) is kept beside it, per id, by bgrun.js's slotKey, as a run's is.
 export const INVESTIGATIONS_KEY = "github-tasks.investigations";
+export const INVESTIGATION_HOST_LABEL = "herdr.investigation.host"; // on the session's host terminal: the investigation's id. Never INVESTIGATION_LABEL: the host is not the agent, and investigationsFor reads the agent's status by that one
 export { INVESTIGATION_LABEL, sessionFolder }; // the label on the agent and on each of its helpers: the investigation's id; the session's folder (both in investigation-spawn.js)
 export const INVESTIGATION_ROLE = "investigation"; // its herdr.role label, and the mod pane's props.role
 export const TAB_NAME_MAX = 40;
@@ -32,6 +38,9 @@ export const tabNameFor = (label) => String(label).slice(0, TAB_NAME_MAX).trimEn
 
 // investigate/fix-the-login-redirect-lq3k9f2: the slug of the first line (40 at most), then the time, so two on one subject never share a branch.
 export const investigationBranch = (description, now = Date.now()) => `investigate/${slug(firstLine(description), 40) || "investigation"}-${now.toString(36)}`;
+
+// The session's host tab name: its description's first line cut at 40 and trimmed, and " agents" (`New task agents` with no description).
+export const investigationHostName = (description) => `${tabNameFor(firstLine(description) || "New task")} agents`;
 
 // `hc run` for the agent: in the background, owned by no tab (none of the herdr.space / herdr.tab labels that would adopt it into a
 // pane), labelled so it can be found again. Under `parent` (the session's host, bgrun.js) it outlives it and types no notes into it,
@@ -120,14 +129,15 @@ export function checkStart({ agent, where }) {
 // Makes the branch and worktree and the session's folder (sessionFolder: the spawn script and the prompts of the helpers the agent may
 // start), opens the host, starts the agent with the prompt as its first message and opens its tab; saves the entry as soon as the agent
 // exists. Throws with a message for the person, having taken back what it made: the agent, the host and the tab (launchRun), the saved
-// entry, the session folder, the worktree and the branch (all brand new, so nothing of the person's is in them).
+// entry, the session folder, the worktree and the branch (all brand new, so nothing of the person's is in them). A host that won't open
+// fails the start, with the reason, before the agent is started (and with no openHost to call, the start fails the same way).
 //   args: { agent (an entry of knownAgents()), description, repo, groomer ({ model, effort }), subAgents ({ investigator, worker }: each { agent,
 //           model, effort }, as normalizeSubAgent leaves them; the defaults when none), where ({ cwd, on }) }
 //   deps: { now(), home, mainCheckout(cwd) -> path, prepareWorktree(repoRoot, branch, target) -> path,
 //           worktreePath(repoRoot, branch, home), task(dir) -> the first message (dir: the session folder), knownAgents() -> the core's agents,
 //           writeSession(dir, files { name: text }), removeSession(dir), hc(args), connect(props) -> slot (throws), closeTab(),
 //           load() -> saved list, save(list), guard?(id, fn) -> Promise (runs fn alone for that id), cleanup?(repoRoot, branch, workDir) -> Promise (removes a worktree and branch),
-//           openHost?({ id, label, workDir, repoRoot }) -> host (throws; the agent's parent), closeHost?(host) }
+//           openHost({ id, name, label, workDir, repoRoot }) -> host (throws; the agent's parent; saves the host's record), closeHost(host) (ends it, clears the record) }
 //   Resolves with { entry, problems }.
 export async function beginInvestigation(deps, { agent, description, repo, groomer, subAgents, where }) {
   checkStart({ agent, where });
@@ -145,11 +155,11 @@ export async function beginInvestigation(deps, { agent, description, repo, groom
   const launchDeps = {
     hc: deps.hc, connect: deps.connect, closeTab: deps.closeTab,
     writePaneJson: async (full) => deps.save(withEntry(deps.load(), { ...base, agent: full.orchestrator })), // saved the moment the agent exists
-    openHost: deps.openHost && (() => deps.openHost({ id, label, workDir, repoRoot })),
+    openHost: deps.openHost && (() => deps.openHost({ id, name: investigationHostName(description), label, workDir, repoRoot })),
     closeHost: deps.closeHost,
   };
   const launch = () => launchRun(launchDeps, {
-    id, key: label, workDir, argv: newTaskAgentArgv(agent, groomer, dir), task, props, runArgs: investigationRunArgs, who: "agent",
+    id, key: label, workDir, argv: newTaskAgentArgv(agent, groomer, dir), task, props, runArgs: investigationRunArgs, who: "agent", hostRequired: true,
   });
   try {
     const known = await deps.knownAgents().catch(() => []);
@@ -211,7 +221,7 @@ export async function endInvestigation(deps, entry) {
     await deps.hc(["rm", k.address]).catch(() => {});
   }
   if (stuck.length) return fail(`Couldn't end ${stuck.join("; ")}. Nothing else was removed; end ${stuck.length > 1 ? "them" : "it"} with hc kill.`);
-  const hosted = await endHost({ id, hc: deps.hc, terminals: deps.terminals, run: deps.run, spaces: deps.spaces(), panes: deps.panes(), record: deps.host?.() ?? null });
+  const hosted = await endHost({ id, label: INVESTIGATION_HOST_LABEL, hc: deps.hc, terminals: deps.terminals, run: deps.run, spaces: deps.spaces(), panes: deps.panes(), record: deps.host?.() ?? null });
   if (hosted.error) return fail(`${hosted.error}. Nothing else was removed; end it with hc kill.`);
   deps.clearHost?.();
 

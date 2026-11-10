@@ -15,15 +15,14 @@ import { newTaskPrompt } from "./model.js";
 import { out, worktreePath } from "./run.js";
 import { sessionFolder } from "./investigation-spawn.js";
 import {
-  INVESTIGATIONS_KEY, INVESTIGATION_ROLE, agentOf, beginInvestigation, deleteBranch, investigationsFor, reapplyInvestigations, removeWorktree, tabNameFor,
+  INVESTIGATIONS_KEY, INVESTIGATION_HOST_LABEL, INVESTIGATION_ROLE, agentOf, beginInvestigation, deleteBranch, investigationsFor, reapplyInvestigations, removeWorktree, tabNameFor,
 } from "./investigations.js";
 
 export { investigationsFor };
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 
-const HOST_TAB = "agents";
-const HOST_NOTE = "Host of this session's agents in the Agents panel. Ends when the session is done.";
+const HOST_NOTE = "Host of this session's agents in the Agents panel. Ends when Done is pressed on the session.";
 
 // The sessions to list for a repo: the saved ones started from its main checkout (repoRoot) or for its GitHub name (repo), each with its
 // agent's status, an ended agent's too (only Done removes a session). Read from shared state and the core's terminals, so it follows
@@ -56,35 +55,34 @@ async function removeSession(dir) {
 }
 
 // Starts an Investigation: a New Task agent working in a worktree of its own, from the repo's default branch, in a tab of its own
-// space; its first message is the New Task prompt with `description` in it. It works from a ticket's worktree space too (the branch
+// space; its first message is the New Task prompt with `description` in it. The agent is started under a host (bgrun.js) so the Agents
+// panel lists it; a host that won't open fails the start. It works from a ticket's worktree space too (the branch
 // is cut in the repo's main checkout). Throws with a message for the person when it can't, with nothing left behind.
 //   args: { agent (of knownAgents()), description, repo, project, settings: { backlog, groomed }, groomer, subAgents: { investigator, worker } (their
 //           saved settings), where: { cwd, on }, local: { mainRoot } | null }
 //   Resolves with { entry } (investigations.js has its shape).
 export async function startInvestigation(args, cx) {
-  let id = null, created = null, hostSpace = null, sessionId = null;
+  let id = null, created = null, sessionId = null;
   const { entry, problems } = await beginInvestigation({
     now: () => Date.now(), home: home(), mainCheckout: (cwd) => mainCheckout(git, cwd), prepareWorktree: (repoRoot, branch, target) => prepareWorktree(git, repoRoot, branch, target),
     worktreePath, task: (dir) => promptFor(args, dir), hc, knownAgents: () => knownAgents(), writeSession, removeSession,
-    // The agent's parent, so the Agents panel lists host > agent > its helpers (bgrun.js): the first tab of the session's own space, which the
-    // agent's tab is then added to. Ended again, with the space, when the start fails.
+    // The agent's parent, so the Agents panel lists host > agent > its helpers (bgrun.js): a tab in the repo's space (a space of its own named
+    // for the repo when that isn't open), never in the session's space, so closing that ends neither. Labelled herdr.investigation.host=<id>,
+    // and a start fails without it (launchRun's hostRequired). Ended again when the start fails, with the space this start made for it.
     openHost: async (info) => {
       sessionId = info.id;
-      const host = await openHost({ app, hc, run }, { id: info.id, name: HOST_TAB, repoRoot: info.repoRoot, spaces: spaces(), panes: panes(), own: { spaceName: tabNameFor(info.label), folder: info.workDir, note: HOST_NOTE } });
+      const host = await openHost({ app, hc, run }, { id: info.id, name: info.name, repoRoot: info.repoRoot, spaces: spaces(), panes: panes(), label: INVESTIGATION_HOST_LABEL, note: HOST_NOTE });
       setShared(hostKey(info.id), { tab: host.tab, space: host.space, created: host.created });
-      hostSpace = host.space ?? null;
       return host;
     },
     closeHost: async (host) => {
-      await endHost({ id: sessionId, hc, terminals, run, spaces: spaces(), panes: panes(), record: shared(hostKey(sessionId)), also: [host?.address], closeSpace: true });
+      await endHost({ id: sessionId, label: INVESTIGATION_HOST_LABEL, hc, terminals, run, spaces: spaces(), panes: panes(), record: shared(hostKey(sessionId)), also: [host?.address], closeSpace: true });
       setShared(hostKey(sessionId), null);
-      hostSpace = null;
     },
     // A new space at the worktree, named for the session, its first tab the agent's; the Spaces sidebar nests it under the repo's.
-    // With a host that space is already there (the host is its first tab), so the agent's tab is added to it.
     connect: async (props) => {
       id = props.id;
-      const slot = await connect({ id, orchestrator: props.orchestrator, title: tabNameFor(props.title), space: hostSpace, folder: props.folder, props, kind: "investigation" }, cx);
+      const slot = await connect({ id, orchestrator: props.orchestrator, title: tabNameFor(props.title), space: null, folder: props.folder, props, kind: "investigation" }, cx);
       created = slot.created ? slot.space : null;
       return slot;
     },
