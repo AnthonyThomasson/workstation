@@ -401,6 +401,13 @@ export function checkMods(root) {
   // Every call of a function declared in this mod (a function declaration or a const arrow/function), also from other
   // files of the mod when it is exported (not from tests). A function used as a plain value has callers the check can't see.
   function callSitesOf(fn) {
+    const name = fn.type === "FunctionDeclaration" ? fn.id?.name : fn.parent?.type === "VariableDeclarator" ? fn.parent.id.name : "the function";
+    return usesOf(fn).map((ref) => (ref.parent.type === "CallExpression" || ref.parent.type === "NewExpression") && ref.parent.callee === ref ? ref.parent : unfollow(`"${name}" is used as a value, so its callers are unknown`));
+  }
+
+  // Every place a function declared in this mod is named: the references in its file, and when it is exported the
+  // references in the importing files (a namespace import's `ns.fn` counts as one). Tests are left out.
+  function usesOf(fn) {
     const info = infoOf(fn);
     const name = fn.type === "FunctionDeclaration" ? fn.id?.name : fn.parent?.type === "VariableDeclarator" && fn.parent.init === fn && fn.parent.id.type === "Identifier" ? fn.parent.id.name : null;
     if (!name) unfollow("the function has no name, so its callers are unknown");
@@ -432,7 +439,7 @@ export function checkMods(root) {
         }
       }
     }
-    return refs.map((ref) => (ref.parent.type === "CallExpression" || ref.parent.type === "NewExpression") && ref.parent.callee === ref ? ref.parent : unfollow(`"${name}" is used as a value, so its callers are unknown`));
+    return refs;
   }
 
   // ---- Following shared/setShared (and functions that pass a key on) to where the key is given ----
@@ -447,7 +454,7 @@ export function checkMods(root) {
     const info = infoOf(R);
     if (R.type === "FunctionDeclaration") {
       if (path.length) unfollow("a function with properties");
-      for (const ref of info.top.lookup(R.id.name)?.refs ?? []) followRef(ref, path, kind);
+      for (const ref of usesOf(R)) followRef(ref, path, kind);
       return;
     }
     const p = R.parent;
@@ -489,6 +496,7 @@ export function checkMods(root) {
       case "VariableDeclarator":
         if (p.init === R && p.id.type === "Identifier") {
           const b = R._scope.lookup(p.id.name);
+          if (isFn(R) && b?.kind === "const") { for (const ref of usesOf(R)) followRef(ref, path, kind); return; } // exported or not, its users are followed
           if ([...info.exports.values()].some((e) => e.local === p.id.name)) unfollow("exported, so used by code the check doesn't see");
           if (b?.kind === "const") { refsOf(b); return; }
         }
@@ -659,6 +667,29 @@ export function checkMods(root) {
           covered.add(name);
           if (h.run) failUnfollowed(info, e, "file-path", name, RUN_TIME);
           else fail(info, e, "file-path", name, `path "mods/${name}/..." ${h.why}`);
+        }
+      }
+    }
+    // ["mods", "beta", "x.js"].join("/")
+    for (const call of info.calls) {
+      const c = call.callee;
+      if (call.type !== "CallExpression" || c.type !== "MemberExpression" || c.computed || c.property.name !== "join" || c.object.type !== "ArrayExpression") continue;
+      const sep = call.arguments[0];
+      if (!sep || sep.type !== "Literal" || sep.value !== "/") continue;
+      let alts = [{ text: "", partial: false }];
+      c.object.elements.forEach((el, i) => {
+        let next = null;
+        if (el && el.type !== "SpreadElement") { try { next = keyOf(el); } catch (err) { if (!(err instanceof Unfollow)) throw err; } }
+        alts = alts.flatMap((a) => (a.partial ? [a] : next ? next.map((n) => ({ text: a.text + (i ? "/" : "") + n.text, partial: n.partial })) : [{ text: a.text + (i ? "/" : ""), partial: true }]));
+      });
+      const covered = new Set(pieceHits.filter((h) => h.node.start >= call.start && h.node.end <= call.end).map((h) => h.name));
+      for (const a of alts) {
+        for (const h of pathHits(info, a.text, a.partial)) {
+          const name = h.run ? "mods/${...}" : h.name;
+          if (covered.has(name)) continue;
+          covered.add(name);
+          if (h.run) failUnfollowed(info, call, "file-path", name, RUN_TIME);
+          else fail(info, call, "file-path", name, `path "mods/${name}/..." ${h.why}`);
         }
       }
     }

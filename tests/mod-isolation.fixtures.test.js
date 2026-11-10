@@ -77,6 +77,15 @@ const EXPECTED = [
   "alpha/run-time-paths.js:2 file-path",
   "alpha/run-time-paths.js:3 file-path",
   "alpha/run-time-paths.js:4 file-path",
+  "alpha/run-time-paths.js:7 file-path",
+  "alpha/run-time-paths.js:8 file-path",
+  // a key passed through an exported function (declaration, default, arrow, or via a namespace) is followed into the importing files;
+  // an exported function that is also used as a plain value has callers the check can't see
+  "alpha/exported-key-user.js:3 shared-key",
+  "alpha/exported-key-user.js:4 shared-key",
+  "alpha/exported-key-user.js:5 shared-key",
+  "alpha/exported-key-user.js:6 shared-key",
+  "alpha/exported-pass.js:2 shared-key",
   // the line is where the matched text is: inside a multi-line template, after a line continuation, in the template's second part
   "alpha/multiline.js:2 file-path",
   "alpha/multiline.js:5 file-path",
