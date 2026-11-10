@@ -195,6 +195,9 @@ function fakeStart({ run = { code: 0, stdout: '{"address":"t9"}', stderr: "" }, 
     prepareWorktree: async (repoRoot, branch, target) => { log.push(`worktree ${repoRoot} ${branch} ${target}`); return target; },
     worktreePath: (repoRoot, branch, home) => worktreePath(repoRoot, branch, home),
     task: async () => { log.push("task"); if (task) throw task; return "THE PROMPT"; },
+    knownAgents: async () => [],
+    writeSession: async (dir) => { log.push(`write session ${dir}`); },
+    removeSession: async (dir) => { log.push(`remove session ${dir}`); },
     hc: async (a) => { hcCalls.push(a); log.push(`hc ${a[0]}`); return a[0] === "run" ? run : a[0] === "wait" ? ready : a[0] === "send" ? send : { code: 0, stdout: "", stderr: "" }; },
     connect: async (props) => { log.push("connect"); return connect ? connect(props) : { tab: "tX", left: "pX", space: "s1" }; },
     closeTab: () => log.push("close tab"),
@@ -212,7 +215,7 @@ test("start: the worktree is made from the main checkout, the entry saved once t
   const workDir = `/home/me/.herdr/worktrees/app/investigate-fix-the-login-redirect-${t}`;
   assert.deepEqual(f.log, [
     "mainCheckout /repo/app", "task", `worktree /repo/app investigate/fix-the-login-redirect-${t} ${workDir}`,
-    "hc run", `save inv-${t}`, "connect", "hc wait", "hc send",
+    `write session /home/me/.herdr/investigations/inv-${t}`, "hc run", `save inv-${t}`, "connect", "hc wait", "hc send",
   ]);
   assert.deepEqual(problems, []);
   assert.deepEqual(entry, { id: `inv-${t}`, label: "Fix the login redirect", repoRoot: "/repo/app", repo: "o/app", branch: `investigate/fix-the-login-redirect-${t}`, workDir, agent: "t9" });
@@ -224,7 +227,9 @@ test("start: the agent is the chosen one with the groomer's effort, in the workt
   const f = fakeStart();
   await beginInvestigation(f.deps, ARGS);
   const run = f.hcCalls[0];
-  assert.deepEqual(run.slice(run.indexOf("--") + 1), ["claude", "--effort", "high"]);
+  const sessionFolder = `/home/me/.herdr/investigations/inv-${(1_000_000).toString(36)}`;
+  assert.deepEqual(run.slice(run.indexOf("--") + 1).slice(0, 3), ["claude", "--effort", "high"]);
+  assert.ok(run.includes("--add-dir") && run.includes(sessionFolder), "and the right to use the session's helpers (investigation-spawn.test.js)");
   assert.equal(run[run.indexOf("--cwd") + 1].startsWith("/home/me/.herdr/worktrees/app/investigate-"), true);
   assert.ok(run.includes(`${INVESTIGATION_LABEL}=inv-${(1_000_000).toString(36)}`));
 });
@@ -581,6 +586,21 @@ test("Done ends the session's host through endHost, and a host that is already g
   assert.ok(f.log.includes("clear host"));
   const none = fakeDone(s); // no host at all this time (and its folder already gone)
   assert.equal((await endInvestigation(none.deps, entryOf(s))).done, true);
+});
+
+test("#56 Done with the host as the first tab of the session's own space (created: true): the host's tab goes, then the whole space once, as the last step", async () => {
+  const s = await scratch();
+  const host = { address: "th", state: "live", labels: { "herdr.workflow.host": "inv-1", "herdr.role": "host" } };
+  const f = fakeDone(s, { terms: [host] });
+  const base = fakeDone(s).deps;
+  f.deps.spaces = () => [{ id: "s1", tabs: [{ id: "tH" }, { id: "tA" }] }, { id: "s0", tabs: [{ id: "tZ" }] }];
+  f.deps.panes = () => [{ pane: "pH", tab: "tH", terminal: "th", cwd: s.workDir }, ...base.panes()];
+  f.deps.host = () => ({ tab: "tH", space: "s1", created: true }); // what investigate.js saves under hostKey(<id>)
+  const got = await endInvestigation(f.deps, entryOf(s));
+  assert.deepEqual([got.done, got.closed], [true, true]);
+  assert.ok(f.log.includes('tab.close {"id":"tH","confirmed":true}'));
+  assert.equal(f.log.filter((l) => l.startsWith("space.close")).length, 1, "the space holds the agent's tab too, so only Done's own last step closes it");
+  assert.equal(f.log.at(-1), 'space.close {"id":"s1","confirmed":true}');
 });
 
 test("Done stops when the host won't die", async () => {

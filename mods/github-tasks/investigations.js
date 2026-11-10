@@ -6,14 +6,15 @@
 // (no Herdr imports), so node --test runs it; investigate.js is Herdr's side, investigation-page.js the page in the tab.
 import { FOLDER_LABEL, ROLE_LABEL, shQuote } from "./run.js";
 import { slug } from "./workflow-model.js";
-import { groomArgv } from "./model.js";
+import { normalizeSubAgent } from "./model.js";
+import { INVESTIGATION_LABEL, newTaskAgentArgv, sessionFiles, sessionFolder, subAgentArgv } from "./investigation-spawn.js";
 import { endHost, findTicketSpace, launchRun, runTabParts } from "./bgrun.js";
 import { row as terminalRow } from "./runview.js";
 
 // The list of investigations still to track (shared state): [{ id, label, repoRoot, repo, branch, workDir, agent }].
 // The tab's own slot ({ tab, left, space }) is kept beside it, per id, by bgrun.js's slotKey, as a run's is.
 export const INVESTIGATIONS_KEY = "github-tasks.investigations";
-export const INVESTIGATION_LABEL = "herdr.investigation"; // on the agent: the investigation's id
+export { INVESTIGATION_LABEL, sessionFolder }; // the label on the agent and on each of its helpers: the investigation's id; the session's folder (both in investigation-spawn.js)
 export const INVESTIGATION_ROLE = "investigation"; // its herdr.role label, and the mod pane's props.role
 export const TAB_NAME_MAX = 40;
 
@@ -32,11 +33,14 @@ export const tabNameFor = (label) => String(label).slice(0, TAB_NAME_MAX).trimEn
 // investigate/fix-the-login-redirect-lq3k9f2: the slug of the first line (40 at most), then the time, so two on one subject never share a branch.
 export const investigationBranch = (description, now = Date.now()) => `investigate/${slug(firstLine(description), 40) || "investigation"}-${now.toString(36)}`;
 
-// `hc run` for the agent: in the background, owned by nothing (no parent, none of the herdr.space / herdr.tab labels that would
-// adopt it into a pane), labelled so it can be found again. `key` is unused: launchRun passes the same fields as for a run.
-export function investigationRunArgs({ id, workDir, argv }) {
+// `hc run` for the agent: in the background, owned by no tab (none of the herdr.space / herdr.tab labels that would adopt it into a
+// pane), labelled so it can be found again. Under `parent` (the session's host, bgrun.js) it outlives it and types no notes into it,
+// so the Agents panel lists host > agent > its helpers; without one it has no parent. `key` is unused: launchRun passes the same
+// fields as for a run.
+export function investigationRunArgs({ id, workDir, argv, parent = null }) {
   const labels = [`${INVESTIGATION_LABEL}=${id}`, `${ROLE_LABEL}=${INVESTIGATION_ROLE}`, `${FOLDER_LABEL}=${workDir}`];
-  return ["run", "--bg", "--json", "--no-parent", "--cwd", workDir, ...labels.flatMap((l) => ["--label", l]), "--", ...argv];
+  const family = parent ? ["--parent", parent, "--outlive-parent", "--no-notify"] : ["--no-parent"];
+  return ["run", "--bg", "--json", ...family, "--cwd", workDir, ...labels.flatMap((l) => ["--label", l]), "--", ...argv];
 }
 
 // ---- The saved list -----------------------------------------------------------------------------------
@@ -113,36 +117,48 @@ export function checkStart({ agent, where }) {
   if (!agent?.run?.length) throw new Error("Pick an agent that is installed on this computer.");
 }
 
-// Makes the branch and worktree, starts the agent with the prompt as its first message and opens its tab; saves the entry as
-// soon as the agent exists. Throws with a message for the person, having taken back what it made: the agent and the tab
-// (launchRun), the saved entry, the worktree and the branch (all brand new, so nothing of the person's is in them).
-//   args: { agent (an entry of knownAgents()), description, repo, groomer ({ model, effort }), where ({ cwd, on }) }
+// Makes the branch and worktree and the session's folder (sessionFolder: the spawn script and the prompts of the helpers the agent may
+// start), opens the host, starts the agent with the prompt as its first message and opens its tab; saves the entry as soon as the agent
+// exists. Throws with a message for the person, having taken back what it made: the agent, the host and the tab (launchRun), the saved
+// entry, the session folder, the worktree and the branch (all brand new, so nothing of the person's is in them).
+//   args: { agent (an entry of knownAgents()), description, repo, groomer ({ model, effort }), subAgents ({ investigator, worker }: each { agent,
+//           model, effort }, as normalizeSubAgent leaves them; the defaults when none), where ({ cwd, on }) }
 //   deps: { now(), home, mainCheckout(cwd) -> path, prepareWorktree(repoRoot, branch, target) -> path,
-//           worktreePath(repoRoot, branch, home), task() -> the first message, hc(args), connect(props) -> slot (throws), closeTab(),
-//           load() -> saved list, save(list), guard?(id, fn) -> Promise (runs fn alone for that id), cleanup?(repoRoot, branch, workDir) -> Promise (removes a worktree and branch) }
+//           worktreePath(repoRoot, branch, home), task(dir) -> the first message (dir: the session folder), knownAgents() -> the core's agents,
+//           writeSession(dir, files { name: text }), removeSession(dir), hc(args), connect(props) -> slot (throws), closeTab(),
+//           load() -> saved list, save(list), guard?(id, fn) -> Promise (runs fn alone for that id), cleanup?(repoRoot, branch, workDir) -> Promise (removes a worktree and branch),
+//           openHost?({ id, label, workDir, repoRoot }) -> host (throws; the agent's parent), closeHost?(host) }
 //   Resolves with { entry, problems }.
-export async function beginInvestigation(deps, { agent, description, repo, groomer, where }) {
+export async function beginInvestigation(deps, { agent, description, repo, groomer, subAgents, where }) {
   checkStart({ agent, where });
   const now = deps.now();
   const repoRoot = await deps.mainCheckout(where.cwd); // the main checkout, even when started from one of its worktrees
   const repoName = repo || repoRoot.split("/").filter(Boolean).pop() || "";
   const label = investigationLabel(description, repoName);
-  const task = await deps.task(); // before anything is made: a failure here leaves nothing behind
   const id = investigationId(now), branch = investigationBranch(description, now);
+  const dir = sessionFolder(deps.home, id);
+  const task = await deps.task(dir); // before anything is made: a failure here leaves nothing behind
   const workDir = await deps.prepareWorktree(repoRoot, branch, deps.worktreePath(repoRoot, branch, deps.home));
   const base = { id, label, repoRoot, repo: repoName, branch, workDir };
   const props = { role: INVESTIGATION_ROLE, id, orchestrator: null, title: label, branch, folder: workDir, repoRoot };
   const launchDeps = {
     hc: deps.hc, connect: deps.connect, closeTab: deps.closeTab,
     writePaneJson: async (full) => deps.save(withEntry(deps.load(), { ...base, agent: full.orchestrator })), // saved the moment the agent exists
+    openHost: deps.openHost && (() => deps.openHost({ id, label, workDir, repoRoot })),
+    closeHost: deps.closeHost,
   };
   const launch = () => launchRun(launchDeps, {
-    id, key: label, workDir, argv: groomArgv(agent.key, agent.run, groomer ?? {}), task, props, runArgs: investigationRunArgs, who: "agent",
+    id, key: label, workDir, argv: newTaskAgentArgv(agent, groomer, dir), task, props, runArgs: investigationRunArgs, who: "agent",
   });
   try {
+    const known = await deps.knownAgents().catch(() => []);
+    const mine = { investigator: normalizeSubAgent(subAgents?.investigator), worker: normalizeSubAgent(subAgents?.worker) };
+    const argv = { investigator: subAgentArgv("investigator", mine.investigator, known, dir), worker: subAgentArgv("worker", mine.worker, known, dir) };
+    await deps.writeSession(dir, sessionFiles({ id, dir, workDir, repoRoot, repo: repoName, branch, argv })); // before the agent: it may use them at once
     const launched = await (deps.guard ? deps.guard(id, launch) : launch()); // guarded as a whole, so View never makes a second tab meanwhile
     return { entry: { ...base, agent: launched.orchestrator }, problems: launched.problems };
   } catch (e) {
+    await Promise.resolve(deps.removeSession(dir)).catch(() => {});
     deps.save(withoutEntry(deps.load(), id));
     await deps.cleanup?.(repoRoot, branch, workDir).catch(() => {});
     throw e;
@@ -226,13 +242,6 @@ export async function endInvestigation(deps, entry) {
   else if (own) deps.run("space.close", { id: own, confirmed: true });
   else return { done: true, error: null, closed: false };
   return { done: true, error: null, closed: true };
-}
-
-// The session's folder, ~/.herdr/investigations/<id>/, which holds its spawn script and prompts: null unless the id is an
-// investigation's own (inv-<base 36>), so nothing outside ~/.herdr/investigations can ever be named.
-export function sessionFolder(home, id) {
-  if (!/^inv-[a-z0-9]+$/.test(String(id ?? "")) || !String(home ?? "").replace(/\/+$/, "")) return null;
-  return `${String(home).replace(/\/+$/, "")}/.herdr/investigations/${id}`;
 }
 
 // What the session's prototype workers made: the worktrees of `git worktree list` whose folder starts `<workDir>--` and whose

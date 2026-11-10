@@ -1182,3 +1182,27 @@ test("#41 restart: the new orchestrator goes under the run's live host when ther
 });
 
 test("#41 the host's saved record is per run", () => assert.notEqual(hostKey("a"), hostKey("b")));
+
+test("#56 a session's host gets a space of its own at the session's worktree, never the repo's, named for the session", async () => {
+  const f = fakeHostApp();
+  const own = { spaceName: "Fix the login", folder: "/wt/repo/investigate-x", note: "Host of this session's agents." };
+  const host = await openHost(f.deps, { id: "inv-x", name: "agents", repoRoot: REPO, spaces: RSPACES, panes: RPANES, own });
+  assert.deepEqual(host, { address: "t20", tab: "tN", space: "sN", created: true }, "the repo's space is open (sR) and is not used");
+  assert.equal(f.log[0][0], "space.new");
+  assert.deepEqual({ ...f.log[0][1], argv: undefined }, { name: "Fix the login", tab: "agents", folder: "/wt/repo/investigate-x", argv: undefined });
+  assert.deepEqual(f.log[0][1].argv, hostArgv(own.note));
+  assert.deepEqual(f.log[1], ["hc", ["label", "t20", "herdr.workflow.host=inv-x", "herdr.role=host"]]);
+});
+
+test("#56 a session's host that can't be labelled is ended, and its space closed", async () => {
+  const f = fakeHostApp({ label: { code: 1, stdout: "", stderr: "nope" } });
+  await assert.rejects(openHost(f.deps, { id: "inv-x", name: "agents", repoRoot: REPO, spaces: [], panes: [], own: { spaceName: "S", folder: "/wt/x" } }), /couldn't be labelled/);
+  assert.ok(f.log.some(([n, a]) => n === "space.close" && a.id === "sN"));
+});
+
+test("#56 the host's note can be said for a session, and is the ticket's by default", () => {
+  assert.match(hostArgv()[2], /Ends when the ticket is merged/);
+  const text = hostArgv("Host of 'this' session.")[2];
+  assert.match(text, /Host of '\\''this'\\'' session\./);
+  assert.equal(spawnSync("sh", ["-c", text.replace(/exec tail -f \/dev\/null/, "true")], { encoding: "utf8" }).stdout.split("\x07")[1], "Host of 'this' session.\n");
+});

@@ -181,6 +181,16 @@ export function normalizeGroomer(raw) {
   return { agent: text(raw?.agent) || null, model: text(raw?.model), effort: EFFORTS.includes(raw?.effort) ? raw.effort : "medium" };
 }
 
+// The New Task agent's own helpers (investigation-spawn.js): the investigators and prototype workers it may start. Each has its own
+// agent, model and effort, saved apart from the New Task agent's: { agent, model, effort }, claude / "" (the agent's own) / medium.
+export const INVESTIGATOR_KEY = "github-tasks.investigator";
+export const WORKER_KEY = "github-tasks.protoWorker";
+// "custom" (a workflow's own command) is not a choice here, so a saved one reads as the default.
+export const normalizeSubAgent = (raw) => {
+  const g = normalizeGroomer(raw);
+  return { ...g, agent: g.agent && g.agent !== "custom" ? g.agent : "claude" };
+};
+
 // The command that opens the grooming agent: its own command plus the model and effort the person chose.
 // Only Claude and Codex take an effort; any other agent just gets --model when one is set.
 export function groomArgv(agent, base, { model, effort }) {
@@ -247,10 +257,23 @@ export function newTaskStart(description) {
   ].join("\n");
 }
 
+// What both New Task prompts say about the agents it may start, given the session folder (`dir`, which holds the spawn script); no lines
+// without one. A prototype is only ever a throwaway: the agent still writes no code, and what a worker builds is not the ticket's work.
+export function newTaskSubAgents(dir) {
+  if (!dir) return [];
+  return [
+    "## Starting helpers", "",
+    "You may start helpers, but only when you need them: most tasks need none. Each one sends you its report with `hc send`; wait for it with `hc wait --children any`, and end the helper with `hc kill <name>` once you have it. Put the brief in single quotes, and write any `'` inside it as `'\\''`.", "",
+    `- \`${dir}/spawn investigator <name> '<brief>'\` explores this worktree read-only to answer a question about the code, which you can use when reading it yourself would take too long.`,
+    `- \`${dir}/spawn worker <job> '<brief>'\` builds a throwaway prototype in a worktree of its own, to find out whether an idea works. Use it only for a really complex task.`,
+    "- A prototype's code is thrown away when the person presses Done and never becomes the ticket's work: use what the worker learned to write the ticket, not the code.", "",
+  ];
+}
+
 // What the agent is first told by the + in the Tasks header: it waits for the person to say what they want (or, given a
 // description, reads the code and starts from it), grills them until the ticket is well defined, then asks before creating
 // it and which status it should start in.
-export function newTaskPrompt({ repo: repoName, project, backlog = STATUSES.backlog, groomed = STATUSES.groomed, description = "" }) {
+export function newTaskPrompt({ repo: repoName, project, backlog = STATUSES.backlog, groomed = STATUSES.groomed, description = "", agentsDir = "" }) {
   const repo = repoName || "<repo>";
   const board = `the GitHub Project "${project ? project.title ?? "" : "<project>"}"${project?.url ? ` (${project.url})` : ""}`;
   return [
@@ -265,6 +288,7 @@ export function newTaskPrompt({ repo: repoName, project, backlog = STATUSES.back
     "Then grill them until the task is well defined. Ask one question at a time, say what you would pick and why, and wait for the answer before the next question. " + ASK_WITH_TOOL + " Read the code yourself when that answers a question, and ask only about what you can't tell.",
     "Pin down the acceptance criteria: what done looks like, how someone could check it, what is out of scope, edge cases and failure cases, and anything it depends on. If the task is too big for one ticket, suggest how to split it.",
     "When it is well defined, show the ticket back: a short title, a description, and the acceptance criteria as a checklist. Ask whether to create it, and whether it should be in " + `"${groomed}" or "${backlog}"` + ". Wait for the answer.", "",
+    ...newTaskSubAgents(agentsDir),
     "## While you work", "",
     "- Don't create anything until the person says to.",
     `- Create the ticket on ${board} with the status they chose.`,

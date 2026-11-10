@@ -5,7 +5,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Popover, TextView } from "gpui-base";
 import { home, run, shared, setShared, theme } from "herdr";
-import { normalizeGroomer, GROOMER_KEY, EFFORTS, PLACE, TASK_SOURCE } from "./model.js";
+import { normalizeGroomer, normalizeSubAgent, GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, EFFORTS, PLACE, TASK_SOURCE } from "./model.js";
 import { CHANGED } from "./editor.js";
 import { CLAUDE_MODELS } from "./models.js";
 import { installedAgents } from "./groom.js";
@@ -26,6 +26,14 @@ const SECTIONS = [
   { role: "investigator", label: "Investigator" },
 ];
 
+// The helpers the New Task agent may start (investigation-spawn.js), each with agent, model and effort of its own and a prompt tab.
+const SUB_AGENTS = [
+  { id: "investigator", heading: "Investigators", role: "newTaskInvestigator", about: "Read-only helpers the New Task agent starts to explore the code." },
+  { id: "worker", heading: "Workers (prototypes)", role: "newTaskWorker", about: "Helpers it starts to build a throwaway prototype of something complex. Their code is discarded when the session is done." },
+];
+// What a prompt tab is called, for the prompts that are not a section's own.
+const PROMPT_TITLES = { newTaskInvestigator: "New Task investigator", newTaskWorker: "New Task worker" };
+
 export class TaskSettings {
   constructor(props, cx, onClose, workflows) {
     this.workflows = workflows ?? null; // the WorkflowList to draw under the agent settings
@@ -42,6 +50,12 @@ export class TaskSettings {
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
     this.model = InputState.new({ value: this.groomer().model, placeholder: "Agent's default" });
     this.model.on("change", (_e, cx) => { this.saveGroomer({ model: this.model.value().trim() }); cx.notify(); });
+    this.subModels = {}; // the model boxes of the investigators and the workers, by SUB_AGENTS id
+    for (const sub of SUB_AGENTS) {
+      const input = InputState.new({ value: this.subAgent(sub.id).model, placeholder: "Agent's default" });
+      input.on("change", (_e, cx) => { this.saveSubAgent(sub.id, { model: input.value().trim() }); cx.notify(); });
+      this.subModels[sub.id] = input;
+    }
     if (this.project) cx.spawn(async (cx) => {
       try { this.options = (await loadStatusField(gh, this.project.id, this.where))?.options ?? []; } catch { this.options = []; }
       cx.notify();
@@ -50,6 +64,12 @@ export class TaskSettings {
 
   groomer() { return normalizeGroomer(shared(GROOMER_KEY)); }
   saveGroomer(patch) { setShared(GROOMER_KEY, { ...this.groomer(), ...patch }); }
+  // An investigator's or worker's saved choice: claude / the agent's own model / medium until the person changes it, whatever is saved.
+  subAgent(id) { return normalizeSubAgent(id === "investigator" ? shared(INVESTIGATOR_KEY) : shared(WORKER_KEY)); }
+  saveSubAgent(id, patch) {
+    const next = { ...this.subAgent(id), ...patch };
+    if (id === "investigator") setShared(INVESTIGATOR_KEY, next); else setShared(WORKER_KEY, next);
+  }
   sections() { return normalizeSettingsSections(shared(SECTIONS_KEY)); }
 
   toggleSection(role, cx) {
@@ -59,9 +79,9 @@ export class TaskSettings {
   }
 
   openPrompt(role) {
-    const section = SECTIONS.find((s) => s.role === role);
+    const label = SECTIONS.find((s) => s.role === role)?.label ?? PROMPT_TITLES[role];
     run("tab.new", {
-      name: `${section.label} prompt`,
+      name: `${label} prompt`,
       mod: "github-tasks",
       props: { role: "prompt", promptRole: role, repo: this.repo, project: this.project, options: this.options, local: this.localPrompt() },
     });
@@ -193,22 +213,38 @@ export class TaskSettings {
 
   agentBody(t) {
     const g = this.groomer(), agent = this.agent();
+    return v_flex().flex_none().gap(10)
+      .child(note(t, `The + in the Tasks header opens this agent. The model and effort are passed to the agent when it starts.`))
+      .child(this.agentPicker(t, { prefix: "groom", state: g, selected: agent?.key, input: this.model, save: (patch) => this.saveGroomer(patch) }))
+      .children(SUB_AGENTS.map((sub) => {
+        const state = this.subAgent(sub.id);
+        return v_flex().id(`settings-${sub.id}s`).flex_none().gap(10).pt(6)
+          .child(h_flex().gap(6).items_center()
+            .child(div().flex_1().min_w(0).truncate().text_size(S().title).font_semibold().child(sub.heading))
+            .child(action(`settings-${sub.role}-prompt`, "Prompt", t, () => this.openPrompt(sub.role), true)))
+          .child(note(t, sub.about))
+          .child(this.agentPicker(t, { prefix: sub.id, state, selected: state.agent, input: this.subModels[sub.id], save: (patch) => this.saveSubAgent(sub.id, patch) }));
+      }));
+  }
+
+  // The Agent, Model and Effort controls of one agent. prefix makes their ids distinct from the other agents' on the page; selected is the
+  // agent key to mark (the New Task agent's falls back to what is installed, a helper's is what is saved); save(patch) keeps a change.
+  agentPicker(t, { prefix, state, selected, input, save }) {
     const chip = (id, label, on, onClick) => h_flex().id(id).h(28).px(10).items_center().rounded(6).cursor_pointer()
       .border_1().border_color(t.border).bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted)
       .hover((s) => s.bg(on ? t.selected : t.hover)).on_mouse_down("left", stop).on_click(onClick).child(label);
     const heading = (text) => div().text_size(S().secondary).font_semibold().child(text);
     return v_flex().flex_none().gap(10)
-      .child(note(t, `The + in the Tasks header opens this agent. The model and effort are passed to the agent when it starts.`))
       .child(v_flex().gap(4).child(heading("Agent"))
         .child(h_flex().flex_wrap().gap(4).children(this.agents.length
-          ? this.agents.map((a) => chip(`groom-agent-${a.key}`, a.name, a.key === agent?.key, (_e, cx) => { this.saveGroomer({ agent: a.key }); cx.notify(); }))
+          ? this.agents.map((a) => chip(`${prefix}-agent-${a.key}`, a.name, a.key === selected, (_e, cx) => { save({ agent: a.key }); cx.notify(); }))
           : [note(t, "No installed agents were found.")])))
       .child(v_flex().gap(4).child(heading("Model"))
-        .child(div().id("groom-model-field").h(34).flex_none().px(10).flex().items_center().rounded(8).border_1().border_color(t.input).on_mouse_down("left", stop)
-          .child(Input.new(this.model).h_full().w_full().text_size(S().body).text_color(t.foreground)))
-        .when(agent?.key === "claude", (el) => el.child(h_flex().flex_wrap().gap(4).children(CLAUDE_MODELS.map((m) =>
-          chip(`groom-model-${m.id}`, m.name, g.model === m.id, (_e, cx) => { this.model.set_value(m.id); this.saveGroomer({ model: m.id }); cx.notify(); }))))))
+        .child(div().id(`${prefix}-model-field`).h(34).flex_none().px(10).flex().items_center().rounded(8).border_1().border_color(t.input).on_mouse_down("left", stop)
+          .child(Input.new(input).h_full().w_full().text_size(S().body).text_color(t.foreground)))
+        .when(selected === "claude", (el) => el.child(h_flex().flex_wrap().gap(4).children(CLAUDE_MODELS.map((m) =>
+          chip(`${prefix}-model-${m.id}`, m.name, state.model === m.id, (_e, cx) => { input.set_value(m.id); save({ model: m.id }); cx.notify(); }))))))
       .child(v_flex().gap(4).child(heading("Effort"))
-        .child(h_flex().flex_wrap().gap(4).children(EFFORTS.map((e) => chip(`groom-effort-${e}`, e, g.effort === e, (_e, cx) => { this.saveGroomer({ effort: e }); cx.notify(); })))));
+        .child(h_flex().flex_wrap().gap(4).children(EFFORTS.map((e) => chip(`${prefix}-effort-${e}`, e, state.effort === e, (_e, cx) => { save({ effort: e }); cx.notify(); })))));
   }
 }

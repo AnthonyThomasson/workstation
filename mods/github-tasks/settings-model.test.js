@@ -60,3 +60,30 @@ test("the New Task prompt tab shows the local prompt, with a placeholder id, whe
   assert.match(prompt, /no `gh` calls/);
   assert.doesNotMatch(promptForRole("newTask", { repo: "me/app" }), /no `gh` calls/);
 });
+
+test("the New Task prompt tab names the session folder's spawn commands with a placeholder folder, for GitHub and local tasks", () => {
+  for (const prompt of [promptForRole("newTask", { repo: "me/app" }), promptForRole("newTask", { local: { mainRoot: "/r/app", todoDir: "/t", upNextDir: "/u" } })]) {
+    assert.match(prompt, /<session folder>\/spawn investigator <name> '<brief>'/);
+    assert.match(prompt, /<session folder>\/spawn worker <job> '<brief>'/);
+    assert.match(prompt, /never becomes the ticket's work/);
+  }
+});
+
+test("the New Task investigator and prototype worker prompts have tabs of their own, with placeholders", () => {
+  const investigator = promptForRole("newTaskInvestigator");
+  assert.match(investigator, /^# You are an investigator/);
+  assert.match(investigator, /read-only/);
+  assert.match(investigator, /<session worktree>/);
+  assert.match(investigator, /<main checkout>/);
+  const worker = promptForRole("newTaskWorker");
+  assert.match(worker, /^# You are a prototype worker/);
+  assert.match(worker, /throwaway prototype/);
+  assert.match(worker, /<session worktree>--<job>/);
+  assert.match(worker, /discarded/);
+  assert.notEqual(investigator, promptForRole("investigator"), "not the ticket run's investigator");
+  assert.equal(promptForRole("nope"), null);
+});
+
+test("the settings sections are unchanged by the sub-agents, which live inside New Task", () => {
+  assert.deepEqual(Object.keys(normalizeSettingsSections()), ["newTask", "orchestrator", "worker", "reviewer", "investigator"]);
+});

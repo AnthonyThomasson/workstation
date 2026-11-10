@@ -38,7 +38,7 @@ export function orchestratorRunArgs({ id, key, workDir, argv, parent = null }) {
 
 // The host's program: it reports a status (so the Agents panel lists it), says what it is, and waits for ever (a program that
 // exits closes its pane). tail reads nothing from the terminal, so it never takes hc notes as input.
-export const hostArgv = () => ["sh", "-c", `printf '\\033]7501;state=idle\\007'; printf '%s\\n' ${shQuote("Host of this ticket's agents in the Agents panel. Ends when the ticket is merged.")}; exec tail -f /dev/null`];
+export const hostArgv = (note = "Host of this ticket's agents in the Agents panel. Ends when the ticket is merged.") => ["sh", "-c", `printf '\\033]7501;state=idle\\007'; printf '%s\\n' ${shQuote(note)}; exec tail -f /dev/null`];
 
 export const hostTabName = (ticket) => `${ticket?.number ? `#${ticket.number}` : String(ticket?.title ?? "Ticket")} agents`;
 
@@ -193,15 +193,18 @@ export const findHost = (terminals, id) => (terminals ?? []).find((k) => k.state
 // is never put in the ticket's space (that is closed by Merge with the person's own tabs) nor in whichever space the person
 // is in. Its terminal gets its labels afterwards (a tab made with an argv takes none). Throws with the reason; what was made is
 // ended again then.
-//   deps: { app(name, args) -> made, hc(args), run(name, args) }; args: { id, name, repoRoot, spaces, panes }
+// A New Task session (investigate.js) has no ticket space but its own: with `own` ({ spaceName, folder, note? }) the host is the first tab
+// of a new space of that name rooted at `folder` (the session's worktree, so the sidebar nests it under the repo's, and the session's
+// agent then opens its tab in that space), never the repo's.
+//   deps: { app(name, args) -> made, hc(args), run(name, args) }; args: { id, name, repoRoot, spaces, panes, own? }
 //   Resolves with { address, tab, space, created }.
-export async function openHost(deps, { id, name, repoRoot, spaces, panes }) {
-  const space = findRepoSpace({ spaces, panes, repoRoot });
+export async function openHost(deps, { id, name, repoRoot, spaces, panes, own = null }) {
+  const space = own ? null : findRepoSpace({ spaces, panes, repoRoot });
   const created = !space;
   let made;
   try {
     made = created
-      ? await deps.app("space.new", { name: String(repoRoot).split("/").filter(Boolean).pop() || "repo", tab: name, folder: repoRoot, argv: hostArgv() })
+      ? await deps.app("space.new", { name: own?.spaceName || String(repoRoot).split("/").filter(Boolean).pop() || "repo", tab: name, folder: own?.folder ?? repoRoot, argv: own?.note ? hostArgv(own.note) : hostArgv() })
       : await deps.app("tab.new", { name, folder: repoRoot, argv: hostArgv(), space });
   } catch (e) { throw new Error(`the host tab couldn't be made (${why(e)})`); }
   const undo = async () => {
@@ -413,7 +416,7 @@ export async function launchRun(deps, { id, key, workDir, argv, task, props, run
   let host = null;
   if (deps.openHost) {
     try { host = await deps.openHost(); }
-    catch (e) { problems.push(`The Agents panel won't list this run's agents: its host tab didn't open (${why(e)}). The run itself is going.`); }
+    catch (e) { problems.push(`The Agents panel won't list this ${who === "agent" ? "session" : "run"}'s agents: its host tab didn't open (${why(e)}). The ${who === "agent" ? "session" : "run"} itself is going.`); }
   }
   const endHostToo = async () => { if (host) await Promise.resolve(deps.closeHost?.(host)).catch(() => {}); };
   const started = await deps.hc(runArgs({ id, key, workDir, argv, parent: host?.address })).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));

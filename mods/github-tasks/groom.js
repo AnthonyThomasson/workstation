@@ -5,11 +5,12 @@ import { startInvestigation } from "./investigate.js";
 
 export const installedAgents = () => knownAgents().then((list) => list.filter((a) => a.installed), () => []);
 
-// agent: an entry of knownAgents(). groomer: { model, effort } from the settings page. description: what the person typed
-// (none: the agent asks what they want). cx: the spawned task's. Throws with a message for the person.
-export const startNewTask = ({ agent, description = "", repo, project, settings, groomer, where }, cx) =>
-  startInvestigation({ agent, description, repo, project, settings, groomer, where, local: null }, cx);
+// agent: an entry of knownAgents(). groomer: { model, effort } from the settings page. subAgents: { investigator, worker }, the settings
+// page's choices for the helpers it may start. description: what the person typed (none: the agent asks what they want).
+// cx: the spawned task's. Throws with a message for the person.
+export const startNewTask = ({ agent, description = "", repo, project, settings, groomer, subAgents, where }, cx) =>
+  startInvestigation({ agent, description, repo, project, settings, groomer, subAgents, where, local: null }, cx);
 
 // New Task in local mode: the agent is told the task folders, the next id and the file format, and writes one file.
-export const startLocalNewTask = ({ agent, description = "", mainRoot, groomer, where }, cx) =>
-  startInvestigation({ agent, description, groomer, where, local: { mainRoot } }, cx);
+export const startLocalNewTask = ({ agent, description = "", mainRoot, groomer, subAgents, where }, cx) =>
+  startInvestigation({ agent, description, groomer, subAgents, where, local: { mainRoot } }, cx);

@@ -14,8 +14,11 @@ const PAGES = [
   ["worker", "Does one job the orchestrator gives it."],
   ["reviewer", "Reads the finished work and reports findings. Read-only."],
   ["investigator", "Explores the code to answer a question from the agent that started it. Read-only."],
+  ["newTaskInvestigator", "What an investigator the New Task agent starts is told: explore the session's worktree read-only to answer the agent's question, and report back."],
+  ["newTaskWorker", "What a prototype worker the New Task agent starts is told: build a throwaway prototype in its own worktree and report back. Its code is discarded when the session is done."],
 ];
 export const PROMPT_HINTS = Object.fromEntries(PAGES);
+const NEW_TASK_LABELS = { newTask: "New Task", newTaskInvestigator: "New Task investigator", newTaskWorker: "New Task prototype worker" };
 
 export class PromptPage {
   constructor(props = {}) {
@@ -25,7 +28,7 @@ export class PromptPage {
 
   render() {
     const t = theme();
-    const label = this.role === "newTask" ? "New Task" : ROLE_LABELS[this.role];
+    const label = NEW_TASK_LABELS[this.role] ?? ROLE_LABELS[this.role];
     const hint = PROMPT_HINTS[this.role];
     return v_flex().id("prompt-page").size_full().min_h(0).bg(t.background).text_color(t.foreground).text_size(S().body)
       .child(v_flex().flex_none().px(20).py(14).gap(4).border_b(1).border_color(t.border)

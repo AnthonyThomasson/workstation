@@ -2,6 +2,7 @@
 import { newTaskPrompt, spelled, STATUSES } from "./model.js";
 import { localNewTaskPrompt } from "./local-ui.js";
 import { orchestratorPrompt, workerPrompt, reviewerPrompt, investigatorPrompt } from "./run.js";
+import { newTaskInvestigatorPrompt, newTaskWorkerPrompt } from "./investigation-spawn.js";
 
 // All five sections start closed; only explicit booleans for known sections survive a reload.
 export function normalizeSettingsSections(saved) {
@@ -10,14 +11,21 @@ export function normalizeSettingsSections(saved) {
 }
 
 // local: { mainRoot, todoDir, upNextDir } when the repo's tasks are local files; the id is a placeholder, as a run's are.
+// "newTask" is the New Task agent's; "newTaskInvestigator" and "newTaskWorker" are what its investigators and prototype workers read.
 export function promptForRole(role, { repo = "", project = null, options = [], local = null } = {}) {
-  if (role === "newTask" && local) return localNewTaskPrompt({ ...local, nextId: "<next id>" });
+  if (role === "newTask" && local) return localNewTaskPrompt({ ...local, nextId: "<next id>", agentsDir: SESSION_FOLDER });
   if (role === "newTask") {
-    return newTaskPrompt({ repo, project, backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed) });
+    return newTaskPrompt({ repo, project, backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed), agentsDir: SESSION_FOLDER });
   }
+  if (role === "newTaskInvestigator") return newTaskInvestigatorPrompt(SESSION);
+  if (role === "newTaskWorker") return newTaskWorkerPrompt(SESSION);
   const build = { orchestrator: orchestratorPrompt, worker: workerPrompt, reviewer: reviewerPrompt, investigator: investigatorPrompt }[role];
   return build ? clean(build(SAMPLE)).trim() : null;
 }
+
+// What a session fills in: its folder, worktree and branch are placeholders, as a run's are.
+const SESSION_FOLDER = "<session folder>";
+const SESSION = { dir: SESSION_FOLDER, workDir: "<session worktree>", repoRoot: "<main checkout>", branch: "<session branch>" };
 
 // What a run fills in, shown as it is in the built-in prompts' own words.
 const SAMPLE = {
