@@ -2,7 +2,7 @@ import test from "node:test";
 import { EFFORTS } from "./model.js";
 import { parse as parseYaml } from "./yaml.js";
 import assert from "node:assert/strict";
-import { blank, normalize, validate, slug, snapshot, isDirty, serialize, parse, uniqueLabels, ROLES, PERMISSIONS, PERMISSION_LABELS, PERMISSION_HINTS, AGENTS, CUSTOM, AGENT_LABELS, MATCHES, SCOPES, SCOPE_LABELS, SCOPE_HINTS, isFallback } from "./workflow-model.js";
+import { blank, normalize, validate, slug, snapshot, isDirty, serialize, parse, uniqueLabels, ROLES, ROLE_LABELS, ROLE_PROMPTS, PERMISSIONS, PERMISSION_LABELS, PERMISSION_HINTS, AGENTS, CUSTOM, AGENT_LABELS, MATCHES, SCOPES, SCOPE_LABELS, SCOPE_HINTS, isFallback } from "./workflow-model.js";
 
 const valid = (over = {}) => {
   const w = blank();
@@ -40,8 +40,8 @@ test("a file that still has a strategy loads, ignores it, and drops it on the ne
   assert.equal(isDirty(valid(), { ...valid(), strategy: "worktree" }), false);
 });
 
-test("worker and reviewer permissions default to auto and only ask overrides that default", () => {
-  for (const role of ["worker", "reviewer"]) {
+test("worker, reviewer and investigator permissions default to auto and only ask overrides that default", () => {
+  for (const role of ["worker", "reviewer", "investigator"]) {
     assert.equal(blank()[role].permissions, "auto");
     assert.equal(normalize({})[role].permissions, "auto");
     assert.equal(normalize({ [role]: { permissions: "ask" } })[role].permissions, "ask");
@@ -50,15 +50,50 @@ test("worker and reviewer permissions default to auto and only ask overrides tha
   assert.equal(normalize({ orchestrator: { permissions: "ask" } }).orchestrator.permissions, undefined);
 });
 
-test("the editor offers Auto and Ask with Claude-specific worker and reviewer hints", () => {
+test("the editor offers Auto and Ask with Claude-specific worker, reviewer and investigator hints", () => {
   assert.deepEqual(PERMISSIONS, ["auto", "ask"]);
   assert.deepEqual(PERMISSION_LABELS, { auto: "Auto", ask: "Ask" });
-  for (const role of ["worker", "reviewer"]) {
+  for (const role of ["worker", "reviewer", "investigator"]) {
     assert.match(PERMISSION_HINTS[role], /Auto: runs commands without asking/);
     assert.match(PERMISSION_HINTS[role], /Ask: asks before each shell command/);
     assert.match(PERMISSION_HINTS[role], /Claude/);
   }
   assert.match(PERMISSION_HINTS.reviewer, /edits are always refused/i);
+  assert.match(PERMISSION_HINTS.investigator, /edits are always refused/i);
+});
+
+test("the investigator is a fourth role, after the reviewer, with a label and no extra prompts", () => {
+  assert.deepEqual(ROLES, ["orchestrator", "worker", "reviewer", "investigator"]);
+  assert.equal(ROLE_LABELS.investigator, "Investigator");
+  assert.deepEqual(ROLE_PROMPTS.investigator, []);
+});
+
+test("a workflow file with no investigator section loads with the defaults and still validates", () => {
+  const old = { ...valid({ id: "old" }) };
+  delete old.investigator;
+  assert.deepEqual(normalize(old).investigator, { prompt: "", agent: "claude", command: "", model: "", effort: "medium", permissions: "auto" });
+  assert.deepEqual(validate(old), []);
+  const text = serialize(valid({ id: "old" })).replace(/investigator:[\s\S]*$/, "");
+  assert.ok(!text.includes("investigator"));
+  assert.deepEqual(parse(text).investigator, blank().investigator);
+});
+
+test("an investigator's settings survive a save and a read, and editing them is a change", () => {
+  const base = valid();
+  const edited = { ...base, investigator: { ...base.investigator, agent: "codex", model: "gpt", effort: "high", permissions: "ask", prompt: "BE CURIOUS" } };
+  assert.equal(isDirty(base, edited), true);
+  const saved = parseYaml(serialize(edited));
+  assert.deepEqual(saved.investigator, { agent: "codex", command: "", model: "gpt", effort: "high", permissions: "ask", prompt: "BE CURIOUS" });
+  assert.deepEqual(parse(serialize(edited)), normalize(edited));
+});
+
+test("an investigator needs an agent, a command for a custom one, and a known effort", () => {
+  const w = valid();
+  w.investigator.agent = "custom";
+  assert.deepEqual(validate(w).map((p) => p.field), ["investigator.command"]);
+  w.investigator.agent = "claude";
+  w.investigator.effort = "wild";
+  assert.deepEqual(validate(w).map((p) => p.field), ["investigator.effort"]);
 });
 
 test("worker and reviewer permissions survive a save and make the workflow dirty when changed", () => {
@@ -163,9 +198,10 @@ test("serialize and parse round-trip, in a fixed key order", () => {
   const w = valid({ id: "feature-work" });
   const text = serialize(w);
   assert.ok(text.endsWith("\n") && !text.startsWith("{"));
-  assert.deepEqual(Object.keys(parseYaml(text)), ["version", "id", "name", "trigger", "orchestrator", "worker", "reviewer"]);
+  assert.deepEqual(Object.keys(parseYaml(text)), ["version", "id", "name", "trigger", "orchestrator", "worker", "reviewer", "investigator"]);
   assert.deepEqual(Object.keys(parseYaml(text).orchestrator), ["agent", "command", "model", "effort", "prompt", "planning", "retro"]);
   assert.deepEqual(Object.keys(parseYaml(text).worker), ["agent", "command", "model", "effort", "permissions", "prompt"]);
+  assert.deepEqual(Object.keys(parseYaml(text).investigator), ["agent", "command", "model", "effort", "permissions", "prompt"]);
   assert.deepEqual(parse(text), normalize(w));
 });
 

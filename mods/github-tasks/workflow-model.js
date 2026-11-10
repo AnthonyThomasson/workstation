@@ -1,12 +1,12 @@
-// What a workflow is: the GitHub labels that trigger it, and how the orchestrator, the worker and the
-// reviewer each run (their prompt, agent, model and effort). Pure: no Herdr imports, so node --test runs it.
+// What a workflow is: the GitHub labels that trigger it, and how the orchestrator, the worker, the
+// reviewer and the investigator each run (their prompt, agent, model and effort). Pure: no Herdr imports, so node --test runs it.
 
 import { parse as parseYaml, stringify as stringifyYaml } from "./yaml.js";
 import { EFFORTS } from "./model.js";
 
 export const VERSION = 1;
-export const ROLES = ["orchestrator", "worker", "reviewer"];
-export const ROLE_LABELS = { orchestrator: "Orchestrator", worker: "Worker", reviewer: "Reviewer" };
+export const ROLES = ["orchestrator", "worker", "reviewer", "investigator"];
+export const ROLE_LABELS = { orchestrator: "Orchestrator", worker: "Worker", reviewer: "Reviewer", investigator: "Investigator" };
 // The agent kinds `herdr agent start --kind` accepts.
 export const AGENTS = ["claude", "codex", "gemini", "pi", "cursor", "devin", "agy", "cline", "omp", "mastracode", "opencode",
   "copilot", "kimi", "kiro", "droid", "amp", "grok", "hermes", "kilo", "qodercli", "qwen", "letta", "maki", "muse"];
@@ -41,13 +41,14 @@ export const ORCHESTRATOR_PROMPTS = [
   { key: "planning", label: "Planning prompt", hint: "how the orchestrator plans the work before handing it to the worker" },
   { key: "retro", label: "Retro prompt", hint: "how the orchestrator looks back on the run once it is done" },
 ];
-// Only the orchestrator has extra prompts; worker and reviewer permissions are settings, not prompts.
-export const ROLE_PROMPTS = { orchestrator: ORCHESTRATOR_PROMPTS, worker: [], reviewer: [] };
+// Only the orchestrator has extra prompts; worker, reviewer and investigator permissions are settings, not prompts.
+export const ROLE_PROMPTS = { orchestrator: ORCHESTRATOR_PROMPTS, worker: [], reviewer: [], investigator: [] };
 export const PERMISSIONS = ["auto", "ask"];
 export const PERMISSION_LABELS = { auto: "Auto", ask: "Ask" };
 export const PERMISSION_HINTS = {
   worker: "Claude only. Auto: runs commands without asking; Claude's auto mode still stops risky ones. Ask: asks before each shell command.",
   reviewer: "Claude only. Auto: runs commands without asking; Claude's auto mode still stops risky ones. Ask: asks before each shell command. Edits are always refused.",
+  investigator: "Claude only. Auto: runs commands without asking; Claude's auto mode still stops risky ones. Ask: asks before each shell command. Edits are always refused.",
 };
 
 const text = (v) => (typeof v === "string" ? v : "");
@@ -56,9 +57,10 @@ export const blankRole = () => ({ prompt: "", agent: "claude", command: "", mode
 export const blankOrchestrator = () => ({ ...blankRole(), planning: "", retro: "" });
 export const blankWorker = () => ({ ...blankRole(), permissions: "auto" });
 export const blankReviewer = () => ({ ...blankRole(), permissions: "auto" });
+export const blankInvestigator = () => ({ ...blankRole(), permissions: "auto" });
 export const blank = () => ({
   version: VERSION, id: "", name: "", trigger: { labels: [], match: "any" },
-  orchestrator: blankOrchestrator(), worker: blankWorker(), reviewer: blankReviewer(),
+  orchestrator: blankOrchestrator(), worker: blankWorker(), reviewer: blankReviewer(), investigator: blankInvestigator(),
 });
 
 // "Feature development!" -> "feature-development"; what a workflow's file is called. Cut to max characters (60 for a file name).
@@ -109,6 +111,7 @@ export function normalize(raw) {
     orchestrator: normalizeOrchestrator(r.orchestrator),
     worker: normalizeRole(r.worker, [], true),
     reviewer: normalizeRole(r.reviewer, [], true),
+    investigator: normalizeRole(r.investigator, [], true), // a file from before investigators has none: the defaults
   };
 }
 
@@ -148,6 +151,7 @@ export function serialize(workflow) {
     orchestrator: role(w.orchestrator, ORCHESTRATOR_PROMPTS.map((p) => p.key)),
     worker: role(w.worker, [], true),
     reviewer: role(w.reviewer, [], true),
+    investigator: role(w.investigator, [], true),
   });
 }
 

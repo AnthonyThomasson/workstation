@@ -23,6 +23,7 @@ const SECTIONS = [
   { role: "orchestrator", label: "Orchestrator" },
   { role: "worker", label: "Worker" },
   { role: "reviewer", label: "Reviewer" },
+  { role: "investigator", label: "Investigator" },
 ];
 
 export class TaskSettings {
@@ -175,7 +176,7 @@ export class TaskSettings {
 
   section(t, cx, { role, label }) {
     const prompt = action(`settings-${role}-prompt`, "Prompt", t, () => this.openPrompt(role), true);
-    // Orchestrator, Worker and Reviewer have nothing to set: just the name and a button to see the prompt.
+    // Orchestrator, Worker, Reviewer and Investigator have nothing to set: just the name and a button to see the prompt.
     if (role !== "newTask") return h_flex().id(`settings-${role}`).flex_none().h(30).gap(6).items_center()
       .child(div().flex_1().min_w(0).truncate().text_size(S().title).font_semibold().child(label))
       .child(prompt);

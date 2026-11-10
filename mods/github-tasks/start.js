@@ -9,8 +9,8 @@ import { connectRun, endHost, findHost, guarded, hostKey, hostTabName, launchRun
 import { mainCheckout, prepareWorktree } from "./worktree.js";
 import { app } from "./ui.js";
 import { localTasks, repoHasGithubRemote, tasksConfig } from "./local-tasks-env.js";
-import { ROLES } from "./workflow-model.js";
-import { out, agentArgv, branchName, FOLDER_LABEL, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
+import { blankRole, ROLES } from "./workflow-model.js";
+import { out, agentArgv, branchName, FOLDER_LABEL, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 
@@ -91,7 +91,7 @@ async function resolveAgents(workflow, runDir) {
   const known = await knownAgents().catch(() => []);
   const argv = {};
   for (const role of ROLES) {
-    const settings = workflow[role];
+    const settings = workflow[role] ?? blankRole(); // a workflow from before investigators has none: the defaults
     if (settings.agent === "custom") {
       if (!settings.command) throw new Error(`The workflow's ${role} needs the command that opens its agent.`);
       argv[role] = agentArgv(role, settings, [], runDir);
@@ -128,6 +128,7 @@ async function writeRunFolder(id, parts, argv) {
     writeTextFile(`${runDir}/orchestrator.md`, orchestratorPrompt({ ...parts, id }), null),
     writeTextFile(`${runDir}/worker.md`, workerPrompt(parts), null),
     writeTextFile(`${runDir}/reviewer.md`, reviewerPrompt(parts), null),
+    writeTextFile(`${runDir}/investigator.md`, investigatorPrompt(parts), null),
     writeTextFile(`${runDir}/ticket.md`, ticketFile(parts.ticket, parts.repo, parts.local), null),
     writeTextFile(`${runDir}/spawn`, spawnScript({ id, runDir, workDir, branch, argv }), null),
     writeTextFile(`${runDir}/merge`, mergeScript({ id, workDir, branch, number: parts.ticket?.number }), null),

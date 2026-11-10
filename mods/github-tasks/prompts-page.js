@@ -10,9 +10,10 @@ import { S, note } from "./ui.js";
 
 const PAGES = [
   ["newTask", "What the + in the Tasks header tells the agent when it opens: wait for what you want to make, grill you on the acceptance criteria, then ask whether to create it and in which status."],
-  ["orchestrator", "Directs the work: plans it, starts workers and reviewers, and decides what to fix."],
+  ["orchestrator", "Directs the work: plans it, starts workers, reviewers and investigators, and decides what to fix."],
   ["worker", "Does one job the orchestrator gives it."],
   ["reviewer", "Reads the finished work and reports findings. Read-only."],
+  ["investigator", "Explores the code to answer a question from the agent that started it. Read-only."],
 ];
 export const PROMPT_HINTS = Object.fromEntries(PAGES);
 

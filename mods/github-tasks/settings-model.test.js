@@ -3,17 +3,18 @@ import assert from "node:assert/strict";
 import { markdownLiteral, normalizeSettingsSections, promptForRole } from "./settings-model.js";
 
 test("settings sections start collapsed and only saved booleans reopen them", () => {
-  const closed = { newTask: false, orchestrator: false, worker: false, reviewer: false };
+  const closed = { newTask: false, orchestrator: false, worker: false, reviewer: false, investigator: false };
   assert.deepEqual(normalizeSettingsSections(), closed);
   assert.deepEqual(normalizeSettingsSections(null), closed);
   assert.deepEqual(normalizeSettingsSections({ newTask: true, worker: true }), { ...closed, newTask: true, worker: true });
+  assert.deepEqual(normalizeSettingsSections({ investigator: true }), { ...closed, investigator: true });
   assert.deepEqual(normalizeSettingsSections({ newTask: "true", orchestrator: 1, reviewer: false, unknown: true }), closed);
 });
 
 test("built-in role prompts use the sample run placeholders", () => {
-  for (const role of ["orchestrator", "worker", "reviewer"]) {
+  for (const role of ["orchestrator", "worker", "reviewer", "investigator"]) {
     const prompt = promptForRole(role);
-    assert.match(prompt, new RegExp(`You are (the |a )?${role}`));
+    assert.match(prompt, new RegExp(`You are (the |a |an )?${role}`));
     assert.match(prompt, /<workflow name>/);
     assert.match(prompt, /Ticket: <ticket title> in <owner\/repo>/);
     assert.match(prompt, /<ticket worktree>/);
@@ -23,6 +24,7 @@ test("built-in role prompts use the sample run placeholders", () => {
   assert.match(promptForRole("orchestrator"), /<the workflow's planning prompt goes here>/);
   assert.match(promptForRole("worker"), /<the workflow's worker prompt goes here>/);
   assert.match(promptForRole("reviewer"), /<the workflow's reviewer prompt goes here>/);
+  assert.match(promptForRole("investigator"), /<the workflow's investigator prompt goes here>/);
 });
 
 test("Markdown-ready prompts keep placeholders visible and leave code untouched", () => {
