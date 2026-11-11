@@ -26,7 +26,7 @@ const SIGN_IN_KINDS = { "no-write-scope": REFRESH, "no-scope": REFRESH, "no-auth
 
 export class TaskEditor {
   constructor(props, cx) {
-    this.props = props ?? {}; // local-editor.js reads its extras from here, because load() runs before its constructor does
+    this.props = props ?? {};
     this.ticket = props?.ticket ?? {};
     this.repo = props?.repo ?? "";
     this.project = props?.project ?? null;
@@ -82,9 +82,6 @@ export class TaskEditor {
   current() {
     return snapshot({ title: this.titleInput.value(), body: this.bodyInput.value(), labels: [...this.labels], status: this.status });
   }
-
-  // Whether this is a local task (local-editor.js): it has no project, so no Status option to be missing.
-  isLocal() { return false; }
 
   dirty() {
     return this.loaded && isDirty(this.base, this.current(), { draft: this.draft });
@@ -235,7 +232,7 @@ export class TaskEditor {
   // The footer, as wontdo.js decides it: which buttons are on, and whether the confirm strip is up.
   footerState() {
     const f = wontDoFooter({
-      draft: this.draft, saving: this.saving, dirty: this.dirty(), local: this.isLocal(), statusOptions: this.statusField?.options,
+      draft: this.draft, saving: this.saving, dirty: this.dirty(), statusOptions: this.statusField?.options,
       startable: this.startable, confirming: this.confirming, busy: this.wontDoing,
     });
     if (f.dropConfirm) this.confirming = false; // reverting must not bring the question back
@@ -266,7 +263,7 @@ export class TaskEditor {
     cx.notify();
   }
 
-  // What marking the ticket Won't Do does at its source; local-editor.js moves the task's file instead. Throws on failure.
+  // What marking the ticket Won't Do does at its source. Throws on failure.
   async sendWontDo() {
     const { repo, ticket, project, statusField, where } = this;
     await markWontDo(gh, { repo, ticket, project, statusField }, where);
@@ -587,7 +584,7 @@ export class TaskEditor {
     const dirty = this.dirty(), n = this.notice;
     const signIn = n?.kind === "error" ? SIGN_IN_KINDS[n.error?.kind] : null;
     const diff = changes(this.base, this.current(), { draft: this.draft });
-    const f = this.footerState(), working = this.isLocal() ? "Moving…" : "Closing…";
+    const f = this.footerState(), working = "Closing…";
     const wontDoButton = (id, label, onClick, disabled, tip) => action(id, label, t, onClick, false, disabled, { danger: true, tip });
     return v_flex().flex_none().px(20).py(12).gap(10).border_t(1).border_color(t.border)
       .when(Boolean(n) && n.kind !== "saved", (el) => el.child(h_flex().gap(7).items_start().text_size(S().secondary).text_color(t.ansi1)
@@ -602,7 +599,7 @@ export class TaskEditor {
         ? h_flex().gap(8).items_center()
           .child(this.wontDoing ? icon("ring", 14, t.muted).spin(900) : icon("alert", 14, t.ansi1))
           .child(div().flex_1().min_w(0).truncate().text_size(S().secondary).text_color(t.foreground)
-            .child(this.wontDoing ? working : wontDoPrompt({ number: this.ticket.number, local: this.isLocal() })))
+            .child(this.wontDoing ? working : wontDoPrompt({ number: this.ticket.number })))
           .child(action("wontdo-cancel", "Cancel", t, (_e, cx) => this.cancelWontDo(cx), true, f.cancel.disabled))
           .child(wontDoButton("wontdo-confirm", "Won't Do", (_e, cx) => this.wontDo(cx), f.ok.disabled))
         : h_flex().gap(8).items_center()

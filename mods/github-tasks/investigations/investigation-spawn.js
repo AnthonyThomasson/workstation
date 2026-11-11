@@ -31,7 +31,7 @@ export function subAgentArgv(role, settings, known, dir) {
 }
 
 // The New Task Orchestrator's command: the one New Task always opened (model.js groomArgv) and, when it is Claude and has a session folder,
-// the right to run that folder's spawn script and hc. Nothing is restricted: in local mode it writes the task's file itself.
+// the right to run that folder's spawn script and hc. Nothing else is restricted.
 export function newTaskAgentArgv(agent, groomer, dir) {
   const argv = groomArgv(agent.key, agent.run, groomer ?? {});
   // --add-dir and --allowedTools take any number of values, so they come last, with nothing after them.

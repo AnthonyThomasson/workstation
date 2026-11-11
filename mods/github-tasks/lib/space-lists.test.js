@@ -4,42 +4,34 @@ import { SpaceLists, spaceKey, newList, resetList, forgetRepo, clearTickets, sna
 
 const ctx = (space, folder = "/code/app", on) => ({ space, on, folder });
 const tickets = (...titles) => ({ open: titles.map((title) => ({ key: title, title })), closed: [] });
-const place = (source, mainRoot = "/code/app") => ({ source, mainRoot, folder: "/code/app", remote: false, cache: { c: 1 } });
+const place = (mainRoot = "/code/app") => ({ mainRoot, folder: "/code/app", remote: false, cache: { c: 1 } });
 
 // A view as the Tasks sidebar has it once a GitHub list is on screen.
 function github(over = {}) {
   const view = newList(ctx("a"));
   Object.assign(view, {
-    place: place("github"), source: "github", repo: "me/app", repoFolder: "/code/app",
+    place: place(), repo: "me/app", repoFolder: "/code/app",
     projects: [{ id: "P1", title: "One" }, { id: "P2", title: "Two" }], project: { id: "P1", title: "One" },
     groups: tickets("first", "second"), truncated: true, loaded: true,
   }, over);
   return view;
 }
-function local(over = {}) {
-  const view = newList(ctx("a"));
-  Object.assign(view, { place: place("local"), source: "local", localStages: { groomed: [{ key: "t1" }] } }, over);
-  return view;
-}
-
 test("the key of a space is its id and machine", () => {
   assert.equal(spaceKey(ctx("a")), "a|undefined");
   assert.equal(spaceKey(ctx("a", "/x", "box")), "a|box");
   assert.equal(spaceKey(null), null);
 });
 
-test("a new list is empty, GitHub, and not restored", () => {
+test("a new list is empty and not restored", () => {
   const view = newList(ctx("a"));
-  assert.equal(view.source, "github");
   assert.equal(view.loaded, false);
   assert.equal(view.repo, null);
   assert.deepEqual(view.groups, { open: [], closed: [] });
-  assert.equal(view.localStages, null);
   assert.equal(view.restored, null);
 });
 
 test("resetting starts over and makes an earlier load stale", () => {
-  const view = github({ error: { kind: "other" }, setupError: "s", startError: "e", localError: "l", loading: true });
+  const view = github({ error: { kind: "other" }, setupError: "s", startError: "e", loading: true });
   const token = view.token;
   resetList(view, ctx("b"));
   assert.equal(isCurrent(view, token), false);
@@ -54,7 +46,6 @@ test("resetting starts over and makes an earlier load stale", () => {
 
 test("a GitHub list on screen is saved with everything the settings and chips show", () => {
   const snap = snapshotOf(github());
-  assert.equal(snap.source, "github");
   assert.equal(snap.repo, "me/app");
   assert.equal(snap.repoFolder, "/code/app");
   assert.equal(snap.project.id, "P1");
@@ -63,24 +54,15 @@ test("a GitHub list on screen is saved with everything the settings and chips sh
   assert.deepEqual(snap.groups, tickets("first", "second"));
 });
 
-test("a local list on screen is saved with its sections", () => {
-  const snap = snapshotOf(local());
-  assert.equal(snap.source, "local");
-  assert.equal(snap.place.mainRoot, "/code/app");
-  assert.deepEqual(snap.localStages, { groomed: [{ key: "t1" }] });
-});
-
 test("errors are never saved", () => {
   const snap = snapshotOf(github({ error: { kind: "other" }, setupError: "s", startError: "e" }));
-  assert.equal("error" in snap || "setupError" in snap || "startError" in snap || "localError" in snap, false);
-  assert.equal("error" in snapshotOf(local({ localError: "x" })), false);
+  assert.equal("error" in snap || "setupError" in snap || "startError" in snap, false);
 });
 
 test("nothing on screen saves nothing", () => {
   assert.equal(snapshotOf(newList(ctx("a"))), null);
   assert.equal(snapshotOf(github({ loaded: false })), null); // placeholders
   assert.equal(snapshotOf(github({ project: null })), null); // the repo has no project
-  assert.equal(snapshotOf(local({ localStages: null })), null);
   assert.equal(snapshotOf(github({ repoFolder: "/elsewhere" })), null); // the folder moved and the repo is not known again yet
 });
 
@@ -106,21 +88,8 @@ test("switching back shows the saved list at once, with no placeholders", () => 
   assert.equal(view.repo, "me/app");
   assert.equal(view.project.id, "P1");
   assert.equal(view.projects.length, 2);
-  assert.equal(view.source, "github");
   assert.equal(view.error, null);
   assert.ok(view.restored);
-});
-
-test("switching back to a local space shows its saved sections", () => {
-  const lists = new SpaceLists();
-  const view = local();
-  lists.save("a|undefined", view);
-  resetList(view, ctx("a"));
-  assert.equal(view.localStages, null);
-  assert.equal(lists.restore("a|undefined", view), true);
-  assert.equal(view.source, "local");
-  assert.deepEqual(view.localStages, { groomed: [{ key: "t1" }] });
-  assert.equal(view.place.mainRoot, "/code/app");
 });
 
 test("a space not opened yet this session shows placeholders", () => {
@@ -129,17 +98,6 @@ test("a space not opened yet this session shows placeholders", () => {
   assert.equal(lists.restore("z|undefined", view), false);
   assert.equal(view.loaded, false);
   assert.equal(view.restored, null);
-});
-
-test("a local list is not saved after a cd, before the new folder's place is read", () => {
-  const view = local();
-  view.ctx = ctx("a", "/code/other");
-  assert.equal(snapshotOf(view), null);
-  const lists = new SpaceLists();
-  lists.save("a|undefined", local());
-  assert.ok(lists.has("a|undefined"));
-  lists.save("a|undefined", view);
-  assert.equal(lists.has("a|undefined"), false);
 });
 
 test("each space keeps its own list", () => {
@@ -177,9 +135,11 @@ function restoredGithub() {
   return view;
 }
 
-test("a reload of the same source, repo and project keeps the list until the fresh one replaces it", () => {
+test("a reload of the same repo and project keeps the list until the fresh one replaces it", () => {
   const view = restoredGithub();
-  assert.equal(applyPlace(view, place("github")), false);
+  applyPlace(view, place());
+  assert.deepEqual(view.place, place());
+  assert.deepEqual(view.placeCache, { c: 1 });
   assert.equal(applyRepo(view, "me/app"), false);
   view.projects = [{ id: "P1" }, { id: "P2" }];
   view.project = { id: "P1" };
@@ -202,16 +162,6 @@ test("a failed reload drops the saved list and leaves only the error", () => {
   assert.equal(view.truncated, false);
 });
 
-test("a failed reload of a local space drops the saved sections", () => {
-  const lists = new SpaceLists();
-  const view = local();
-  lists.save("a|undefined", view);
-  resetList(view, ctx("a"));
-  lists.restore("a|undefined", view);
-  assert.equal(failReload(view), true);
-  assert.equal(view.localStages, null);
-});
-
 test("a failure with nothing restored leaves a list loaded by this space alone, as before", () => {
   const view = github();
   assert.equal(failReload(view), false);
@@ -226,36 +176,6 @@ test("a changed repo drops the saved list", () => {
   assert.equal(view.loaded, false);
   assert.deepEqual(view.groups, { open: [], closed: [] });
   assert.deepEqual(view.projects, []);
-});
-
-test("a changed source drops the saved list, GitHub to local and back", () => {
-  const view = restoredGithub();
-  assert.equal(applyPlace(view, place("local")), true);
-  assert.equal(view.source, "local");
-  assert.equal(view.loaded, false);
-  assert.equal(view.repo, null);
-  assert.equal(view.localStages, null);
-
-  const lists = new SpaceLists();
-  const other = local();
-  lists.save("a|undefined", other);
-  resetList(other, ctx("a"));
-  lists.restore("a|undefined", other);
-  assert.equal(applyPlace(other, place("github")), true);
-  assert.equal(other.source, "github");
-  assert.equal(other.localStages, null);
-});
-
-test("a changed local repo drops the saved sections; the same one keeps them", () => {
-  const lists = new SpaceLists();
-  const view = local();
-  lists.save("a|undefined", view);
-  resetList(view, ctx("a"));
-  lists.restore("a|undefined", view);
-  assert.equal(applyPlace(view, place("local", "/code/app")), false);
-  assert.ok(view.localStages);
-  assert.equal(applyPlace(view, place("local", "/code/other")), true);
-  assert.equal(view.localStages, null);
 });
 
 test("a changed project drops the saved list", () => {

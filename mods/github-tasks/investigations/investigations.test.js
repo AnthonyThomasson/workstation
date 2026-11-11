@@ -143,7 +143,7 @@ test("a session shows in any space of its repo: found by the main checkout, or b
   const ts = [live("a", "t1"), live("b", "t2"), live("c", "t3")];
   assert.deepEqual(investigationsFor(saved, { repoRoot: "/clone1", repo: "o/app" }, ts).map((e) => e.id), ["a"]);
   assert.deepEqual(investigationsFor(saved, { repoRoot: "/elsewhere", repo: "o/app" }, ts).map((e) => e.id), ["a"], "another clone of the same GitHub repo");
-  assert.deepEqual(investigationsFor(saved, { repoRoot: "/r3", repo: null }, ts).map((e) => e.id), ["c"], "local mode: by main checkout only");
+  assert.deepEqual(investigationsFor(saved, { repoRoot: "/r3", repo: null }, ts).map((e) => e.id), ["c"], "by main checkout only");
   assert.deepEqual(investigationsFor(saved, { repoRoot: null, repo: null }, ts), [], "no place: nothing");
   assert.deepEqual(investigationsFor(saved, { repoRoot: "", repo: "" }, ts), []);
 });

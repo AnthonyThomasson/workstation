@@ -84,11 +84,6 @@ export const REFACTORS_CHANGED = "github-tasks.refactors.changed";
 // Shared state main.js publishes for the settings page and the doctor.
 export const CONTEXT = "github-tasks.context"; // { repo, project, where }: what the sidebar looks at
 export const PLACE = "github-tasks.place"; // { cwd, on }: where the selected space is. Set even with no repo
-// { source: "local" | "github", mainRoot, remote, cwd, on }: which task source the sidebar is using for the place it shows
-// (cwd and on are that place; compare them with PLACE before trusting it, local-ui.js sourceFor does). mainRoot is the
-// main checkout when the place is inside a git repo, else null. Null when no space is open. The settings, the run code
-// and the doctor read it; only the sidebar sets it, and the settings' Local tasks checkbox writes tasks.json.
-export const TASK_SOURCE = "github-tasks.taskSource";
 
 // The shared key that holds the project chosen for a repo.
 export const projectKey = (repo) => `github-tasks.project.${repo}`;
@@ -230,13 +225,12 @@ export const WONT_DO_NEEDS_OPTION = "Add a Won't Do status to the project; see T
 
 // Why the Won't Do button is disabled, or null when it is not. The first reason that applies wins.
 //   draft: a draft not created as an issue yet   saving: a save is running   dirty: unsaved edits
-//   local: a local task, which has no project and so no option to be missing
 //   statusOptions: the project's Status field options [{ name }]; none (or no field) means the option is missing
-export function wontDoDisabledReason({ draft = false, saving = false, dirty = false, local = false, statusOptions } = {}) {
+export function wontDoDisabledReason({ draft = false, saving = false, dirty = false, statusOptions } = {}) {
   if (draft) return "Create the ticket first";
   if (saving) return "Saving…";
   if (dirty) return "Save or revert first";
-  if (!local && !wontDoOption(statusOptions)) return WONT_DO_NEEDS_OPTION;
+  if (!wontDoOption(statusOptions)) return WONT_DO_NEEDS_OPTION;
   return null;
 }
 
@@ -330,8 +324,8 @@ export function refactorFocus(focus) {
   return /\r?\n/.test(text) ? ["The person asked you to focus on:", "", ...quote(text)] : [`The person asked you to focus on: ${text}`];
 }
 
-// The What to do and While you work sections both Refactor prompts share, ending with the last bullet. `noun` is "ticket" or "task";
-// `placed` says where each one goes and `create` what creating one is (the ways GitHub and local mode differ).
+// The What to do and While you work sections of the Refactor prompt, ending with the last bullet. `noun` is "ticket";
+// `placed` says where each one goes and `create` what creating one is.
 export function refactorSections({ type, focus, noun, placed, statuses, create, agentsDir }) {
   return [
     "## What to do", "",

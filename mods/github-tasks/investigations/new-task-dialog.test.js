@@ -17,8 +17,8 @@ test("the panel is 520px wide, or the window less a margin each side; nothing un
 });
 
 test("the overlay is a frameless window of the mod with the new-task role and what the sidebar knew", () => {
-  const props = newTaskProps({ repo: "o/app", project: { id: "P1", title: "Board", url: "u", extra: 1 }, local: false, mainRoot: "/r", where: { cwd: "/r/x", on: undefined } });
-  assert.deepEqual(props, { repo: "o/app", project: { id: "P1", title: "Board", url: "u" }, local: null, where: { cwd: "/r/x", on: undefined } });
+  const props = newTaskProps({ repo: "o/app", project: { id: "P1", title: "Board", url: "u", extra: 1 }, where: { cwd: "/r/x", on: undefined } });
+  assert.deepEqual(props, { repo: "o/app", project: { id: "P1", title: "Board", url: "u" }, where: { cwd: "/r/x", on: undefined } });
   const o = newTaskOverlay(props);
   assert.equal(o.mod, "github-tasks");
   assert.equal(o.kind, "window");
@@ -26,7 +26,6 @@ test("the overlay is a frameless window of the mod with the new-task role and wh
   assert.equal(o.key, "github-tasks.new-task");
   assert.equal(o.props.role, "new-task");
   assert.equal(o.props.repo, "o/app");
-  assert.deepEqual(newTaskProps({ repo: null, project: null, local: true, mainRoot: "/r", where: { cwd: "/r" } }).local, { mainRoot: "/r" });
 });
 
 test("the agent is the saved one if installed, else Claude, else the first, else none", () => {

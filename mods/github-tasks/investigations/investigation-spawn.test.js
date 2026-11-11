@@ -8,7 +8,7 @@ import {
   NEW_TASK_PLUMBING, investigationSpawnScript, newTaskAgentArgv, newTaskInvestigatorPrompt, newTaskWorkerPrompt, refactorAgentArgv, sessionFiles, sessionFolder, subAgentArgv,
 } from "./investigation-spawn.js";
 import { INVESTIGATION_LABEL, beginInvestigation, investigationRunArgs } from "./investigations.js";
-import { hostKey, shQuote, worktreePath, localNewTaskPrompt, localRefactorPrompt } from "../runs/index.js";
+import { hostKey, shQuote, worktreePath } from "../runs/index.js";
 import { newTaskPrompt, refactorPrompt, ASK_WITH_TOOL } from "../lib/index.js";
 
 const DIR = "/home/me/.herdr/investigations/inv-x";
@@ -64,7 +64,7 @@ test("the New Task Orchestrator, when it is Claude, may run the spawn script and
   assert.deepEqual(values(argv, "--add-dir"), [DIR]);
   assert.deepEqual(values(argv, "--allowedTools"), [`Bash(${DIR}/spawn:*)`, "Bash(hc send:*)", "Bash(hc read:*)", "Bash(hc wait:*)", "Bash(hc ls:*)", "Bash(hc kill:*)"]);
   assert.deepEqual(NEW_TASK_PLUMBING(DIR), values(argv, "--allowedTools"));
-  assert.ok(!argv.includes("--disallowedTools") && !argv.includes("--permission-mode"), "local mode writes task files: nothing is restricted or changed");
+  assert.ok(!argv.includes("--disallowedTools") && !argv.includes("--permission-mode"), "nothing else is restricted or changed");
   assert.ok(!argv.some((a) => /^Bash\(hc:\*\)$|Bash\(\*\)/.test(a)), "bare hc would run anything");
 });
 
@@ -121,10 +121,9 @@ test("both sub-agent prompts name the folder their files are in only through the
   for (const text of [newTaskInvestigatorPrompt(P), newTaskWorkerPrompt(P)]) assert.doesNotMatch(text, /This workflow's instructions|(?<!New Task )orchestrator/i);
 });
 
-test("the New Task prompts (GitHub and local) tell the agent how to start investigators and workers, and that prototype code is thrown away", () => {
+test("the New Task prompt tells the agent how to start investigators and workers, and that prototype code is thrown away", () => {
   const github = newTaskPrompt({ repo: "o/app", agentsDir: DIR });
-  const local = localNewTaskPrompt({ mainRoot: "/r/app", todoDir: "/t", upNextDir: "/u", nextId: 3, agentsDir: DIR });
-  for (const text of [github, local]) {
+  for (const text of [github]) {
     assert.ok(text.includes(`\`${DIR}/spawn investigator <name> '<brief>'\``));
     assert.ok(text.includes(`\`${DIR}/spawn worker <job> '<brief>'\``));
     assert.match(text, /only when (you )?need/i);
@@ -138,9 +137,8 @@ test("the New Task prompts (GitHub and local) tell the agent how to start invest
   }
 });
 
-test("without a session folder the New Task prompts are as before (no sub-agents)", () => {
+test("without a session folder the New Task prompt is as before (no sub-agents)", () => {
   assert.doesNotMatch(newTaskPrompt({ repo: "o/app" }), /spawn/);
-  assert.doesNotMatch(localNewTaskPrompt({ mainRoot: "/r/app", todoDir: "/t", upNextDir: "/u", nextId: 3 }), /spawn/);
   assert.equal(newTaskPrompt({ repo: "o/app", agentsDir: "" }), newTaskPrompt({ repo: "o/app" }));
 });
 
@@ -495,15 +493,12 @@ test("sessionFiles for a refactor: each role's file has its own type prompt, the
   assert.match(sessionFiles({ id: "inv-x", dir: DIR, workDir: "/wt/x", repoRoot: "/src/app", branch: "investigate/x", argv }).spawn, /The New Task Orchestrator that started you/);
 });
 
-test("the Refactor prompts (GitHub and local): the header, the same Context, the type's prompt quoted, the focus, the steps and the helpers", () => {
+test("the Refactor prompt: the header, the same Context, the type's prompt quoted, the focus, the steps and the helpers", () => {
   const github = refactorPrompt({ repo: "o/app", project: { title: "Board", url: "https://x/p" }, type: TYPE, focus: "", agentsDir: DIR });
-  const local = localRefactorPrompt({ mainRoot: "/r/app", todoDir: "/t/to-do", upNextDir: "/t/up-next", nextId: 7, type: TYPE, focus: "", agentsDir: DIR });
   assert.ok(github.startsWith("# You are the Refactor Orchestrator, running the Isolation refactor for o/app\n"));
-  assert.ok(local.startsWith("# You are the Refactor Orchestrator, running the Isolation refactor for app\n"));
   const between = (t) => t.slice(t.indexOf("## Context"), t.indexOf("## What to do"));
   assert.equal(between(github), between(newTaskPrompt({ repo: "o/app", project: { title: "Board", url: "https://x/p" } })), "the GitHub Context is New Task's");
-  assert.equal(between(local), between(localNewTaskPrompt({ mainRoot: "/r/app", todoDir: "/t/to-do", upNextDir: "/t/up-next", nextId: 7 })), "so is the local one");
-  for (const text of [github, local]) {
+  for (const text of [github]) {
     assert.ok(text.includes("> Find modules that reach into each other.\n>\n> Rate each one."), "the type's orchestrator prompt, quoted line by line");
     assert.ok(text.includes("look at the whole repo"), "no focus: the whole repo");
     assert.ok(!text.includes("asked you to focus"));
@@ -518,15 +513,12 @@ test("the Refactor prompts (GitHub and local): the header, the same Context, the
     assert.doesNotMatch(text, /Don't do anything yet/);
   }
   assert.ok(github.includes('whether it should be in "Up Next" or "To Do"') && github.includes('the GitHub Project "Board"'));
-  assert.ok(local.includes('whether it should be in "Up Next" or "To Do"') && local.includes("Make no `gh` calls"));
   assert.doesNotMatch(refactorPrompt({ repo: "o/app", type: TYPE }), /spawn/, "no session folder, no helpers section");
-  assert.doesNotMatch(localRefactorPrompt({ mainRoot: "/r/app", todoDir: "/t", upNextDir: "/u", nextId: 1, type: TYPE }), /spawn/);
 });
 
 test("the Refactor prompts with a focus say what to focus on; several lines are quoted; the project's own status names are used", () => {
   assert.ok(refactorPrompt({ repo: "o/app", type: TYPE, focus: "  the sidebar  " }).includes("The person asked you to focus on: the sidebar\n"));
   const many = refactorPrompt({ repo: "o/app", type: TYPE, focus: "the sidebar\nand the popup" });
   assert.ok(many.includes("The person asked you to focus on:\n\n> the sidebar\n> and the popup"));
-  assert.ok(localRefactorPrompt({ mainRoot: "/r/app", todoDir: "/t", upNextDir: "/u", nextId: 1, type: TYPE, focus: "x" }).includes("The person asked you to focus on: x"));
   assert.ok(refactorPrompt({ repo: "o/app", type: TYPE, backlog: "Todo", groomed: "Ready" }).includes('"Ready" or "Todo"'));
 });

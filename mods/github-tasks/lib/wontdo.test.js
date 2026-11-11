@@ -4,7 +4,7 @@ import { wontDoFooter, wontDoPrompt, retryAfterSignIn } from "./wontdo.js";
 import { WONT_DO_NEEDS_OPTION } from "./model.js";
 
 const OPTIONS = [{ name: "To Do" }, { name: "Won't Do" }];
-const idle = { draft: false, saving: false, dirty: false, local: false, statusOptions: OPTIONS, startable: true, confirming: false, busy: false };
+const idle = { draft: false, saving: false, dirty: false, statusOptions: OPTIONS, startable: true, confirming: false, busy: false };
 const footer = (over) => wontDoFooter({ ...idle, ...over });
 
 test("a clean, saved ticket can be marked Won't Do and nothing else changes", () => {
@@ -23,10 +23,6 @@ test("the button is disabled with the reason as its tooltip", () => {
   assert.deepEqual(footer({ dirty: true }).wontDo, { disabled: true, tip: "Save or revert first" });
   assert.deepEqual(footer({ statusOptions: [{ name: "To Do" }] }).wontDo, { disabled: true, tip: WONT_DO_NEEDS_OPTION });
   assert.deepEqual(footer({ statusOptions: undefined }).wontDo, { disabled: true, tip: WONT_DO_NEEDS_OPTION });
-});
-
-test("a local task never lacks the option", () => {
-  assert.equal(footer({ local: true, statusOptions: [{ name: "To Do" }] }).wontDo.disabled, false);
 });
 
 test("the confirm strip shows while confirming, and goes back to the buttons when edits make the button unavailable", () => {
@@ -60,7 +56,6 @@ test("Start, Revert and Save keep their own rules when idle", () => {
 
 test("the confirm question names the ticket and what happens", () => {
   assert.equal(wontDoPrompt({ number: 39 }), "Close #39 as not planned and set it to Won't Do?");
-  assert.equal(wontDoPrompt({ number: 7, local: true }), "Move #7 to Won't Do?");
 });
 
 test("an edit that makes the button unavailable withdraws the question, so Revert does not bring it back", () => {

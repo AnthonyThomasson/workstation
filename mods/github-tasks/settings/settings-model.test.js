@@ -69,18 +69,13 @@ test("prompt tab titles name the orchestrators in full", () => {
   assert.equal(promptTitle("nope"), "Prompt");
 });
 
-test("Refactor opens the real built-in prompt, for a sample refactor type: GitHub's, or the local one when the repo's tasks are local", () => {
+test("Refactor opens the real built-in prompt, for a sample refactor type", () => {
   const github = promptForRole("refactor", { repo: "o/app", project: { title: "Board" }, options: [{ name: "Todo" }, { name: "Up Next" }] });
   assert.match(github, /^# You are the Refactor Orchestrator, running the <refactor type name> refactor for o\/app/);
   assert.ok(github.includes("> <the refactor type's orchestrator prompt goes here>"));
   assert.ok(github.includes('"Up Next" or "Todo"'), "the project's own spelling of the statuses");
   assert.ok(github.includes("`<session folder>/spawn investigator <name> '<brief>'`"));
   assert.match(promptForRole("refactor"), /running the <refactor type name> refactor for <repo>/);
-  const local = promptForRole("refactor", { local: { mainRoot: "/r/app", todoDir: "/t/to-do", upNextDir: "/t/up-next" } });
-  assert.match(local, /^# You are the Refactor Orchestrator, running the <refactor type name> refactor for app/);
-  assert.ok(local.includes("`/t/to-do`") && local.includes("The next id is <next id>"));
-  assert.ok(local.includes("`<session folder>/spawn worker <job> '<brief>'`"));
-  assert.match(local, /Make no `gh` calls/);
 });
 
 test("Investigator opens the real read-only investigator prompt", () => {
@@ -116,17 +111,8 @@ test("the New Task prompt waits for the person, grills on acceptance criteria an
   assert.match(promptForRole("newTask"), /<project>/);
 });
 
-test("the New Task prompt tab shows the local prompt, with a placeholder id, when the repo's tasks are local", () => {
-  const prompt = promptForRole("newTask", { local: { mainRoot: "/r/app", todoDir: "/h/t/to-do", upNextDir: "/h/t/up-next" } });
-  assert.match(prompt, /\/h\/t\/to-do/);
-  assert.match(prompt, /\/h\/t\/up-next/);
-  assert.match(prompt, /next id is <next id>/);
-  assert.match(prompt, /no `gh` calls/);
-  assert.doesNotMatch(promptForRole("newTask", { repo: "me/app" }), /no `gh` calls/);
-});
-
-test("the New Task prompt tab names the session folder's spawn commands with a placeholder folder, for GitHub and local tasks", () => {
-  for (const prompt of [promptForRole("newTask", { repo: "me/app" }), promptForRole("newTask", { local: { mainRoot: "/r/app", todoDir: "/t", upNextDir: "/u" } })]) {
+test("the New Task prompt tab names the session folder's spawn commands with a placeholder folder", () => {
+  for (const prompt of [promptForRole("newTask", { repo: "me/app" })]) {
     assert.match(prompt, /<session folder>\/spawn investigator <name> '<brief>'/);
     assert.match(prompt, /<session folder>\/spawn worker <job> '<brief>'/);
     assert.match(prompt, /never becomes the ticket's work/);

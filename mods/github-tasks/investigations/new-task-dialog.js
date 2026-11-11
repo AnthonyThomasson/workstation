@@ -21,10 +21,10 @@ export const newTaskOverlay = (props) => ({
 });
 
 // What the dialog starts the task from: the place the sidebar is looking at, as the overlay can't ask the sidebar. GitHub mode has a
-// repo and a project, local mode the repo's main checkout.
-export const newTaskProps = ({ repo, project, local, mainRoot, where }) => ({
+// repo and a project.
+export const newTaskProps = ({ repo, project, where }) => ({
   repo: repo ?? null, project: project ? { id: project.id, title: project.title, url: project.url } : null,
-  local: local ? { mainRoot } : null, where: { cwd: where?.cwd, on: where?.on },
+  where: { cwd: where?.cwd, on: where?.on },
 });
 
 // The agent New Task uses: the saved one if it is installed, else Claude, else the first installed. Null when none is.

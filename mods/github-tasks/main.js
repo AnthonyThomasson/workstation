@@ -1,8 +1,7 @@
 // Tasks: the tickets on the GitHub Project linked to the selected space's repo, in the left menu under
 // Spaces: Investigations, Up Next, In Progress, In Review and Backlog (collapsed). Clicking a ticket
 // opens it in a large popup to edit (editor/editor.js, lib/popup.js), and saving pushes the change to GitHub. Each row links
-// out to GitHub and has Start, which becomes View while its workflow runs. With "taskSource": "local" in the repo's
-// .herdr/tasks/tasks.json the list is the YAML task files instead (runs/local-tasks.js, runs/local-ui.js), read again every 3 seconds.
+// out to GitHub and has Start, which becomes View while its workflow runs.
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
 // workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket, in a popup (props.popup)
 // opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow or refactor type (props.kind) in the center (workflow-ui/workflow-editor.js); "run", a started
@@ -10,14 +9,14 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, notify, shared, setShared, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
-import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, TASK_SOURCE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload } from "./lib/index.js";
+import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload } from "./lib/index.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, setupProject, setupNote } from "./github/index.js";
 import { installedAgents, investigationsHere, reconnectInvestigations, viewInvestigation, InvestigationPage, NewTaskPage, RefactorPage } from "./investigations-ui/index.js";
 import { S, icon, stop, note, iconButton, action, gh, later, AgentBar } from "./widgets/index.js";
 import { Auth, REFRESH, LOGIN } from "./github-ui/index.js";
-import { TaskEditor, LocalTaskEditor, CHANGED } from "./editor/index.js";
-import { localTasks, readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen } from "./runs-ui/index.js";
-import { localStages, rowLabel, LOCAL_ONLY_HERE, statusColor, statusLabel, cantStartHere, startOverlay, startProps } from "./runs/index.js";
+import { TaskEditor, CHANGED } from "./editor/index.js";
+import { readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen } from "./runs-ui/index.js";
+import { statusColor, statusLabel, cantStartHere, startOverlay, startProps } from "./runs/index.js";
 import { TaskSettings } from "./settings/index.js";
 import { matchWorkflows, REFACTOR } from "./workflow/index.js";
 import { WorkflowEditor, WorkflowList, loadWorkflows } from "./workflow-ui/index.js";
@@ -27,7 +26,7 @@ import { startDoctor, DOCTOR_KEY, doctorFor } from "./doctor/index.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
-const LOCAL_POLL = 3000; // how often local task files, and tasks.json, are looked at again
+const REDRAW = 3000; // how often the list is drawn again: a run starting or ending turns a row's Start into View and back
 const COLUMN = "sidebar"; // the layout column the list lives in: its width says how much of a name fits
 function find(node, id) {
   if (node?.id === id) return node;
@@ -59,7 +58,7 @@ function explain(error, folder) {
 export default class GitHubTasks extends View {
   init(_props, cx) {
     this.role = blockProps()?.role ?? "sidebar";
-    if (this.role === "editor") { this.editor = blockProps()?.local ? new LocalTaskEditor(blockProps(), cx) : new TaskEditor(blockProps(), cx); return; }
+    if (this.role === "editor") { this.editor = new TaskEditor(blockProps(), cx); return; }
     if (this.role === "workflow-editor") { this.workflowEditor = new WorkflowEditor(blockProps(), cx); return; }
     if (this.role === "run") {
       this.runPage = new RunPage(blockProps());
@@ -97,7 +96,7 @@ export default class GitHubTasks extends View {
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
     this.doctor = startDoctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
     cx.timer.every(POLL, (cx) => this.refresh(cx));
-    cx.timer.every(LOCAL_POLL, (cx) => { cx.notify(); this.tick(cx); }); // a run starting or ending turns a row's Start into View and back; local tasks and tasks.json are looked at again
+    cx.timer.every(REDRAW, (cx) => cx.notify());
     // A restart drops what terminal.show showed: show each live run's orchestrator again in its tab (twice, in case the app was still loading).
     cx.spawn(async (cx) => { await reconnectRuns(cx); await cx.sleep(5000); await reconnectRuns(cx); });
     // The same for New Task sessions (Investigations), which are shown in tabs like a run's orchestrator.
@@ -145,7 +144,6 @@ export default class GitHubTasks extends View {
         const place = await readPlace(ctx, this.placeCache);
         if (!current()) return;
         this.applyPlace(place);
-        if (place.source === "local") { if (!place.remote) await this.loadLocal(place, current); return; }
         // The folder is asked about once. Another folder in the same repo keeps the list on screen. A list kept from
         // when the space was left asks again: its repo may be another one by now.
         const repo = this.repo && this.repoFolder === ctx.folder && !this.restored ? this.repo : await findRepo(gh, where);
@@ -178,54 +176,17 @@ export default class GitHubTasks extends View {
     });
   }
 
-  // The place's source is known: a change of source (or of local repo) starts the list over, and the settings are told.
+  // The place is known (its main checkout): the settings are told.
   applyPlace(place) {
     applyPlace(this, place);
     this.publish();
   }
 
-  // Local mode: the tasks in the status folders. A failure to read them is said in the list, not as a GitHub error.
-  async loadLocal(place, current) {
-    try {
-      const tasks = await localTasks(place.mainRoot).list();
-      if (!current()) return;
-      this.localStages = localStages(tasks, place.mainRoot);
-      this.localError = null;
-    } catch (e) {
-      if (current()) { failReload(this); this.localError = String(e?.message ?? e); }
-    }
-  }
-
-  // Every few seconds: local mode reads the files again; GitHub mode looks at tasks.json, which may have been edited by hand.
-  // A space on another machine is left to the slow poll.
-  tick(cx) {
-    const ctx = this.ctx;
-    if (!ctx || ctx.on || this.loading || this.ticking) return;
-    if (this.source === "local") { this.refresh(cx, { quiet: true }); return; }
-    this.ticking = true;
-    const token = this.token;
-    cx.spawn(async (cx) => {
-      try {
-        const place = await readPlace(ctx, this.placeCache);
-        if (token !== this.token || this.loading) return;
-        this.placeCache = place.cache;
-        if (place.source !== this.source) this.refresh(cx, { quiet: true });
-      } finally {
-        this.ticking = false;
-      }
-    });
-  }
-
-  // The repo's id for runs and tabs: its GitHub name, or in local mode its main checkout.
-  repoId() { return this.source === "local" ? this.place?.mainRoot ?? "" : this.repo; }
-
   // Tells the settings, which live in the side panel, which repo and project this list is for. Null when there is no repo.
-  // The place goes out whether or not there is a repo: the workflows are kept per computer and per local repo.
+  // The place goes out whether or not there is a repo: the workflows are kept per computer.
   publish() {
     const ctx = this.ctx, project = this.project;
     setShared(PLACE, ctx ? { cwd: ctx.folder, on: ctx.on } : null);
-    const p = this.place, source = ctx && p ? { source: p.source, mainRoot: p.mainRoot, remote: p.remote, cwd: p.folder, on: p.on } : null;
-    if (JSON.stringify(source) !== this.publishedSource) { this.publishedSource = JSON.stringify(source); setShared(TASK_SOURCE, source); }
     setShared(CONTEXT, this.repo && ctx ? { repo: this.repo, project: project ? { id: project.id, title: project.title, url: project.url } : null, where: { cwd: ctx.folder, on: ctx.on } } : null);
   }
 
@@ -324,7 +285,6 @@ export default class GitHubTasks extends View {
   renderBody(t, ctx) {
     const message = (...els) => this.withInvestigations(t, ctx, els);
     if (!ctx) return message(note(t, "Open a space to see its tickets."));
-    if (this.source === "local") return this.renderLocal(t, ctx);
     if (!this.loaded && this.error) return message(this.renderProblem(t, ctx));
     if (!this.loaded) return message(...this.skeleton(t));
     if (!this.project) return message(this.renderNoProject(t, ctx));
@@ -342,7 +302,7 @@ export default class GitHubTasks extends View {
   // repo is known (sections.js's investigationsAlone): their rows are the way back to a session, so they stay while the list can't draw.
   withInvestigations(t, ctx, els) {
     const sections = investigationsAlone({
-      ctx, local: this.source === "local", remote: Boolean(this.place?.remote), mainRoot: this.place?.mainRoot, repo: this.repo,
+      ctx, remote: Boolean(this.place?.remote), mainRoot: this.place?.mainRoot, repo: this.repo,
       items: ctx ? this.investigationList() : [],
     }, this.open);
     if (!sections.length) return v_flex().flex_1().min_h(0).p(16).gap(10).children(els);
@@ -373,10 +333,10 @@ export default class GitHubTasks extends View {
     return rows;
   }
 
-  // The New Task sessions of the repo shown: started from its main checkout (the place's, in either mode) or for its GitHub name, from
+  // The New Task sessions of the repo shown: started from its main checkout (the place's) or for its GitHub name, from
   // any space. Read from shared state and the terminals on every draw, so the 3-second poll's redraw makes them come and go.
   investigationList() {
-    return investigationsHere({ repoRoot: this.place?.remote ? null : this.place?.mainRoot ?? null, repo: this.source === "local" ? null : this.repo });
+    return investigationsHere({ repoRoot: this.place?.remote ? null : this.place?.mainRoot ?? null, repo: this.repo });
   }
 
   // One session on one line: a dot in its agent's status colour (grey once it has ended) and its first line, cut to fit. A click
@@ -390,19 +350,6 @@ export default class GitHubTasks extends View {
       .on_click((_e, cx) => cx.spawn(async (cx) => { await viewInvestigation(entry, cx); }))
       .child(div().w(8).h(8).flex_none().rounded_full().bg(color))
       .child(div().flex_1().min_w(0).truncate().text_size(S().body).text_color(view.ended ? t.muted : t.foreground).child(view.text));
-  }
-
-  // Local mode: the tasks in the status folders, in the same sections. A space on another machine can't have them.
-  renderLocal(t, ctx) {
-    const message = (...els) => this.withInvestigations(t, ctx, els);
-    if (this.place?.remote) return message(note(t, LOCAL_ONLY_HERE));
-    if (!this.localStages && this.localError) return message(note(t, this.localError, t.blocked));
-    if (!this.localStages) return message(...this.skeleton(t));
-    const rows = [];
-    if (this.localError) rows.push(div().px(14).py(8).child(note(t, this.localError, t.blocked)));
-    if (this.startError) rows.push(div().px(14).py(8).child(note(t, this.startError, t.blocked)));
-    rows.push(...this.sectionRows(t, this.localStages));
-    return div().id("tickets").flex_1().min_h(0).overflow_y_scrollbar().child(v_flex().pb(12).children(rows));
   }
 
   // The repo has no project: say so, and offer to make one linked to it.
@@ -434,9 +381,9 @@ export default class GitHubTasks extends View {
   openNewTask() { this.openStartDialog(false); }
   openRefactor() { this.openStartDialog(true); }
   openStartDialog(refactor) {
-    const ctx = this.ctx, project = this.project, local = this.source === "local";
-    if (!ctx || (!refactor && !this.agent()) || (local ? !this.place?.mainRoot || this.place.remote : !project)) return;
-    const props = newTaskProps({ repo: this.repo, project, local, mainRoot: this.place?.mainRoot, where: { cwd: ctx.folder, on: ctx.on } });
+    const ctx = this.ctx, project = this.project;
+    if (!ctx || (!refactor && !this.agent()) || !project) return;
+    const props = newTaskProps({ repo: this.repo, project, where: { cwd: ctx.folder, on: ctx.on } });
     openOverlay(refactor ? refactorOverlay(props) : newTaskOverlay(props));
   }
 
@@ -494,11 +441,10 @@ export default class GitHubTasks extends View {
   // A click opens the ticket in a large popup over the app to edit (editor/editor.js, lib/popup.js). Its folder and machine go
   // along, so the editor asks GitHub from the same place the panel does.
   openTicket(ticket) {
-    const ctx = this.ctx, project = this.project, local = Boolean(ticket.local);
-    if (!ctx || (!project && !local)) return;
+    const ctx = this.ctx, project = this.project;
+    if (!ctx || !project) return;
     openOverlay(editorOverlay({
-      role: "editor", ticket, repo: this.repoId(), project: local ? null : { id: project.id, title: project.title },
-      ...(local ? { local: { mainRoot: ticket.mainRoot } } : {}), where: { cwd: ctx.folder, on: ctx.on },
+      role: "editor", ticket, repo: this.repo, project: { id: project.id, title: project.title }, where: { cwd: ctx.folder, on: ctx.on },
     }));
   }
 
@@ -506,8 +452,8 @@ export default class GitHubTasks extends View {
   // overlay of its own (start-dialog-view.js), listing them or saying why there is nothing to start, with the unreadable workflow
   // files. If the workflows can't be loaded, the reason shows here in the sidebar and no dialog opens.
   startTicket(ticket, cx) {
-    const ctx = this.ctx, local = Boolean(ticket.local), project = local ? null : this.project, repo = this.repoId();
-    if (!ctx || (!project && !local) || this.starting.has(ticket.key)) return;
+    const ctx = this.ctx, project = this.project, repo = this.repo;
+    if (!ctx || !project || this.starting.has(ticket.key)) return;
     this.starting.add(ticket.key);
     this.startError = null;
     cx.notify();
@@ -535,17 +481,17 @@ export default class GitHubTasks extends View {
   // One ticket on one line: a dot for its stage, its name with the middle cut out to fit, a link to GitHub, and
   // Start (View while its workflow runs).
   row(t, ticket, color) {
-    const running = liveRunFor(this.repoId(), ticket), busy = this.starting.has(ticket.key);
+    const running = liveRunFor(this.repo, ticket), busy = this.starting.has(ticket.key);
     const width = find(layout(), COLUMN)?.size?.px ?? 268;
     const room = width - 16 - 12 - 8 - 16 - (ticket.url ? 28 : 0) - 28; // what the name has left, in px
     const max = Math.max(12, Math.floor(room / (S().body * 0.55)));
     return h_flex().id(`ticket-${ticket.key}`).flex_none().mx(8).mb(1).px(6).h(28).gap(8).items_center().rounded(6)
       .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => this.openTicket(ticket, cx))
-      .tooltip(rowLabel(ticket))
+      .tooltip(ticket.title)
       .child(div().w(8).h(8).flex_none().rounded_full().when(ticket.draft, (el) => el.border(1.5).border_color(color)).when(!ticket.draft, (el) => el.bg(color)))
-      .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(rowLabel(ticket), max)))
+      .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(ticket.title, max)))
       .when(Boolean(ticket.url), (el) => el.child(iconButton(`open-${ticket.key}`, "external", t, (_e, cx) => cx.open_url(ticket.url), false, "Open on GitHub")))
-      .when(Boolean(running), (el) => el.child(iconButton(`view-${ticket.key}`, "eye", t, (_e, cx) => cx.spawn(async (cx) => { await viewRun(running, cx, { ticket, repo: this.repoId(), project: this.project }); }), false, "View the running agent")))
+      .when(Boolean(running), (el) => el.child(iconButton(`view-${ticket.key}`, "eye", t, (_e, cx) => cx.spawn(async (cx) => { await viewRun(running, cx, { ticket, repo: this.repo, project: this.project }); }), false, "View the running agent")))
       .when(!running, (el) => el.child(iconButton(`start-${ticket.key}`, busy ? "ring" : "play", t, (_e, cx) => this.startTicket(ticket, cx), busy, "Start")));
   }
 }

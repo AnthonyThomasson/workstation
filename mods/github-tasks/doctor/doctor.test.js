@@ -292,9 +292,8 @@ test("the prompt works without a repo or project, and is empty with no issues", 
 
 const brokenGithub = { project: null, statuses: undefined, auth: { installed: true, signedIn: true, scopes: ["repo"] } };
 
-test("the project, scope, label and agent checks always run, and a stray source or githubRemote input changes nothing", () => {
+test("the project, scope, label and agent checks always run", () => {
   assert.deepEqual(kinds(diagnose(healthy({ ...brokenGithub }))), ["gh-scope", "no-project"]);
-  assert.deepEqual(kinds(diagnose(healthy({ ...brokenGithub, source: "local", githubRemote: false }))), ["gh-scope", "no-project"]);
   const workflows = { items: [workflow("Story", {}, ["bug"])], errors: [] };
   assert.deepEqual(kinds(diagnose(healthy({ workflows, labels: [{ name: "easy" }] }))), ["label-missing"]);
   assert.deepEqual(kinds(diagnose(healthy({ auth: { installed: true, signedIn: false, scopes: null } }))), ["gh-auth"]);
