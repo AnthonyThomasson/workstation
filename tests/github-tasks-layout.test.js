@@ -21,6 +21,9 @@
 //   top-level-file a .js file at the top level other than main.js and prompts-page.js.
 //   unknown-folder a folder with .js files that is not in the table (and not a data folder).
 //   pure-import    a folder marked pure in the table importing herdr, gpui-kit or gpui-base (directly; tests in it too).
+//   directory-import an import of a folder path ("../core" or "../core/"): name the file, "../core/index.js" (Node can't load a folder).
+//   absolute-import an import of an absolute path, a file: URL or a drive path: imports inside the mod are relative.
+//   data-folder-code a .js, .mjs or .cjs file inside a data folder (icons/, starters/ hold no code).
 //   dynamic-import an import() whose path is not a plain string, so the check can't follow it.
 //   parse          the file is not valid JavaScript.
 // Apart from pure-import, only relative imports are judged: "herdr", "gpui-kit", "node:fs" and the like are not part of the layout. Files and folders
@@ -58,13 +61,15 @@ export const LAYOUT = {
 // What a pure folder may not import.
 const HOST_MODULES = ["herdr", "gpui-kit", "gpui-base"];
 
+const CODE_FILE = /\.(js|mjs|cjs)$/;
+const ABSOLUTE_SPEC = /^(\/|file:|[A-Za-z]:[\\/])/;
 const SKIP_DIRS = new Set(["node_modules", ".git"]);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.dirname(HERE);
 const posix = (p) => p.split(path.sep).join("/");
 
 
-// Every .js file under dir (sorted, as posix paths relative to dir) and every folder (relative path); symlinks are not followed.
+// Every .js, .mjs and .cjs file under dir (sorted, as posix paths relative to dir) and every folder (relative path); symlinks are not followed.
 function walk(root) {
   const files = [];
   const dirs = [];
@@ -77,7 +82,7 @@ function walk(root) {
         if (SKIP_DIRS.has(name)) continue;
         dirs.push(posix(path.relative(root, full)));
         visit(full);
-      } else if (st.isFile() && name.endsWith(".js")) files.push(posix(path.relative(root, full)));
+      } else if (st.isFile() && CODE_FILE.test(name)) files.push(posix(path.relative(root, full)));
     }
   };
   visit(root);
@@ -113,6 +118,13 @@ function place(rel) {
   return parts.length === 1 ? { folder: "", rest: parts[0] } : { folder: parts[0], rest: parts.slice(1).join("/") };
 }
 
+// -1, 0 or 1: for sorting strings the same way everywhere.
+function compare(a, b) {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
 const TIER_NAME = (n) => (n === 0 ? "top level" : `tier ${n}`);
 
 export function checkLayout(root, layout = LAYOUT) {
@@ -136,7 +148,12 @@ export function checkLayout(root, layout = LAYOUT) {
     if (!existsSync(path.join(root, d, "index.js"))) fail(d, 0, "no-index", `"${d}/" has no index.js (its public interface)`);
   }
 
-  // Top level: only main.js and prompts-page.js.
+  // Data folders hold no code.
+  for (const f of files) {
+    if (DATA_FOLDERS.includes(place(f).folder)) fail(f, 1, "data-folder-code", `${f} is code in a data folder (${place(f).folder}/ holds data only)`);
+  }
+
+  // Top level: only the top files.
   for (const f of files) {
     if (!f.includes("/") && !TOP_FILES.includes(f)) fail(f, 1, "top-level-file", `${f} is at the top level; only ${TOP_FILES.join(" and ")} are (move it into a folder)`);
   }
@@ -146,7 +163,7 @@ export function checkLayout(root, layout = LAYOUT) {
   for (const f of files) {
     let ast;
     try {
-      ast = acorn.parse(readFileSync(path.join(root, f), "utf8"), { ecmaVersion: "latest", sourceType: "module", locations: true, allowHashBang: true });
+      ast = acorn.parse(readFileSync(path.join(root, f), "utf8"), { ecmaVersion: "latest", sourceType: f.endsWith(".cjs") ? "script" : "module", locations: true, allowHashBang: true });
     } catch (e) {
       fail(f, e.loc?.line ?? 1, "parse", `not valid JavaScript: ${e.message}`);
       continue;
@@ -155,6 +172,7 @@ export function checkLayout(root, layout = LAYOUT) {
     const fromTier = from.folder === "" ? 0 : TIER_OF.get(from.folder); // undefined for an unknown folder: judged by the other rules
     for (const { spec, line } of importsOf(ast)) {
       if (spec === null) { fail(f, line, "dynamic-import", "import() with a path that is not a plain string can't be followed"); continue; }
+      if (ABSOLUTE_SPEC.test(spec)) { fail(f, line, "absolute-import", `${spec}: an absolute path or file: URL (use a relative import)`); continue; }
       if (!spec.startsWith(".")) {
         // herdr, gpui-kit, node:*: not part of the layout, except that a pure folder may not reach the host
         if (PURE.includes(from.folder) && HOST_MODULES.includes(spec)) fail(f, line, "pure-import", `${spec}: ${from.folder}/ is pure and may not import ${HOST_MODULES.join(", ")}`);
@@ -163,7 +181,12 @@ export function checkLayout(root, layout = LAYOUT) {
       let target = path.resolve(root, path.dirname(f), spec);
       const rel = posix(path.relative(root, target));
       if (rel === "" || rel.startsWith("..")) continue; // leaves the mod: mod-isolation's business
-      try { if (statSync(target).isDirectory()) target = path.join(target, "index.js"); } catch { /* not there: judged by its path */ }
+      try {
+        if (statSync(target).isDirectory()) {
+          fail(f, line, "directory-import", `${spec}: a folder path; import ${spec.replace(/\/$/, "")}/index.js`);
+          target = path.join(target, "index.js"); // judged as the index.js it means, so a deep folder is still caught
+        }
+      } catch { /* not there: judged by its path */ }
       const to = place(posix(path.relative(root, target)));
 
       if (to.folder === "" && to.rest === ENTRY) { fail(f, line, "imports-main", `${spec}: nothing imports ${ENTRY}`); continue; }
@@ -212,13 +235,13 @@ export function checkLayout(root, layout = LAYOUT) {
   for (const v of [...graph.keys()].sort()) if (!index.has(v)) connect(v);
   for (const group of groups) {
     const inside = edges.filter((e) => group.includes(e.from) && group.includes(e.to))
-      .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line));
+      .sort((a, b) => compare(a.file, b.file) || a.line - b.line);
     fail(inside[0].file, inside[0].line, "cycle", `folders import each other in a circle: ${group.join(", ")}`);
   }
 
   const seen = new Set();
   return failures
-    .sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : a.line - b.line || (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : a.message < b.message ? -1 : a.message > b.message ? 1 : 0)))
+    .sort((a, b) => compare(a.file, b.file) || a.line - b.line || compare(a.rule, b.rule) || compare(a.message, b.message))
     .filter((f) => { const k = `${f.file}:${f.line}:${f.rule}:${f.message}`; if (seen.has(k)) return false; seen.add(k); return true; });
 }
 
