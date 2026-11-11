@@ -3,7 +3,7 @@
 // so node --test runs it; run-page.js does the exec calls and the drawing. Nothing here pushes, and git is never run on a task file.
 import { STAGES, cleanupSteps, statusStep } from "./finish.js";
 
-// The task's file goes to the folder of the stage the run reached: 1 In Progress, 2 In Review, 3 Done (Merge sets that one).
+// The task's file goes to the folder of the stage the run reached: 1 In Progress (the run launched), 2 In Review (a reviewer started), 3 Done (Merge sets that one). The run page doesn't call this for a stage the task is already at or past.
 // tasks: makeLocalTasks(...). Resolves the moved task; rejects with a message that can be shown (no such task, a file in the way).
 export function moveToStage(tasks, id, stage) {
   const status = STAGES[stage - 1];

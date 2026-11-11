@@ -6,9 +6,16 @@ import { STATUS_MUTATION } from "./loader.js";
 
 export const STAGES = [STATUSES.inProgress, STATUSES.inReview, STATUSES.done]; // what a ticket becomes as the run goes on, in order (Done is set by Merge)
 
-// The stage the run has reached: 0 nothing yet, 1 a worker started, 2 a reviewer started.
-// agents: { workers, reviewers }, with every agent seen (the ones that ended too).
-export const stageOf = (agents) => (agents.reviewers?.length ? 2 : agents.workers?.length ? 1 : 0);
+// The stage the run has reached: 0 nothing yet, 1 the run launched (or a worker started), 2 a reviewer started.
+// agents: { workers, reviewers, launched }, with every agent seen (the ones that ended too). launched: the run page is open, which Start
+// does right after the orchestrator is launched, so In Progress doesn't wait for the first worker.
+export const stageOf = (agents) => (agents.reviewers?.length ? 2 : agents.workers?.length || agents.launched ? 1 : 0);
+
+// The stage a status already is: 1 In Progress, 2 In Review, 3 Done; 0 for any other (or no) status.
+export const statusStage = (status) => STAGES.findIndex((s) => sameStatus(s, status)) + 1;
+
+// Whether a ticket in `status` moves to `stage`: only forward. A re-run of a ticket already In Review or Done keeps its status.
+export const movesTo = (status, stage) => stage > statusStage(status);
 
 // Whether a final reviewer has shown up: in the rows seen (the ones that ended too) or in what the page saved, so a restart
 // keeps it. saved: the value kept in shared state, any of 1, "1" or nothing.
