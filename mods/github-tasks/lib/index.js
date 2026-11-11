@@ -1,4 +1,5 @@
 // Public interface of lib/: the only file code outside this folder may import.
+export { BACK_AFTER, SHAKE_FOR, Shakes, bellFirst, bellTip, waitingAgents } from "./bell.js";
 export { WORDS, agentPopupOverlay, barTitle, isEscape, parentLabel } from "./agent-popup.js";
 export { EFFORTS, groomArgv, normalizeGroomer, normalizeSubAgent } from "./agent-settings.js";
 export { classifyError, LOGIN, REFRESH, signInFrom } from "./gh-sign-in.js";

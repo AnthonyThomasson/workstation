@@ -8,11 +8,11 @@
 // workflow's agents, beside its orchestrator (runs-ui/run-page.js); "investigation", a New Task session's Done button, beside its agent (investigations-ui/investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (investigations-ui/new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (runs-ui/start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js); "agent-bar", the bar over a peeked agent's terminal in its popup (widgets/agent-bar.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, spaces, focused, notify, shared, setShared, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
-import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload, CHANGED, AGENT_KEY, DOCTOR_KEY } from "./lib/index.js";
+import { run, spaces, focused, notify, shared, setShared, terminals, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
+import { BACK_AFTER, Shakes, bellFirst, bellTip, waitingAgents, INVESTIGATION_LABEL, RUN_LABEL, normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload, CHANGED, AGENT_KEY, DOCTOR_KEY } from "./lib/index.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, setupProject, setupNote } from "./github/index.js";
 import { installedAgents, investigationsHere, reconnectInvestigations, viewInvestigation, InvestigationPage, NewTaskPage, RefactorPage } from "./investigations-ui/index.js";
-import { S, icon, stop, note, iconButton, action, gh, later, AgentBar } from "./widgets/index.js";
+import { S, icon, stop, note, iconButton, action, gh, later, openAgentPopup, AgentBar } from "./widgets/index.js";
 import { Auth, REFRESH, LOGIN } from "./github-ui/index.js";
 import { TaskEditor } from "./editor/index.js";
 import { readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen } from "./runs-ui/index.js";
@@ -92,6 +92,9 @@ export default class GitHubTasks extends View {
     this.reset(null);
     this.open = initialOpen(); // which sections are expanded
     this.starting = new Set(); // the tickets whose Start is working
+    this.cx = cx;
+    this.shakes = new Shakes(); // which rows have just started needing the person (lib/bell.js)
+    this.waiting = new Map(); // row id -> the agents of its run or session that need the person (blocked or in error), as of the last draw
     this.agents = []; // installed agents New Task can use
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
     this.doctor = startDoctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
@@ -303,7 +306,7 @@ export default class GitHubTasks extends View {
   withInvestigations(t, ctx, els) {
     const sections = investigationsAlone({
       ctx, remote: Boolean(this.place?.remote), mainRoot: this.place?.mainRoot, repo: this.repo,
-      items: ctx ? this.investigationList() : [],
+      items: ctx ? this.watch({ investigations: this.investigationList() }).investigations : [],
     }, this.open);
     if (!sections.length) return v_flex().flex_1().min_h(0).p(16).gap(10).children(els);
     const rows = [];
@@ -323,7 +326,8 @@ export default class GitHubTasks extends View {
   sectionRows(t, { inProgress, inReview, groomed, backlog }) {
     const colors = { next: t.ansi2, backlog: t.ansi4, progress: t.ansi3, review: t.ansi5 };
     const rows = [];
-    for (const section of sectionPlan({ next: groomed, investigations: this.investigationList(), backlog, progress: inProgress, review: inReview }, this.open)) {
+    const lists = this.watch({ next: groomed, investigations: this.investigationList(), backlog, progress: inProgress, review: inReview });
+    for (const section of sectionPlan(lists, this.open)) {
       rows.push(this.sectionTitle(t, section));
       if (!section.open) continue;
       if (section.id === "investigations") rows.push(...section.items.map((entry) => this.investigationRowView(t, entry)));
@@ -331,6 +335,44 @@ export default class GitHubTasks extends View {
       if (section.empty) rows.push(div().px(14).py(2).child(note(t, section.empty)));
     }
     return rows;
+  }
+
+  // The id of a row of the sidebar: a ticket's or an investigation's.
+  rowId(section, item) { return section === "investigations" ? `investigation-${item.id}` : `ticket-${item.key}`; }
+
+  // The bell (lib/bell.js): looks at every row of these lists ({ section id: items }) and notes the agents of its run (a ticket's, found
+  // by its live orchestrator) or session (an investigation's) that are blocked or in error, into this.waiting. The shakes are told, so a
+  // row that has just started needing the person shakes once. Answers the lists with the rows that need the person first.
+  watch(lists) {
+    const all = terminals(), waiting = new Map();
+    for (const [section, items] of Object.entries(lists)) {
+      for (const item of items) {
+        const id = section === "investigations" ? item.id : liveRunFor(this.repo, item)?.labels?.[RUN_LABEL];
+        waiting.set(this.rowId(section, item), waitingAgents(all, section === "investigations" ? INVESTIGATION_LABEL : RUN_LABEL, id));
+      }
+    }
+    for (const [key, agents] of waiting) this.waiting.set(key, agents);
+    this.shakes.observe(new Map([...waiting].map(([key, agents]) => [key, agents.length > 0])), Date.now());
+    return Object.fromEntries(Object.entries(lists).map(([section, items]) => [section, bellFirst(items, (item) => waiting.get(this.rowId(section, item)).length > 0)]));
+  }
+
+  // What a row that needs the person gets: the bell, which opens the waiting agent's popup (the rest of the row keeps its click), and
+  // for a moment after it started needing them a shake. The row is pushed aside, and a second later let go with a spring that
+  // overshoots, so it swings back and forth and settles: native (spring), with no timer drawing it; the one timer here only draws the
+  // frame where it is let go.
+  bellFor(t, id) {
+    const agents = this.waiting.get(id) ?? [];
+    if (!agents.length) return null;
+    const phase = this.shakes.phase(id, Date.now());
+    if (phase === "out" && !this.letting) {
+      this.letting = true;
+      this.cx.timer.after(BACK_AFTER + 30, () => { this.letting = false; this.cx.notify(); });
+    }
+    const color = agents[0].status === "error" ? t.ansi1 : t.blocked;
+    return {
+      shake: (el) => el.relative().left(phase === "out" ? 10 : 0).spring("left", { response: 260, damping: 0.22 }),
+      button: iconButton(`bell-${id}`, "bell", t, () => openAgentPopup(agents[0].address), false, bellTip(agents), color),
+    };
   }
 
   // The New Task sessions of the repo shown: started from its main checkout (the place's) or for its GitHub name, from
@@ -343,13 +385,14 @@ export default class GitHubTasks extends View {
   // switches to its space and tab (viewInvestigation), reopening them if they were closed.
   investigationRowView(t, entry) {
     const view = investigationRow(entry);
-    const color = statusColor(view.status, t);
+    const color = statusColor(view.status, t), bell = this.bellFor(t, `investigation-${entry.id}`);
     return h_flex().id(`investigation-${entry.id}`).flex_none().mx(8).mb(1).px(6).h(28).gap(8).items_center().rounded(6)
       .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
       .tooltip(`${view.text}: ${statusLabel(view.status)}. ${view.tip}`)
       .on_click((_e, cx) => cx.spawn(async (cx) => { await viewInvestigation(entry, cx); }))
       .child(div().w(8).h(8).flex_none().rounded_full().bg(color))
-      .child(div().flex_1().min_w(0).truncate().text_size(S().body).text_color(view.ended ? t.muted : t.foreground).child(view.text));
+      .child(div().flex_1().min_w(0).truncate().text_size(S().body).text_color(view.ended ? t.muted : t.foreground).child(view.text))
+      .when(Boolean(bell), (el) => bell.shake(el).child(bell.button));
   }
 
   // The repo has no project: say so, and offer to make one linked to it.
@@ -481,15 +524,17 @@ export default class GitHubTasks extends View {
   // One ticket on one line: a dot for its stage, its name with the middle cut out to fit, a link to GitHub, and
   // Start (View while its workflow runs).
   row(t, ticket, color) {
-    const running = liveRunFor(this.repo, ticket), busy = this.starting.has(ticket.key);
+    const running = liveRunFor(this.repo, ticket), busy = this.starting.has(ticket.key), bell = this.bellFor(t, `ticket-${ticket.key}`);
     const width = find(layout(), COLUMN)?.size?.px ?? 268;
-    const room = width - 16 - 12 - 8 - 16 - (ticket.url ? 28 : 0) - 28; // what the name has left, in px
+    const room = width - 16 - 12 - 8 - 16 - (ticket.url ? 28 : 0) - 28 - (bell ? 28 : 0); // what the name has left, in px
     const max = Math.max(12, Math.floor(room / (S().body * 0.55)));
     return h_flex().id(`ticket-${ticket.key}`).flex_none().mx(8).mb(1).px(6).h(28).gap(8).items_center().rounded(6)
       .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => this.openTicket(ticket, cx))
       .tooltip(ticket.title)
+      .when(Boolean(bell), (el) => bell.shake(el))
       .child(div().w(8).h(8).flex_none().rounded_full().when(ticket.draft, (el) => el.border(1.5).border_color(color)).when(!ticket.draft, (el) => el.bg(color)))
       .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(ticket.title, max)))
+      .when(Boolean(bell), (el) => el.child(bell.button))
       .when(Boolean(ticket.url), (el) => el.child(iconButton(`open-${ticket.key}`, "external", t, (_e, cx) => cx.open_url(ticket.url), false, "Open on GitHub")))
       .when(Boolean(running), (el) => el.child(iconButton(`view-${ticket.key}`, "eye", t, (_e, cx) => cx.spawn(async (cx) => { await viewRun(running, cx, { ticket, repo: this.repo, project: this.project }); }), false, "View the running agent")))
       .when(!running, (el) => el.child(iconButton(`start-${ticket.key}`, busy ? "ring" : "play", t, (_e, cx) => this.startTicket(ticket, cx), busy, "Start")));
