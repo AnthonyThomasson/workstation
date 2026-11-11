@@ -94,6 +94,7 @@ export default class GitHubTasks extends View {
     this.starting = new Set(); // the tickets whose Start is working
     this.cx = cx;
     this.shakes = new Shakes(); // which rows have just started needing the person (lib/bell.js)
+    this.releasing = new Set(); // the rows whose release frame is waiting on a timer
     this.waiting = new Map(); // row id -> the agents of its run or session that need the person (blocked or in error), as of the last draw
     this.agents = []; // installed agents New Task can use
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
@@ -337,7 +338,7 @@ export default class GitHubTasks extends View {
     return rows;
   }
 
-  // The id of a row of the sidebar: a ticket's or an investigation's.
+  // The id of a row of the sidebar: a ticket's (its key is its GitHub node id, so it is the same in no two repos) or an investigation's.
   rowId(section, item) { return section === "investigations" ? `investigation-${item.id}` : `ticket-${item.key}`; }
 
   // The bell (lib/bell.js): looks at every row of these lists ({ section id: items }) and notes the agents of its run (a ticket's, found
@@ -351,7 +352,7 @@ export default class GitHubTasks extends View {
         waiting.set(this.rowId(section, item), waitingAgents(all, section === "investigations" ? INVESTIGATION_LABEL : RUN_LABEL, id));
       }
     }
-    for (const [key, agents] of waiting) this.waiting.set(key, agents);
+    this.waiting = waiting; // only the rows listed now
     this.shakes.observe(new Map([...waiting].map(([key, agents]) => [key, agents.length > 0])), Date.now());
     return Object.fromEntries(Object.entries(lists).map(([section, items]) => [section, bellFirst(items, (item) => waiting.get(this.rowId(section, item)).length > 0)]));
   }
@@ -363,10 +364,10 @@ export default class GitHubTasks extends View {
   bellFor(t, id) {
     const agents = this.waiting.get(id) ?? [];
     if (!agents.length) return null;
-    const phase = this.shakes.phase(id, Date.now());
-    if (phase === "out" && !this.letting) {
-      this.letting = true;
-      this.cx.timer.after(BACK_AFTER + 30, () => { this.letting = false; this.cx.notify(); });
+    const now = Date.now(), phase = this.shakes.phase(id, now), release = this.shakes.releaseIn(id, now);
+    if (release !== null && !this.releasing.has(id)) { // each row that is pushed out gets its own frame where it is let go
+      this.releasing.add(id);
+      this.cx.timer.after(release + 30, () => { this.releasing.delete(id); this.cx.notify(); });
     }
     const color = agents[0].status === "error" ? t.ansi1 : t.blocked;
     return {
@@ -524,7 +525,7 @@ export default class GitHubTasks extends View {
   // One ticket on one line: a dot for its stage, its name with the middle cut out to fit, a link to GitHub, and
   // Start (View while its workflow runs).
   row(t, ticket, color) {
-    const running = liveRunFor(this.repo, ticket), busy = this.starting.has(ticket.key), bell = this.bellFor(t, `ticket-${ticket.key}`);
+    const running = liveRunFor(this.repo, ticket), busy = this.starting.has(ticket.key), bell = this.bellFor(t, this.rowId("ticket", ticket));
     const width = find(layout(), COLUMN)?.size?.px ?? 268;
     const room = width - 16 - 12 - 8 - 16 - (ticket.url ? 28 : 0) - 28 - (bell ? 28 : 0); // what the name has left, in px
     const max = Math.max(12, Math.floor(room / (S().body * 0.55)));

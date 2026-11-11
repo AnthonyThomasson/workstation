@@ -56,6 +56,11 @@ export class Shakes {
     this.waiting = new Map(waiting);
   }
 
+  // How many ms until a row that is pushed out is let go (the frame main.js must draw), or null when it isn't pushed out. Each row has its own.
+  releaseIn(key, now) {
+    return this.phase(key, now) === "out" ? BACK_AFTER - (now - this.since.get(key)) : null;
+  }
+
   phase(key, now) {
     const at = this.since.get(key);
     if (at === undefined || !this.waiting.get(key)) return null;

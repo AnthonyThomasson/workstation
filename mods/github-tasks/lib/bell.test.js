@@ -141,3 +141,24 @@ test("a key nobody has observed is not shaking", () => {
 test("the shake lasts longer than its outward swing", () => {
   assert.ok(BACK_AFTER > 0 && SHAKE_FOR > BACK_AFTER);
 });
+
+test("each shaking row says how long until it is let go, on its own clock", () => {
+  const s = new Shakes();
+  s.observe(new Map([["a", false], ["b", false]]), 1000);
+  s.observe(new Map([["a", true], ["b", false]]), 2000);
+  s.observe(new Map([["a", true], ["b", true]]), 2100);
+  assert.equal(s.releaseIn("a", 2100), BACK_AFTER - 100);
+  assert.equal(s.releaseIn("b", 2100), BACK_AFTER, "a second row starting within the first's swing has its own release");
+  assert.equal(s.releaseIn("a", 2000 + BACK_AFTER), null, "already let go");
+  assert.equal(s.releaseIn("zzz", 2100), null);
+  assert.equal(s.releaseIn("b", 2100 + BACK_AFTER), null);
+});
+
+test("rows of one repo's list and another's never mix when their keys carry the repo", () => {
+  const s = new Shakes();
+  s.observe(new Map([["ticket-/repo/a-local:1", false]]), 1000);
+  s.observe(new Map([["ticket-/repo/b-local:1", true]]), 2000); // the other repo's list, whose task has the same id
+  assert.equal(s.phase("ticket-/repo/b-local:1", 2000), null, "a row of another list is new, not one that started waiting");
+  s.observe(new Map([["ticket-/repo/a-local:1", true]]), 3000);
+  assert.equal(s.phase("ticket-/repo/a-local:1", 3000), null, "coming back to the first list starts over");
+});
