@@ -33,8 +33,9 @@ export function wontDoDisabledReason({ draft = false, saving = false, dirty = fa
   return null;
 }
 
-// The open tickets by stage, newest first: { inProgress, inReview, groomed, backlog }. A ticket in any other status is left out.
+// The open tickets by stage: { inProgress, inReview, groomed, backlog }. A ticket in any other status is left out. Up Next and Backlog
+// keep the order given (the project's item order, which a drag rewrites on GitHub); In Progress and In Review are newest first.
 export function groupByStage(open) {
-  const pick = (name) => (open ?? []).filter((t) => sameStatus(t.status, name)).sort(newestFirst);
-  return { inProgress: pick(STATUSES.inProgress), inReview: pick(STATUSES.inReview), groomed: pick(STATUSES.groomed), backlog: pick(STATUSES.backlog) };
+  const pick = (name) => (open ?? []).filter((t) => sameStatus(t.status, name));
+  return { inProgress: pick(STATUSES.inProgress).sort(newestFirst), inReview: pick(STATUSES.inReview).sort(newestFirst), groomed: pick(STATUSES.groomed), backlog: pick(STATUSES.backlog) };
 }

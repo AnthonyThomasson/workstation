@@ -52,7 +52,7 @@ test("spelled gives a status as the project spells it, else the fixed name", () 
   assert.ok(sameStatus("To Do", "todo"));
 });
 
-test("groups open tickets by stage, newest first, dropping other statuses", () => {
+test("groups open tickets by stage, dropping other statuses; Up Next and Backlog keep the project's order, In Progress and In Review are newest first", () => {
   const open = [
     ticket("a", "2026-01-01T00:00:00Z", { status: "To Do" }),
     ticket("b", "2026-03-01T00:00:00Z", { status: "to do" }),
@@ -62,10 +62,23 @@ test("groups open tickets by stage, newest first, dropping other statuses", () =
     ticket("f", "2026-02-01T00:00:00Z", { status: null }),
   ];
   const g = groupByStage(open);
-  assert.deepEqual(g.backlog.map((t) => t.key), ["b", "a"]);
+  assert.deepEqual(g.backlog.map((t) => t.key), ["a", "b"], "the project's order, not newest first");
   assert.deepEqual(g.groomed.map((t) => t.key), ["c"]);
   assert.deepEqual(g.inProgress.map((t) => t.key), ["d"]);
   assert.deepEqual(g.inReview.map((t) => t.key), ["e"]);
+});
+
+test("In Progress and In Review stay newest first; Up Next and Backlog keep the order they arrive in", () => {
+  const at = (status, ...keys) => keys.map(([k, created]) => ticket(k, created, { status }));
+  const open = [
+    ...at("In Progress", ["p-old", "2026-01-01T00:00:00Z"], ["p-new", "2026-03-01T00:00:00Z"]),
+    ...at("In Review", ["r-old", "2026-01-01T00:00:00Z"], ["r-new", "2026-03-01T00:00:00Z"]),
+    ...at("Up Next", ["n-old", "2026-01-01T00:00:00Z"], ["n-new", "2026-03-01T00:00:00Z"]),
+  ];
+  const g = groupByStage(open);
+  assert.deepEqual(g.inProgress.map((t) => t.key), ["p-new", "p-old"]);
+  assert.deepEqual(g.inReview.map((t) => t.key), ["r-new", "r-old"]);
+  assert.deepEqual(g.groomed.map((t) => t.key), ["n-old", "n-new"]);
 });
 
 test("status names match ignoring case, spaces and punctuation", () => {

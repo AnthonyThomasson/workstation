@@ -148,6 +148,12 @@ export const STATUS_MUTATION = `mutation($project: ID!, $item: ID!, $field: ID!,
   updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: { singleSelectOptionId: $option } }) { projectV2Item { id } }
 }`;
 
+// A project item's position is the item it goes after (null or left out: the very top). The position is global across the project, not per
+// Status.
+export const POSITION_MUTATION = `mutation($project: ID!, $item: ID!, $after: ID) {
+  updateProjectV2ItemPosition(input: { projectId: $project, itemId: $item, afterId: $after }) { clientMutationId }
+}`;
+
 // A mutation is all or nothing: unlike a read, a partial answer is a failure.
 async function mutate(gh, query, vars, where) {
   const fields = Object.entries(vars).flatMap(([k, v]) => ["-f", `${k}=${v}`]);
@@ -223,6 +229,12 @@ export async function saveTask(gh, { repo, ticket, project, statusField, before,
     await mutate(gh, STATUS_MUTATION, { project: project.id, item: ticket.key, field: statusField.id, option: option.id }, where);
   }
   return keys;
+}
+
+// Moves a project item to just after another (afterId, an item key), or to the very top of the project when afterId is null. `after` is
+// left out for the top: gh's -f would send an empty string, which is not a valid ID. Throws GitHubError (kind from the failing gh call).
+export async function moveItem(gh, { projectId, itemId, afterId }, where) {
+  await mutate(gh, POSITION_MUTATION, { project: projectId, item: itemId, ...(afterId ? { after: afterId } : {}) }, where);
 }
 
 // Marks an issue as not going to be done: sets the project Status to Won't Do, then closes the issue as "not planned".

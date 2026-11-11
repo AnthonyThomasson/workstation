@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findRepo, findProjects, createProject, loadItems, loadTask, loadStatusField, saveTask, markWontDo, GitHubError, PAGE_SIZE, MAX_ITEMS } from "./loader.js";
+import { findRepo, findProjects, createProject, loadItems, loadTask, loadStatusField, saveTask, markWontDo, moveItem, POSITION_MUTATION, GitHubError, PAGE_SIZE, MAX_ITEMS } from "./loader.js";
 
 const ok = (data) => ({ code: 0, stdout: JSON.stringify({ data }), stderr: "" });
 const page = (count, endCursor, hasNextPage) => ok({
@@ -259,4 +259,31 @@ test("a close that fails with no words still says the Status was set", async () 
 test("a close that fails keeps the failure's kind, so a missing sign-in is still named", async () => {
   const { gh } = recorder((args) => (args[0] === "issue" ? { code: 1, stdout: "", stderr: "gh auth login required" } : { code: 0, stdout: "", stderr: "" }));
   await assert.rejects(markWontDo(gh, wontArgs), (e) => e.kind === "no-auth");
+});
+
+// ---- moving an item ----
+
+test("moveItem sends updateProjectV2ItemPosition with the item and the one it goes after", async () => {
+  const { gh, calls } = recorder();
+  await moveItem(gh, { projectId: "P1", itemId: "ITEM_7", afterId: "ITEM_3" }, { cwd: "/x" });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args.slice(0, 3), ["api", "graphql", "-f"]);
+  assert.equal(calls[0].args[3], `query=${POSITION_MUTATION}`);
+  assert.ok(POSITION_MUTATION.includes("updateProjectV2ItemPosition"));
+  assert.deepEqual(input(calls), { project: "P1", item: "ITEM_7", after: "ITEM_3" });
+  assert.deepEqual(calls[0].where, { cwd: "/x" });
+});
+
+test("moveItem to the top leaves the after variable out: gh would send an empty string, not null", async () => {
+  for (const afterId of [null, undefined]) {
+    const { gh, calls } = recorder();
+    await moveItem(gh, { projectId: "P1", itemId: "ITEM_7", afterId });
+    assert.deepEqual(input(calls), { project: "P1", item: "ITEM_7" });
+    assert.ok(!calls[0].args.some((a) => a.startsWith("after=")));
+  }
+});
+
+test("moveItem throws GitHubError when gh fails", async () => {
+  const { gh } = recorder({ code: 1, stdout: "", stderr: "gh auth login required" });
+  await assert.rejects(moveItem(gh, { projectId: "P1", itemId: "I", afterId: null }), (e) => e instanceof GitHubError && e.kind === "no-auth");
 });

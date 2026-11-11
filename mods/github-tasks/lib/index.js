@@ -7,6 +7,7 @@ export { AGENT_KEY, AGENT_POPUP_KEY, CHANGED, CONTEXT, DOCTOR_KEY, EDITOR_OVERLA
 export { markdownLiteral } from "./markdown.js";
 export { ASK_WITH_TOOL, newTaskPrompt, newTaskStart, newTaskSubAgents, refactorPrompt, refactorSections } from "./orchestrator-prompts.js";
 export { BACKDROP, MARGIN, PRESS_BUTTONS, afterSave, closeStep, editorOverlay, escStep, panelAppeared, panelSize } from "./popup.js";
+export { applyMove, dropAfterId, moveStatus, planMove, projectOrdered, sectionOf } from "./reorder.js";
 export { initialOpen, investigationsAlone, sectionPlan } from "./sections.js";
 export { SpaceLists, applyPlace, applyProject, applyRepo, clearTickets, doneReload, failReload, forgetRepo, resetList, spaceKey } from "./space-lists.js";
 export { groupByStage, pickableStatuses, sameStatus, spelled, STATUSES, wontDoOption } from "./statuses.js";
