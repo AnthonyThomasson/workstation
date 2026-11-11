@@ -21,9 +21,9 @@ import { WORKFLOWS_CHANGED, REFACTORS_CHANGED } from "./model.js";
 // The roles of a model whose blank has a permissions setting.
 const permissionRolesOf = (model) => model.ROLES.filter((role) => "permissions" in model.blank()[role]);
 
-export const WORKFLOW = { key: "workflow", noun: "workflow", plural: "workflows", folder: "workflows", model: workflowModel, starters: ["bug", "story"],
+export const WORKFLOW = { key: "workflow", noun: "workflow", plural: "workflows", folder: "workflows", model: workflowModel, starters: ["bug", "story", "bug-kimi", "story-kimi"],
   changed: WORKFLOWS_CHANGED,
-  labels: { listTitle: "Workflows", listNote: "How work gets done: the labels that start each one, and how its Task Orchestrator, worker, reviewer and investigator run.", newLabel: "New workflow", emptyText: "No workflows yet. Make one with New workflow.", editorNoun: "workflow", namePlaceholder: "Feature development", starterNames: ["Bug", "Story"] },
+  labels: { listTitle: "Workflows", listNote: "How work gets done: the labels that start each one, and how its Task Orchestrator, worker, reviewer and investigator run.", newLabel: "New workflow", emptyText: "No workflows yet. Make one with New workflow.", editorNoun: "workflow", namePlaceholder: "Feature development", starterNames: ["Bug", "Story", "Bug - Kimi", "Story - Kimi"] },
   editor: { trigger: true, permissionRoles: permissionRolesOf(workflowModel),
     prompts: { orchestrator: { label: "Prompt" }, worker: { label: "Prompt" }, reviewer: { label: "Prompt" }, investigator: { label: "Prompt" } } },
 };

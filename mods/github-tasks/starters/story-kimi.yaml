@@ -1,0 +1,30 @@
+version: 1
+id: story-kimi
+name: Story - Kimi
+
+trigger:
+  labels: []
+  match: any
+
+orchestrator:
+  agent: claude
+  command: ""
+  model: opus
+  effort: medium
+  prompt: If the orchestrator thinks it needs any more than 2 workers, decline to do the work and recommend using a non-kimi workflow.
+  planning: "Run `/grill-with-docs` on the ticket until nothing material is open, then present the plan for acceptance."
+  retro: "Run `/retro` on this run, then propose follow-up tickets with the question tool and add the ones the person picks to To Do."
+
+worker:
+  agent: custom
+  command: claudep --model kimi-k3.1-pro
+  model: kimi-k3.1-pro
+  effort: high
+  prompt: "Build the ticket with `/tdd`, run `/code-review` on your own diff, and commit referencing the ticket as `#<n>`."
+
+reviewer:
+  agent: custom
+  command: claudep --model kimi-k3.1-pro
+  model: kimi-k3.1-pro
+  effort: high
+  prompt: "Run `/code-review` on the changes since `origin/main` against the ticket, reporting only."

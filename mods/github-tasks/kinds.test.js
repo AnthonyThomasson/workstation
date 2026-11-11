@@ -25,7 +25,7 @@ test("andList joins names the way a sentence does", () => {
 });
 
 test("Restore defaults says which starters are re-created, and where", () => {
-  assert.equal(restoreNote(WORKFLOW, "global"), "Bug and Story will be re-created in Global.");
+  assert.equal(restoreNote(WORKFLOW, "global"), "Bug, Story, Bug - Kimi and Story - Kimi will be re-created in Global.");
   assert.equal(restoreNote(REFACTOR, "global"), "Redundant tests, Architecture and Isolation will be re-created in Global.");
   assert.equal(restoreNote(REFACTOR, "repo"), "Redundant tests, Architecture and Isolation will be re-created in Project.");
 });

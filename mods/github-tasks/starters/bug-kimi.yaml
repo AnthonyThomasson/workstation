@@ -1,0 +1,31 @@
+version: 1
+id: bug-kimi
+name: Bug - Kimi
+
+trigger:
+  labels:
+    - bug
+  match: any
+
+orchestrator:
+  agent: claude
+  command: ""
+  model: opus
+  effort: high
+  prompt: If the orchestrator thinks it needs any more than 2 workers, decline to do the work and recommend using a non-kimi workflow.
+  planning: "Have a worker run `/diagnosing-bugs` to reproduce the bug with a failing test, agree the fix with the user, then have the same worker fix it with `/tdd`."
+  retro: "Run `/retro` on this run, then propose follow-up tickets with the question tool and add the ones the person picks to To Do."
+
+worker:
+  agent: custom
+  command: claudep --model kimi-k3.1-pro
+  model: kimi-k3.1-pro
+  effort: medium
+  prompt: "Run `/diagnosing-bugs`, then fix it with `/tdd`. When reproducing the bug paste the failing run's exact command and output in your report, because the read-only reviewer can't see the old code fail."
+
+reviewer:
+  agent: claude
+  command: ""
+  model: sonnet
+  effort: medium
+  prompt: "Run `/code-review` against the ticket. Also confirm from the reproduction commit and the worker's pasted red run that the test reproduces the bug."

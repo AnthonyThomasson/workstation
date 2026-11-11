@@ -10,7 +10,7 @@ const dir = new URL("./starters/", import.meta.url);
 const load = (file) => parseYaml(readFileSync(new URL(file, dir), "utf8"));
 const PROMPTS = [["orchestrator", "planning"], ["orchestrator", "retro"], ["orchestrator", "prompt"], ["worker", "prompt"], ["reviewer", "prompt"]];
 
-for (const file of ["bug.yaml", "story.yaml"]) {
+for (const file of ["bug.yaml", "story.yaml", "bug-kimi.yaml", "story-kimi.yaml"]) {
   test(`${file} passes the workflow model with no problems`, () => {
     const data = load(file);
     assert.deepEqual(validate(normalize(data)), []);
@@ -94,7 +94,7 @@ test("each kind carries its own change signal and list/editor wording", () => {
 });
 
 test("each kind lists exactly its own starters, and together they are every file in starters/", () => {
-  assert.deepEqual(WORKFLOW.starters.map((n) => `${n}.yaml`), ["bug.yaml", "story.yaml"]);
+  assert.deepEqual(WORKFLOW.starters.map((n) => `${n}.yaml`), ["bug.yaml", "story.yaml", "bug-kimi.yaml", "story-kimi.yaml"]);
   assert.deepEqual(REFACTOR.starters.map((n) => `${n}.yaml`), Object.keys(REFACTOR_STARTERS));
   const files = readdirSync(dir).filter((f) => f.endsWith(".yaml")).sort();
   assert.deepEqual(files, [...WORKFLOW.starters, ...REFACTOR.starters].map((n) => `${n}.yaml`).sort());
