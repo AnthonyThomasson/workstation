@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
-import { parse as parseYaml } from "../lib/index.js";
+import { parse as parseYaml, refactorPrompt } from "../lib/index.js";
 import { blank, normalize, validate } from "./workflow-model.js";
 import * as refactor from "./refactor-model.js";
 import { WORKFLOW, REFACTOR } from "./kinds.js";
@@ -112,6 +112,15 @@ test("Clean the backlog presents four reasoned proposal groups and applies only 
   assert.match(prompt, /Focus text.*priority message/i);
   assert.match(prompt, /how it shaped the order/i);
   assert.match(prompt, /no Focus.*impact, dependencies and age/i);
+});
+
+test("the generated Clean the backlog prompt refers to Focus without pointing the wrong way", () => {
+  const type = refactor.parse(readFileSync(new URL("clean-the-backlog.yaml", dir), "utf8"));
+  const text = refactorPrompt({ repo: "o/r", type, focus: "bells and notifications first" });
+  assert.doesNotMatch(text, /Focus text above/i);
+  const reference = text.indexOf("Focus text");
+  const focus = text.indexOf("The person asked you to focus on: bells and notifications first");
+  assert.ok(reference >= 0 && focus > reference, "the actual focus follows the starter's position-independent reference");
 });
 
 test("Clean the backlog merges and closes stale tickets without deleting issues", () => {

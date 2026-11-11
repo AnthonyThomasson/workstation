@@ -20,7 +20,7 @@ orchestrator:
     3. **New To Do order**, most pressing first, with a reason for each item's placement.
     4. **Up Next picks**, at most 3 To Do tickets, with a reason for each pick.
 
-    Treat the Focus text above as the person's priority message: let it steer the order and Up Next picks, and say how it shaped the order. With no Focus, judge priority by impact, dependencies and age, and say that is what you used.
+    Treat the person's Focus text as the priority message: let it steer the order and Up Next picks, and say how it shaped the order. With no Focus, judge priority by impact, dependencies and age, and say that is what you used.
 
     Skip a group with no proposals. For each remaining group, ask a multi-select question so the person can choose which items to apply; wait for their answer before the next group. Nothing changes on GitHub before approval. After all groups have been answered, apply only the chosen items, in this order: merges, then Won't Do, then reorder, then move to Up Next.
 
