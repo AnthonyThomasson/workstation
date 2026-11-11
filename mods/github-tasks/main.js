@@ -359,14 +359,14 @@ export default class GitHubTasks extends View {
     for (const key of this.shakes.observe(new Map([...waiting].map(([k, agents]) => [k, agents.length > 0])), Date.now())) {
       const toast = bellToast(titles.get(key), waiting.get(key));
       if (!toast) continue;
-      const { sound, ...note } = toast;
-      later(this.cx, () => { notify(note); playSound(sound); });
+      const { sound, ...toastNote } = toast;
+      later(this.cx, () => { try { notify(toastNote); playSound(sound); } catch { /* a toast that can't be shown must not break the list */ } });
     }
     return Object.fromEntries(Object.entries(lists).map(([section, items]) => [section, bellFirst(items, (item) => waiting.get(this.rowId(section, item)).length > 0)]));
   }
 
   // What a row that needs the person gets: the bell, which opens the waiting agent's popup (the rest of the row keeps its click), and
-  // for a moment after it started needing them a shake. The row is pushed aside, and a second later let go with a spring that
+  // for a moment after it started needing them a shake. The row is pushed aside, and `BACK_AFTER` (140ms) later let go with a spring that
   // overshoots, so it swings back and forth and settles: native (spring), with no timer drawing it; the one timer here only draws the
   // frame where it is let go.
   bellFor(t, id) {
