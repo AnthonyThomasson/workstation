@@ -603,7 +603,9 @@ export default class GitHubTasks extends View {
   row(t, ticket, color, section) {
     const running = liveRunFor(this.repo, ticket), busy = this.starting.has(ticket.key), bell = this.bellFor(t, this.rowId("ticket", ticket));
     const width = find(layout(), COLUMN)?.size?.px ?? 268;
-    const room = width - 16 - 12 - (bell ? 16 : 8) - 16 - (ticket.url ? 28 : 0) - 28; // what the name has left, in px (the bell, when shown, is in the dot's place)
+    const num = ticket.number ? `#${ticket.number}` : null; // drafts have no number
+    const numPx = num ? num.length * S().body * 0.55 + 6 : 0;
+    const room = width - 16 - 12 - (bell ? 16 : 8) - 16 - (ticket.url ? 28 : 0) - 28 - numPx; // what the name has left, in px (the bell, when shown, is in the dot's place)
     const max = Math.max(12, Math.floor(room / (S().body * 0.55)));
     const draggable = projectOrdered(section), landing = this.drag !== null && draggable && this.drag !== ticket.key; // not the dragged row itself
     return h_flex().id(`ticket-${ticket.key}`).flex_none().mx(8).mb(1).px(6).h(28).gap(8).items_center().rounded(6)
@@ -618,7 +620,9 @@ export default class GitHubTasks extends View {
       .when(this.drag === ticket.key, (el) => el.opacity(0.4))
       .when(Boolean(bell), (el) => bell.shake(el).child(bell.lead))
       .when(!bell, (el) => el.child(div().w(8).h(8).flex_none().rounded_full().when(ticket.draft, (el) => el.border(1.5).border_color(color)).when(!ticket.draft, (el) => el.bg(color))))
-      .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(ticket.title, max)))
+      .child(h_flex().flex_1().min_w(0).gap(6).items_center()
+        .when(Boolean(num), (el) => el.child(div().flex_none().text_size(S().body).text_color(t.muted).child(num)))
+        .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(ticket.title, max))))
       .when(Boolean(ticket.url), (el) => el.child(iconButton(`open-${ticket.key}`, "external", t, (_e, cx) => cx.open_url(ticket.url), false, "Open on GitHub")))
       .when(Boolean(running), (el) => el.child(iconButton(`view-${ticket.key}`, "eye", t, (_e, cx) => cx.spawn(async (cx) => { await viewRun(running, cx, { ticket, repo: this.repo, project: this.project }); }), false, "View the running agent")))
       .when(!running, (el) => el.child(iconButton(`start-${ticket.key}`, busy ? "ring" : "play", t, (_e, cx) => this.startTicket(ticket, cx), busy, "Start")));
