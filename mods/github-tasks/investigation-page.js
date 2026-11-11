@@ -9,8 +9,7 @@ import { hostKey, peekSpace, slotFromPage, slotKey } from "./bgrun.js";
 import { investigationAgentsFor, investigationQueries } from "./investigation-agents.js";
 import { INVESTIGATIONS_KEY, endInvestigation } from "./investigations.js";
 import { orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
-import { openAgentPopup } from "./agent-bar.js";
-import { S, stop } from "./ui.js";
+import { openAgentPopup, S, stop } from "./widgets/index.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 const agentsKey = (id) => `github-tasks.investigation.${id}.agents`; // the investigators and workers seen, so a reload still lists the finished ones

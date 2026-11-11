@@ -5,7 +5,7 @@ import { div } from "gpui-kit";
 import { v_flex, TextView } from "gpui-base";
 import { theme } from "herdr";
 import { markdownLiteral, promptForRole, promptTitle } from "./settings-model.js";
-import { S, note } from "./ui.js";
+import { S, note } from "./widgets/index.js";
 
 const PAGES = [
   ["newTask", "What the + in the Tasks header tells the New Task Orchestrator when it opens: wait for what you want to make, grill you on the acceptance criteria, then ask whether to create it and in which status."],

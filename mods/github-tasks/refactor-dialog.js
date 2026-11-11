@@ -1,7 +1,7 @@
 // The Refactor dialog: the pure side of it. The broom in the Tasks header opens it as a small overlay the mod draws itself, drawn like
 // the New task dialog (new-task-dialog.js): "Pick a refactor type to investigate", a radio list of the place's refactor types, an
 // optional focus, Cancel and Start. refactor.js draws it and starts the session; this file says what it does.
-import { normalize, validate } from "./refactor-model.js";
+import { normalizeRefactor as normalize, validateRefactor as validate } from "./workflow/index.js";
 import { panelWidth, newTaskProps } from "./new-task-dialog.js";
 
 export { panelWidth };

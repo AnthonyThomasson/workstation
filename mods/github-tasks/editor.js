@@ -7,18 +7,15 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, TextView } from "gpui-base";
 import { run, setShared, theme, closeOverlay } from "herdr";
-import { snapshot, isDirty, changes, pickableStatuses } from "./model.js";
-import { GitHubError, loadTask, loadStatusField, saveTask, markWontDo } from "./loader.js";
-import { loadLabels } from "./labels.js";
-import { S, icon, stop, note, iconButton, action, gh, scrim } from "./ui.js";
-import { Auth, REFRESH, LOGIN } from "./auth.js";
-import { matchWorkflows } from "./match.js";
-import { loadWorkflows } from "./workflow-env.js";
+import { snapshot, isDirty, changes, pickableStatuses, panelSize, panelAppeared, closeStep, escStep, afterSave, PRESS_BUTTONS, wontDoFooter, wontDoPrompt, retryAfterSignIn } from "./lib/index.js";
+import { GitHubError, loadTask, loadStatusField, saveTask, markWontDo, loadLabels } from "./github/index.js";
+import { S, icon, stop, note, iconButton, action, gh, scrim } from "./widgets/index.js";
+import { Auth, REFRESH, LOGIN } from "./github-ui/index.js";
+import { matchWorkflows } from "./workflow/index.js";
+import { loadWorkflows } from "./workflow-ui/index.js";
 import { StartDialog } from "./start-dialog.js";
 import { renderStartDialog, startChosen } from "./start-dialog-view.js";
 import { markdownLiteral } from "./settings-model.js";
-import { panelSize, panelAppeared, closeStep, escStep, afterSave, PRESS_BUTTONS } from "./popup.js";
-import { wontDoFooter, wontDoPrompt, retryAfterSignIn } from "./wontdo.js";
 
 // Set to the time of each save, so the panel's list refreshes.
 export const CHANGED = "github-tasks.changed";

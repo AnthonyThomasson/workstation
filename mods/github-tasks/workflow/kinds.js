@@ -16,7 +16,7 @@
 //            permissions setting) and prompts (the Prompt field of each role: label, hint)
 import * as workflowModel from "./workflow-model.js";
 import * as refactorModel from "./refactor-model.js";
-import { WORKFLOWS_CHANGED, REFACTORS_CHANGED } from "./model.js";
+import { WORKFLOWS_CHANGED, REFACTORS_CHANGED } from "../lib/index.js";
 
 // The roles of a model whose blank has a permissions setting.
 const permissionRolesOf = (model) => model.ROLES.filter((role) => "permissions" in model.blank()[role]);

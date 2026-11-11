@@ -1,5 +1,5 @@
 import test from "node:test";
-import { parse as parseYaml } from "./yaml.js";
+import { parse as parseYaml } from "../lib/index.js";
 import assert from "node:assert/strict";
 import { makeStore, StoreError, cloneWorkflow, replacementFromYaml, restorePlan, canRestoreDefaults, workflowRefreshState } from "./store.js";
 import { blank, ROLES, serialize } from "./workflow-model.js";
@@ -474,7 +474,7 @@ const rf = (name, over = {}) => {
   return { ...r, ...over };
 };
 const rsetup = (dirs = R_ALL, files = {}) => { const d = disk(files); return { d, store: makeStore({ io: d.io, dirs, kind: REFACTOR }) }; };
-const starterText = (name) => readFileSync(new URL(`./starters/${name}.yaml`, import.meta.url), "utf8");
+const starterText = (name) => readFileSync(new URL(`../starters/${name}.yaml`, import.meta.url), "utf8");
 
 test("the default kind is the workflow one", () => {
   assert.equal(WORKFLOW.folder, "workflows");
@@ -588,6 +588,6 @@ test("an invalid refactor starter is refused before restore deletes anything, an
   const good = starterText("isolation");
   await assert.rejects(store.restore(plan, [good, "name: ["]), (e) => e.kind === "invalid");
   await assert.rejects(store.restore(plan, [good, "name: No prompt\n"]), (e) => e.kind === "invalid" && /Give the refactor a prompt/.test(e.message));
-  await assert.rejects(store.restore(plan, [good, readFileSync(new URL("./starters/bug.yaml", import.meta.url), "utf8")]), (e) => e.kind === "invalid");
+  await assert.rejects(store.restore(plan, [good, readFileSync(new URL("../starters/bug.yaml", import.meta.url), "utf8")]), (e) => e.kind === "invalid");
   assert.deepEqual(d.fs, before);
 });

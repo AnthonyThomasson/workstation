@@ -1,5 +1,5 @@
 // Pure state and prompt selection for the Task settings sections and their read-only prompt tabs.
-import { newTaskPrompt, refactorPrompt, spelled, STATUSES } from "./model.js";
+import { newTaskPrompt, refactorPrompt, spelled, STATUSES } from "./lib/index.js";
 import { localNewTaskPrompt, localRefactorPrompt } from "./local-ui.js";
 import { orchestratorPrompt, workerPrompt, reviewerPrompt, investigatorPrompt } from "./run.js";
 import { newTaskInvestigatorPrompt, newTaskWorkerPrompt } from "./investigation-spawn.js";

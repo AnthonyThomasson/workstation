@@ -3,7 +3,7 @@
 import { exec, home, readTextFile, writeTextFile } from "herdr";
 import { makeLocalTasks } from "./local-tasks.js";
 import { makeTasksConfig } from "./tasks-config.js";
-import { hasGithubRemote } from "./github-remote.js";
+import { hasGithubRemote } from "./github/index.js";
 
 const sh = (script, ...args) => exec("sh", ["-c", script, "github-tasks", ...args]);
 const must = async (r, what) => { if (r.code !== 0) throw new Error(r.stderr || `${what} exited with code ${r.code}.`); };

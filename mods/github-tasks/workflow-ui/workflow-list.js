@@ -7,9 +7,8 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex, Popover } from "gpui-base";
 import { run, shared, setShared, theme } from "herdr";
 import { openOnce } from "./open-tabs.js";
-import { WORKFLOW, changedKey, kindSubject, restoreNote, emptyNote, noRepoNote, listMenuLabel, newItemName } from "./kinds.js";
-import { S, icon, stop, note, iconButton, segmented, later, action, scrim } from "./ui.js";
-import { restorePlan, canRestoreDefaults, workflowRefreshState } from "./store.js";
+import { WORKFLOW, changedKey, kindSubject, restoreNote, emptyNote, noRepoNote, listMenuLabel, newItemName, restorePlan, canRestoreDefaults, workflowRefreshState } from "../workflow/index.js";
+import { S, icon, stop, note, iconButton, segmented, later, action, scrim } from "../widgets/index.js";
 import { store, repoRootOf, starterTexts } from "./workflow-env.js";
 
 // The tabs over the list: everything, the selected space's repo, or the global ones.

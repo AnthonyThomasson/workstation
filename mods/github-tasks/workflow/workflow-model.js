@@ -1,8 +1,7 @@
 // What a workflow is: the GitHub labels that trigger it, and how the orchestrator, the worker, the
 // reviewer and the investigator each run (their prompt, agent, model and effort). Pure: no Herdr imports, so node --test runs it.
 
-import { parse as parseYaml, stringify as stringifyYaml } from "./yaml.js";
-import { EFFORTS } from "./model.js";
+import { parse as parseYaml, stringify as stringifyYaml, EFFORTS } from "../lib/index.js";
 
 export const VERSION = 1;
 export const ROLES = ["orchestrator", "worker", "reviewer", "investigator"];

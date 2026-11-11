@@ -7,12 +7,12 @@ import { exec, hc, home, knownAgents, notify, panes, run, setShared, shared, spa
 import { endHost, guarded, hostKey, openHost, slotKey, undoRunTab, viewConnect, viewQuick } from "./bgrun.js";
 import { connect, connecting } from "./start.js";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
-import { app } from "./ui.js";
+import { app } from "./widgets/index.js";
 import { localTasks } from "./local-tasks-env.js";
 import { statusDir } from "./local-tasks.js";
 import { localNewTaskPrompt, localRefactorPrompt } from "./local-ui.js";
-import { newTaskPrompt, refactorPrompt } from "./model.js";
-import { normalize as normalizeRefactor } from "./refactor-model.js";
+import { newTaskPrompt, refactorPrompt } from "./lib/index.js";
+import { normalizeRefactor } from "./workflow/index.js";
 import { out, worktreePath } from "./run.js";
 import { sessionFolder } from "./investigation-spawn.js";
 import {

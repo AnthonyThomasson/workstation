@@ -4,10 +4,10 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { closeOverlay, theme } from "herdr";
-import { loadStatusField } from "./loader.js";
+import { loadStatusField } from "./github/index.js";
 import { startRun } from "./start.js";
-import { S, icon, stop, note, iconButton, gh } from "./ui.js";
-import { PRESS_BUTTONS } from "./popup.js";
+import { S, icon, stop, note, iconButton, gh } from "./widgets/index.js";
+import { PRESS_BUTTONS } from "./lib/index.js";
 import { StartDialog, STARTING, WIDTH, labelsLine, layout, rowDetail, scopeBadge } from "./start-dialog.js";
 
 const stopPresses = (el, except) => PRESS_BUTTONS.filter((b) => b !== except).reduce((e, b) => e.on_mouse_down(b, stop), el);

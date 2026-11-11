@@ -3,7 +3,7 @@
 // gh(args, { cwd, on }) -> { code, stdout, stderr } (like loader.js and labels.js), so node --test runs it.
 import { GitHubError, loadStatusField } from "./loader.js";
 import { loadLabels, hasLabel, LABEL_LIMIT } from "./labels.js";
-import { STATUSES } from "./model.js";
+import { STATUSES } from "../lib/index.js";
 
 export const STATUS_FIELD_MUTATION = "updateProjectV2Field";
 

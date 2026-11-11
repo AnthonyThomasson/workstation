@@ -2,9 +2,9 @@
 // inputs (gh, files, the installed agents) is doctor-run.js, so node --test runs this against plain data.
 //
 // Not problems, because the person decided they are valid: a workflow with no labels (the fallback) and an empty prompt.
-import { STATUSES, sameStatus, REFRESH, LOGIN } from "./model.js";
-import { ROLES, ROLE_LABELS, CUSTOM } from "./workflow-model.js";
-import { hasLabel } from "./labels.js";
+import { STATUSES, sameStatus, REFRESH, LOGIN } from "./lib/index.js";
+import { ROLES, ROLE_LABELS, CUSTOM } from "./workflow/index.js";
+import { hasLabel } from "./github/index.js";
 
 export const DOCTOR_KEY = "github-tasks.doctor"; // { issues, repo, project }: what the last check found, for the settings and the sidebar
 

@@ -5,9 +5,8 @@
 //   deps.shared(key)  deps.setShared(key, value)  deps.gh(args, where)  deps.knownAgents()  deps.loadWorkflows(where)
 //   deps.repoRootOf(where)  deps.groomerAgent()  deps.chosenProject(repo)
 //   deps.mainCheckoutOf(where)  deps.taskSource(mainRoot) -> "local" | "github"  deps.hasGithubRemote(mainRoot) -> boolean
-import { chooseProject, WORKFLOWS_CHANGED, PLACE } from "./model.js";
-import { findRepo, findProjects, loadStatusField } from "./loader.js";
-import { loadLabels, LABEL_LIMIT } from "./labels.js";
+import { chooseProject, WORKFLOWS_CHANGED, PLACE } from "./lib/index.js";
+import { findRepo, findProjects, loadStatusField, loadLabels, LABEL_LIMIT } from "./github/index.js";
 import { diagnose, parseAuthStatus, doctorSignature, doctorFor, DOCTOR_KEY } from "./doctor.js";
 
 const WATCH = 2000; // how often the shared state is looked at; a check runs only when it changed

@@ -1,9 +1,9 @@
 // Herdr's side of the doctor: the real gh, agents, workflow files and shared state it runs against. The doctor itself is doctor-run.js.
 import { shared, setShared, knownAgents, exec } from "herdr";
-import { normalizeGroomer, GROOMER_KEY, projectKey } from "./model.js";
-import { loadWorkflows, repoRootOf } from "./workflow-env.js";
+import { normalizeGroomer, GROOMER_KEY, projectKey } from "./lib/index.js";
+import { loadWorkflows, repoRootOf } from "./workflow-ui/index.js";
 import { Doctor } from "./doctor-run.js";
-import { gh } from "./ui.js";
+import { gh } from "./widgets/index.js";
 import { mainCheckout } from "./worktree.js";
 import { tasksConfig, repoHasGithubRemote } from "./local-tasks-env.js";
 

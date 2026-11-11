@@ -10,7 +10,7 @@ import {
 import { INVESTIGATION_LABEL, beginInvestigation, investigationRunArgs } from "./investigations.js";
 import { hostKey } from "./bgrun.js";
 import { shQuote, worktreePath } from "./run.js";
-import { newTaskPrompt, refactorPrompt, ASK_WITH_TOOL } from "./model.js";
+import { newTaskPrompt, refactorPrompt, ASK_WITH_TOOL } from "./lib/index.js";
 import { localNewTaskPrompt, localRefactorPrompt } from "./local-ui.js";
 
 const DIR = "/home/me/.herdr/investigations/inv-x";

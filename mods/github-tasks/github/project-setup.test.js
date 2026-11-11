@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { setupProject, setupNote, STATUS_FIELD_MUTATION, statusOptionsMutation } from "./project-setup.js";
-import { STATUSES } from "./model.js";
+import { STATUSES } from "../lib/index.js";
 import { LABEL_LIMIT } from "./labels.js";
 
 const ok = (data) => ({ code: 0, stdout: JSON.stringify(data), stderr: "" });

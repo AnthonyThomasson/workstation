@@ -8,16 +8,11 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { run, setShared, theme } from "herdr";
-import { AGENTS, AGENT_LABELS, CUSTOM, PERMISSIONS, PERMISSION_LABELS, PERMISSION_HINTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, uniqueLabels } from "./workflow-model.js";
-import { kindOf, changedKey, editorTitle, hasTrigger, hasPermissions, promptField } from "./kinds.js";
-import { repoKindDir } from "./places.js";
-import { EFFORTS } from "./model.js";
-import { StoreError } from "./store.js";
-import { S, icon, stop, iconButton, action, gh, scrim } from "./ui.js";
+import { AGENTS, AGENT_LABELS, CUSTOM, PERMISSIONS, PERMISSION_LABELS, PERMISSION_HINTS, MATCHES, MATCH_LABELS, MATCH_HINTS, FALLBACK_HINT, uniqueLabels, kindOf, changedKey, editorTitle, hasTrigger, hasPermissions, promptField, repoKindDir, StoreError, modelsFor, matchModels, hasModel } from "../workflow/index.js";
+import { EFFORTS } from "../lib/index.js";
+import { S, icon, stop, iconButton, action, gh, scrim } from "../widgets/index.js";
 import { store, codexModels, kimiModels, globalDirText } from "./workflow-env.js";
-import { modelsFor, matchModels, hasModel } from "./models.js";
-import { findRepo } from "./loader.js";
-import { loadLabels, matchLabels, hasLabel } from "./labels.js";
+import { findRepo, loadLabels, matchLabels, hasLabel } from "../github/index.js";
 
 
 export class WorkflowEditor {

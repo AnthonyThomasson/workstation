@@ -4,12 +4,11 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea } from "gpui-base";
 import { shared, theme, closeOverlay } from "herdr";
-import { GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, STATUSES, normalizeGroomer, normalizeSubAgent, spelled } from "./model.js";
-import { loadStatusField } from "./loader.js";
+import { GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, STATUSES, normalizeGroomer, normalizeSubAgent, spelled, PRESS_BUTTONS } from "./lib/index.js";
+import { loadStatusField } from "./github/index.js";
 import { installedAgents, startNewTask, startLocalNewTask } from "./groom.js";
 import { AGENT_KEY, ENTER_HINT, NewTaskDialog, PROMPT, TITLE, chooseAgent, boxRows, enterStep, panelWidth } from "./new-task-dialog.js";
-import { PRESS_BUTTONS } from "./popup.js";
-import { S, stop, action, gh } from "./ui.js";
+import { S, stop, action, gh } from "./widgets/index.js";
 
 export const stopPresses = (el, except) => PRESS_BUTTONS.filter((b) => b !== except).reduce((e, b) => e.on_mouse_down(b, stop), el);
 

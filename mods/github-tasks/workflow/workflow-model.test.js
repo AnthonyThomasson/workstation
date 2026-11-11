@@ -1,6 +1,5 @@
 import test from "node:test";
-import { EFFORTS } from "./model.js";
-import { parse as parseYaml } from "./yaml.js";
+import { EFFORTS, parse as parseYaml } from "../lib/index.js";
 import assert from "node:assert/strict";
 import { blank, normalize, validate, slug, snapshot, isDirty, serialize, parse, uniqueLabels, ROLES, ROLE_LABELS, ROLE_PROMPTS, PERMISSIONS, PERMISSION_LABELS, PERMISSION_HINTS, AGENTS, CUSTOM, AGENT_LABELS, MATCHES, SCOPES, SCOPE_LABELS, SCOPE_HINTS, isFallback } from "./workflow-model.js";
 

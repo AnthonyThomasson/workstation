@@ -4,7 +4,7 @@ import {
   FOLDERS, tasksKey, tasksDir, statusDir, folderOfStatus, statusOfFolder,
   taskFileName, parseTask, serializeTask, makeLocalTasks,
 } from "./local-tasks.js";
-import { STATUSES } from "./model.js";
+import { STATUSES } from "./lib/index.js";
 
 const ROOT = "/Users/me/code/app", HOME = "/Users/me";
 const BASE = `${HOME}/.herdr/tasks/-Users-me-code-app`;

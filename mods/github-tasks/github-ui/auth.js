@@ -3,8 +3,8 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, readTextFile, settings } from "herdr";
-import { signInFrom, REFRESH, LOGIN } from "./model.js";
-import { S, note, action } from "./ui.js";
+import { signInFrom, REFRESH, LOGIN } from "../lib/index.js";
+import { S, note, action } from "../widgets/index.js";
 
 // gh's output goes to a new folder, which the script prints, and its exit code goes to code when it ends.
 const SIGN_IN = 'd=$(mktemp -d) || exit 1; ( GH_PROMPT_DISABLED=1 gh "$@" </dev/null >"$d/out" 2>"$d/err"; echo $? > "$d/code" ) >/dev/null 2>&1 &\necho "$d"';

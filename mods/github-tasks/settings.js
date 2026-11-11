@@ -6,17 +6,17 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Popover, TextView } from "gpui-base";
 import { home, run, shared, setShared, theme } from "herdr";
-import { normalizeGroomer, normalizeSubAgent, GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, EFFORTS, PLACE, TASK_SOURCE } from "./model.js";
+import { normalizeGroomer, normalizeSubAgent, GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, EFFORTS, PLACE, TASK_SOURCE } from "./lib/index.js";
 import { CHANGED } from "./editor.js";
-import { CLAUDE_MODELS } from "./models.js";
+import { CLAUDE_MODELS } from "./workflow/index.js";
 import { installedAgents } from "./groom.js";
-import { loadStatusField } from "./loader.js";
+import { loadStatusField } from "./github/index.js";
 import { normalizeSettingsSections, markdownLiteral, SETTINGS_GROUPS, groupKey, promptTitle } from "./settings-model.js";
 import { DOCTOR_KEY, fixPrompt, doctorFor } from "./doctor.js";
 import { statusDir } from "./local-tasks.js";
 import { tasksConfig } from "./local-tasks-env.js";
 import { sourceFor, sourceToggle } from "./local-ui.js";
-import { S, stop, note, icon, iconButton, action, gh } from "./ui.js";
+import { S, stop, note, icon, iconButton, action, gh } from "./widgets/index.js";
 
 const SECTIONS_KEY = "github-tasks.settingsSections";
 // The helpers the New Task Orchestrator may start (investigation-spawn.js), each with agent, model and effort of its own and a prompt tab.

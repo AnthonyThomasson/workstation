@@ -1,8 +1,8 @@
 // What a started workflow runs and what its agents are told. Pure: no Herdr imports, so node --test runs it.
 // start.js writes these out and opens the tab; the agents do the rest. The "run" role (run-page.js) shows them.
 
-import { slug } from "./workflow-model.js";
-import { ASK_WITH_TOOL } from "./model.js";
+import { slug } from "./workflow/index.js";
+import { ASK_WITH_TOOL } from "./lib/index.js";
 
 export const TOKEN_LIMIT = "120k";
 export const SKILL = "hc --skill"; // the manual for the desktop app's herdr-core; the `herdr` skill is the older CLI's

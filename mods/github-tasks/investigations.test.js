@@ -12,7 +12,7 @@ import {
 import { hostKey, placeholderArgv, slotKey } from "./bgrun.js";
 import { mainCheckout, prepareWorktree } from "./worktree.js";
 import { shQuote, worktreePath } from "./run.js";
-import { slug } from "./workflow-model.js";
+import { slug } from "./workflow/index.js";
 
 // ---- Naming -------------------------------------------------------------------------------------------
 

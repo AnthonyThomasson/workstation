@@ -1,10 +1,7 @@
 // Herdr's side of the store: real files, and where they are. Everything else is store.js.
 import { exec, home, appHome, readTextFile, writeTextFile } from "herdr";
-import { makeStore } from "./store.js";
-import { WORKFLOWS_CHANGED, REFACTORS_CHANGED } from "./model.js";
-import { parseCodexModels, parseKimiModels } from "./models.js";
-import { firstLine, kindDirs, globalKindDir, tildePath } from "./places.js";
-import { WORKFLOW, REFACTOR } from "./kinds.js";
+import { makeStore, parseCodexModels, parseKimiModels, firstLine, kindDirs, globalKindDir, tildePath, WORKFLOW, REFACTOR } from "../workflow/index.js";
+import { WORKFLOWS_CHANGED, REFACTORS_CHANGED } from "../lib/index.js";
 
 export { WORKFLOWS_CHANGED, REFACTORS_CHANGED };
 

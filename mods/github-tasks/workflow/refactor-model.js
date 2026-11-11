@@ -2,8 +2,7 @@
 // It mirrors workflow-model.js and reuses its helpers; there is no trigger, no permissions and no planning or
 // retro prompt. Pure: no Herdr imports, so node --test runs it.
 
-import { stringify as stringifyYaml } from "./yaml.js";
-import { EFFORTS } from "./model.js";
+import { stringify as stringifyYaml, EFFORTS } from "../lib/index.js";
 import { blankRole, normalizeRole, parseFile, slug, CUSTOM } from "./workflow-model.js";
 
 // Everything a refactor type shares with a workflow is the same thing here, not a copy.

@@ -10,10 +10,9 @@
 // its session folder), closes that space, removes the worktree and deletes the branch. Pure apart from the deps it is handed
 // (no Herdr imports), so node --test runs it; investigate.js is Herdr's side, investigation-page.js the page in the tab.
 import { FOLDER_LABEL, ROLE_LABEL, shQuote } from "./run.js";
-import { slug } from "./workflow-model.js";
-import { normalizeSubAgent } from "./model.js";
+import { slug, normalizeRefactor, validateRefactor } from "./workflow/index.js";
+import { normalizeSubAgent } from "./lib/index.js";
 import { INVESTIGATION_LABEL, newTaskAgentArgv, refactorAgentArgv, sessionFiles, sessionFolder, subAgentArgv } from "./investigation-spawn.js";
-import { normalize as normalizeRefactor, validate as validateRefactor } from "./refactor-model.js";
 import { endHost, findTicketSpace, launchRun, runTabParts } from "./bgrun.js";
 import { row as terminalRow } from "./runview.js";
 
