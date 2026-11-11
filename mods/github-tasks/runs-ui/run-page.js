@@ -10,6 +10,7 @@ import { endRun, findTicketSpace, mergeOutcome, peekSpace, restartOrchestrator, 
 import { openAgentPopup, S, app, icon, note, stop } from "../widgets/index.js";
 import { slotKey, RUN_LABEL as RUN, autoPrKey, failureKey, finalKey, fixingKey, leadKey, prKey, runAgentsKey, stageKey } from "../lib/index.js";
 import { runDir, runPanePath } from "../workflow/index.js";
+import { ProjectButtons } from "./project-buttons.js";
 
 const POLL_MS = 30000;
 const GRACE_MS = 10000; // a just-started orchestrator may not be in the core's list yet: until then "not there" doesn't end the fixing state
@@ -26,6 +27,7 @@ export class RunPage {
     // What start.js hands over to move the ticket and merge the run (absent on runs from before this).
     this.repoRoot = props?.repoRoot ?? "";
     this.folder = props?.folder ?? "";
+    this.project = new ProjectButtons({ folder: this.folder, space: () => this.rememberTicketSpace() });
     this.ticket = props?.ticket ?? null; // { number, key }
     this.projectId = props?.projectId ?? null;
     this.statusField = props?.statusField ?? null; // { id, options }
@@ -49,7 +51,8 @@ export class RunPage {
   // Asks the core for this run's workers, reviewers, final reviewer and investigators, finished ones too (the answer has no labels: the
   // query is the filter). A query that fails keeps its last answer. Called every few seconds by main.js.
   async refresh(cx) {
-    if (this.listing || !this.id) return;
+    await this.project.refresh();
+    if (this.listing || !this.id) { cx?.notify(); return; }
     this.listing = true;
     try {
       const queries = lsQueries(this.id);
@@ -92,6 +95,7 @@ export class RunPage {
         .child(`${needsYou === 1 ? "An agent is" : `${needsYou} agents are`} waiting for you. Click to answer.`)))
       .child(div().id("workflow-run-agents").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(8).py(10).gap(14)
+          .when(this.project.visible(), (el) => el.child(this.project.render(t)))
           .child(this.renderSection(t, "Workers", workers, "The Task Orchestrator hasn't started a worker yet."))
           .child(this.renderSection(t, "Reviewers", reviewers, "Reviewers start once the work is done."))
           .child(this.renderSection(t, "Investigators", investigators, "The Task Orchestrator hasn't started an investigator."))));
