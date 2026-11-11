@@ -26,6 +26,7 @@ import { startDoctor, doctorFor } from "./doctor/index.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
+const IDLE = "#00000000"; // a drop target's edge when nothing is landing there: transparent, so the sidebar shows through
 const REDRAW = 3000; // how often the list is drawn again: a run starting or ending turns a row's Start into View and back
 const COLUMN = "sidebar"; // the layout column the list lives in: its width says how much of a name fits
 function find(node, id) {
@@ -93,6 +94,7 @@ export default class GitHubTasks extends View {
     this.reset(null);
     this.open = initialOpen(); // which sections are expanded
     this.starting = new Set(); // the tickets whose Start is working
+    this.writing = 0; // moves still being written to GitHub: the list isn't reloaded until the last one is done
     this.drag = null; // the key of the Up Next / Backlog row being dragged, from its press until a release (a drop, or nothing)
     this.statusField = null; // { projectId, field }: the project's Status field, loaded by the first move between Up Next and Backlog
     this.cx = cx;
@@ -139,7 +141,7 @@ export default class GitHubTasks extends View {
   // so the place's repo is looked for again too.
   refresh(cx, { quiet = false, fresh = false } = {}) {
     const ctx = this.ctx;
-    if (!ctx || (this.loading && !(this.quiet && !quiet))) return;
+    if (!ctx || this.writing || (this.loading && !(this.quiet && !quiet))) return; // a load now could read GitHub before a write lands
     if (this.loading) this.token++; // a person's refresh replaces a quiet one still going
     if (fresh) this.placeCache = null;
     this.loading = true;
@@ -338,7 +340,7 @@ export default class GitHubTasks extends View {
       if (!section.open) continue;
       if (section.id === "investigations") rows.push(...section.items.map((entry) => this.investigationRowView(t, entry)));
       else rows.push(...section.items.map((ticket) => this.row(t, ticket, ticket.draft ? t.muted : colors[section.id], section.id)));
-      if (projectOrdered(section.id) && this.drag) rows.push(this.endZone(t, section.id));
+      if (projectOrdered(section.id)) rows.push(this.endZone(t, section.id));
       if (section.empty) rows.push(div().px(14).py(2).child(note(t, section.empty)));
     }
     return rows;
@@ -540,9 +542,10 @@ export default class GitHubTasks extends View {
     });
   }
 
-  // The thin drop zone under the last row of Up Next and of an expanded Backlog, there only while dragging: last in the section.
+  // The thin drop zone under the last row of Up Next and of an expanded Backlog: last in the section. It is always in the layout at its
+  // fixed height (a press must not move any row), and only while dragging does its top edge show the accent line when hovered.
   endZone(t, section) {
-    return div().id(`end-${section}`).flex_none().mx(8).h(10).border_t(2).border_color(t.background).hover((s) => s.border_color(t.accent))
+    return div().id(`end-${section}`).flex_none().mx(8).h(8).border_t(2).border_color(IDLE).hover((s) => (this.drag !== null ? s.border_color(t.accent) : s))
       .on_mouse_up("left", (_e, cx) => this.drop({ kind: "end", section }, cx));
   }
 
@@ -567,15 +570,21 @@ export default class GitHubTasks extends View {
     this.token++; // a load already running would draw the order from before the move
     this.loading = false;
     this.startError = null;
+    this.writing++;
     const where = { cwd: ctx.folder, on: ctx.on };
     cx.spawn(async (cx) => {
       try {
-        if (plan.status && this.statusField?.projectId !== project.id) this.statusField = { projectId: project.id, field: await loadStatusField(gh, project.id, where) };
-        await moveTicket(gh, { projectId: project.id, itemId: key, afterId: plan.afterId, status: plan.status, statusField: plan.status ? this.statusField.field : null }, where);
+        let field = this.statusField?.projectId === project.id ? this.statusField.field : null;
+        if (plan.status && this.statusField?.projectId !== project.id) {
+          field = await loadStatusField(gh, project.id, where);
+          this.statusField = { projectId: project.id, field };
+        }
+        await moveTicket(gh, { projectId: project.id, itemId: key, afterId: plan.afterId, status: plan.status, statusField: plan.status ? field : null }, where);
       } catch (e) {
         this.startError = String(e?.message ?? e);
       } finally {
-        this.refresh(cx, { quiet: true });
+        // The last write done: whatever load was running may have read GitHub before it landed, so it is dropped and the list reloads.
+        if (--this.writing === 0) { this.token++; this.loading = false; this.refresh(cx, { quiet: true }); }
         cx.notify();
       }
     });
@@ -588,16 +597,16 @@ export default class GitHubTasks extends View {
     const width = find(layout(), COLUMN)?.size?.px ?? 268;
     const room = width - 16 - 12 - 8 - 16 - (ticket.url ? 28 : 0) - 28 - (bell ? 28 : 0); // what the name has left, in px
     const max = Math.max(12, Math.floor(room / (S().body * 0.55)));
-    const draggable = projectOrdered(section), dragging = this.drag !== null && draggable;
+    const draggable = projectOrdered(section), landing = this.drag !== null && draggable && this.drag !== ticket.key; // not the dragged row itself
     return h_flex().id(`ticket-${ticket.key}`).flex_none().mx(8).mb(1).px(6).h(28).gap(8).items_center().rounded(6)
-      .cursor_pointer().hover((s) => (dragging ? s.bg(t.hover).border_color(t.accent) : s.bg(t.hover)))
+      .cursor_pointer().hover((s) => (landing ? s.bg(t.hover).border_color(t.accent) : s.bg(t.hover)))
       .on_click((_e, cx) => this.openTicket(ticket, cx))
       .tooltip(ticket.title)
       // A press on an Up Next / Backlog row starts a drag; releasing on the same row is still a click (opens the editor), on another
       // Up Next / Backlog row drops above it. While dragging the row under the pointer shows its landing edge (an accent line on top).
       .on_mouse_down("left", draggable ? (_e, cx) => { cx.stop_propagation(); this.drag = ticket.key; cx.notify(); } : stop)
       .when(draggable, (el) => el.on_mouse_up("left", (_e, cx) => this.drop({ kind: "row", key: ticket.key }, cx)))
-      .when(dragging, (el) => el.border_t(2).border_color(t.background))
+      .when(draggable, (el) => el.border_t(2).border_color(IDLE)) // always there, so a press never moves a row
       .when(this.drag === ticket.key, (el) => el.opacity(0.4))
       .when(Boolean(bell), (el) => bell.shake(el))
       .child(div().w(8).h(8).flex_none().rounded_full().when(ticket.draft, (el) => el.border(1.5).border_color(color)).when(!ticket.draft, (el) => el.bg(color)))
