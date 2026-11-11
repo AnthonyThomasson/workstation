@@ -91,8 +91,8 @@ export async function reconnectRuns(cx) {
 async function resolveAgents(workflow, runDir) {
   const known = await knownAgents().catch(() => []);
   const argv = {};
-  for (const role of ROLES) {
-    const settings = workflow[role] ?? blank()[role]; // a workflow from before investigators has none: the defaults
+  for (const role of [...ROLES, "solo"]) {
+    const settings = workflow[role === "solo" ? "worker" : role] ?? blank()[role === "solo" ? "worker" : role]; // an easy ticket's one agent runs on the worker's settings // a workflow from before investigators has none: the defaults
     if (settings.agent === "custom") {
       if (!settings.command) throw new Error(`The workflow's ${role} needs the command that opens its agent.`);
       argv[role] = agentArgv(role, settings, [], runDir);
@@ -180,7 +180,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
     repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null, status: ticket.status ?? null }, // status: what it is now, so a launch never moves it back
     projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
     // What a new orchestrator needs if this one ends and the person presses the red Merge button (bgrun.js restartOrchestrator).
-    orchestratorArgv: solo ? argv.worker : argv.orchestrator, ticketLabel: key, solo,
+    orchestratorArgv: solo ? argv.solo : argv.orchestrator, ticketLabel: key, solo,
     // A local task: the page moves the task's file, and Merge depends on whether origin is on GitHub (no remote: a local squash).
     ...(found ? { taskSource: "local", mainRoot: repoRoot, githubRemote: found.githubRemote } : {}),
   };
@@ -204,7 +204,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
       await endHost({ id, hc, terminals, run, spaces: spaces(), panes: panes(), record: shared(hostKey(id)), also: [host?.address] });
       setShared(hostKey(id), null);
     },
-  }, { id, key, workDir, argv: solo ? argv.worker : argv.orchestrator, task: `Read ${runDir}/orchestrator.md and follow it.`, props }));
+  }, { id, key, workDir, argv: solo ? argv.solo : argv.orchestrator, task: `Read ${runDir}/orchestrator.md and follow it.`, props }));
   if (launched.problems.length) notify({ title: "The workflow started, with a problem", body: launched.problems.join(" "), level: "warning" });
   return { resumed: false };
 }

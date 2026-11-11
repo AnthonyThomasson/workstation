@@ -939,5 +939,15 @@ test("an easy ticket's one agent does the whole ticket itself in the ticket work
   assert.match(text, /\/w\/t on workflow\/12-fix/);
   assert.match(text, /Use \/tdd\./);
   assert.match(text, /Grill first\./);
-  assert.doesNotMatch(text, /spawn|\/merge /);
+  assert.match(text, /\/run\/1\/spawn reviewer final-review final/);
+  assert.match(text, /without starting a second reviewer/);
+  assert.doesNotMatch(text, /spawn worker|spawn investigator|\/merge /);
+});
+
+test("the easy ticket's agent runs with a worker's permissions and may start its one reviewer, but not merge", () => {
+  const argv = agentArgv("solo", { agent: "claude", model: "sonnet", effort: "high" }, undefined, "/run/1");
+  const allowed = argv.slice(argv.indexOf("--allowedTools") + 1, argv.indexOf("--permission-mode")).join(" ");
+  assert.match(allowed, /Bash\(\/run\/1\/spawn:\*\)/);
+  assert.doesNotMatch(allowed, /merge/);
+  assert.equal(argv[argv.indexOf("--permission-mode") + 1], "auto");
 });

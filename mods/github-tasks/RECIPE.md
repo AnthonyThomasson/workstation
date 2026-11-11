@@ -20,7 +20,7 @@ The sidebar role is unframed, sits directly in the layout and has a top border; 
 
 ### Easy tickets
 
-- A ticket with the `easy` label (any case; create it in the repo) runs as one agent: Start opens the workflow's worker settings in the orchestrator's place, in the ticket worktree, with `run.js`'s `soloPrompt` (the workflow's planning and worker instructions). No jobs, helpers or reviewers, and Merge needs no final review. It is chosen by `match.js`'s `isEasy` in `startRun`; the workflow still comes from the ticket's other labels.
+- A ticket with the `easy` label (any case; create it in the repo) runs as one worker: Start opens the workflow's worker settings in the orchestrator's place, in the ticket worktree, with `run.js`'s `soloPrompt` (the workflow's planning and worker instructions). It does the whole ticket with no jobs or helpers, then sends its commits to one final reviewer (`spawn reviewer final-review final`), fixes what it finds and reports. Merge waits for that review, as in any run. It is chosen by `match.js`'s `isEasy` in `startRun`; the workflow still comes from the ticket's other labels.
 
 ### The doctor
 
