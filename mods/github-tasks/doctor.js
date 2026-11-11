@@ -5,6 +5,7 @@
 import { STATUSES, sameStatus, REFRESH, LOGIN } from "./model.js";
 import { ROLES, ROLE_LABELS, CUSTOM } from "./workflow-model.js";
 import { hasLabel } from "./labels.js";
+import { EASY_LABEL } from "./match.js";
 
 export const DOCTOR_KEY = "github-tasks.doctor"; // { issues, repo, project }: what the last check found, for the settings and the sidebar
 
@@ -79,12 +80,14 @@ function triggerLabels(items) {
 }
 function checkLabels({ repo, labels, carried }, items) {
   if (repo === null) return [];
+  // The easy label is not a workflow's trigger, but a ticket with it runs as one worker (run.js soloPrompt), so the repo needs it.
   const wanted = triggerLabels(items);
+  if (!wanted.some((w) => w.label.toLowerCase() === EASY_LABEL)) wanted.push({ label: EASY_LABEL, usedBy: ["easy tickets"] });
   if (typeof repo !== "string" || !Array.isArray(labels)) {
     return (carried ?? []).filter((i) => i.kind === "label-missing" && wanted.some((w) => hasLabel([{ name: w.label }], i.label)));
   }
   return wanted.filter((w) => !hasLabel(labels, w.label)).map(({ label, usedBy }) => ({
-    kind: "label-missing", label, usedBy, message: `The label "${label}" isn't in ${repo} (the trigger of ${usedBy.join(", ")}).`,
+    kind: "label-missing", label, usedBy, message: `The label "${label}" isn't in ${repo} (${label.toLowerCase() === EASY_LABEL ? "it makes a ticket run as one worker with one reviewer" : `the trigger of ${usedBy.join(", ")}`}).`,
   }));
 }
 
@@ -176,7 +179,7 @@ export function fixPrompt(issues, { repo = null, project = null, source } = {}) 
     const name = /^[\w.:-]+$/.test(i.label) ? i.label : `'${i.label.replace(/'/g, `'\\''`)}'`;
     // A name starting with "-" would be read as a flag, even quoted, so it goes after "--".
     const into = repo ?? "<owner/repo>", create = i.label.startsWith("-") ? `-R ${into} -- ${name}` : `${name} -R ${into}`;
-    steps.push(`Label: ${i.message} Create it with \`gh label create ${create}\`, so the workflow starts for tickets that have it.`);
+    steps.push(`Label: ${i.message} Create it with \`gh label create ${create}\`, so ${i.label.toLowerCase() === EASY_LABEL ? "tickets that have it run as one worker" : "the workflow starts for tickets that have it"}.`);
   }
   for (const i of by("agent-missing")) steps.push(`Agent: ${i.message} Install it, or open the Tasks settings and the workflows that use it and choose an installed agent instead.`);
   for (const i of by("workflow-invalid")) {

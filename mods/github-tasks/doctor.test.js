@@ -303,7 +303,7 @@ test("local tasks skip the project, status and scope checks", () => {
 test("local tasks skip the trigger-label check: their labels are typed freely", () => {
   const workflows = { items: [workflow("Story", {}, ["bug"])], errors: [] };
   assert.deepEqual(diagnose(healthy({ source: "local", workflows, labels: [] })), []);
-  assert.deepEqual(kinds(diagnose(healthy({ workflows, labels: [] }))), ["label-missing"], "github mode still checks");
+  assert.deepEqual(kinds(diagnose(healthy({ workflows, labels: [{ name: "easy" }] }))), ["label-missing"], "github mode still checks");
 });
 
 test("local tasks check gh-auth only when the origin is on GitHub", () => {
@@ -344,17 +344,17 @@ test("the prompt for local tasks says the repo uses local tasks and names no pro
 
 test("a label a workflow triggers on and the repo lacks is one issue, listing the workflows; case is ignored", () => {
   const workflows = { items: [workflow("Story", {}, ["bug", "Feature"]), workflow("Fix", {}, ["BUG"]), workflow("Fallback")], errors: [] };
-  const issues = diagnose(healthy({ workflows, labels: [{ name: "Bug" }, { name: "other" }] }));
+  const issues = diagnose(healthy({ workflows, labels: [{ name: "Bug" }, { name: "other" }, { name: "easy" }] }));
   assert.deepEqual(issues.map((i) => [i.kind, i.label, i.usedBy]), [["label-missing", "Feature", ["Story"]]]);
   assert.match(issues[0].message, /"Feature".*me\/app.*Story/);
-  const two = diagnose(healthy({ workflows, labels: [] }));
+  const two = diagnose(healthy({ workflows, labels: [{ name: "easy" }] }));
   assert.deepEqual(two.map((i) => [i.label, i.usedBy]), [["bug", ["Story", "Fix"]], ["Feature", ["Story"]]]);
 });
 
 test("labels the repo has, or workflows without trigger labels, are no issue", () => {
   const workflows = { items: [workflow("Story", {}, ["bug"]), workflow("Fallback")], errors: [] };
-  assert.deepEqual(diagnose(healthy({ workflows, labels: [{ name: "bug" }] })), []);
-  assert.deepEqual(diagnose(healthy({ labels: [] })), []);
+  assert.deepEqual(diagnose(healthy({ workflows, labels: [{ name: "bug" }, { name: "easy" }] })), []);
+  assert.deepEqual(diagnose(healthy({ labels: [{ name: "easy" }] })), []);
 });
 
 test("unknown labels, or no repo, flag nothing; unknown labels keep the last label issues still triggered on", () => {
@@ -364,13 +364,14 @@ test("unknown labels, or no repo, flag nothing; unknown labels keep the last lab
   assert.deepEqual(diagnose(healthy({ workflows, repo: undefined, labels: [] })), []);
   const carried = [{ kind: "label-missing", label: "bug", usedBy: ["Story"], message: "x" }, { kind: "label-missing", label: "gone", usedBy: ["Old"], message: "y" }];
   assert.deepEqual(diagnose(healthy({ workflows, carried })), [carried[0]]);
-  assert.deepEqual(diagnose(healthy({ workflows, labels: [{ name: "bug" }], carried })), []); // known labels win
+  assert.deepEqual(diagnose(healthy({ workflows, labels: [{ name: "bug" }, { name: "easy" }], carried })), []); // known labels win
 });
 
 test("fixPrompt tells how to create a missing label", () => {
   const workflows = { items: [workflow("Story", {}, ["bug", "good first"])], errors: [] };
   const prompt = fixPrompt(diagnose(healthy({ workflows, labels: [] })), { repo: "me/app", project: PROJECT });
   assert.match(prompt, /`gh label create bug -R me\/app`/);
+  assert.match(prompt, /`gh label create easy -R me\/app`/);
   assert.match(prompt, /`gh label create 'good first' -R me\/app`/);
 });
 
@@ -386,4 +387,13 @@ test("a label starting with a dash is created after --, so gh does not read it a
   const prompt = fixPrompt(diagnose(healthy({ workflows, labels: [] })), { repo: "me/app", project: PROJECT });
   assert.match(prompt, /`gh label create -R me\/app -- -wip`/);
   assert.match(prompt, /`gh label create a-b -R me\/app`/);
+});
+
+test("the repo needs an easy label, whatever the workflows trigger on, and it is reported once with its own wording", () => {
+  const issues = diagnose(healthy({ labels: [{ name: "bug" }] }));
+  assert.deepEqual(issues.map((i) => [i.kind, i.label, i.usedBy]), [["label-missing", "easy", ["easy tickets"]]]);
+  assert.match(issues[0].message, /one worker with one reviewer/);
+  assert.deepEqual(diagnose(healthy({ labels: [{ name: "Easy" }] })), [], "case is ignored");
+  const workflows = { items: [workflow("Quick", {}, ["easy"])], errors: [] };
+  assert.deepEqual(diagnose(healthy({ workflows, labels: [] })).map((i) => i.label), ["easy"], "an easy trigger is not reported twice");
 });

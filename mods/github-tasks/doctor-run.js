@@ -46,14 +46,13 @@ export async function gather(place, deps) {
     return inputs; // any other failure leaves the repo unknown
   }
   inputs.repo = found.value;
-  // The trigger labels are asked about only when a workflow has some; a failed read leaves the labels unknown.
-  const triggers = (inputs.workflows?.items ?? []).some((w) => w?.trigger?.labels?.length);
+  // The labels are always asked about, as the repo needs the easy label whatever the workflows trigger on; a failed read leaves them unknown.
   const [projects, labels] = await Promise.all([
     attempt(findProjects(deps.gh, inputs.repo, where)),
-    triggers ? attempt(loadLabels(deps.gh, inputs.repo, where)) : { error: null },
+    attempt(loadLabels(deps.gh, inputs.repo, where)),
   ]);
   // loadLabels reads the first LABEL_LIMIT labels: a full page may be cut short, so a label not in it is not known to be missing.
-  if (!labels.error && triggers && labels.value.length < LABEL_LIMIT) inputs.labels = labels.value;
+  if (!labels.error && labels.value.length < LABEL_LIMIT) inputs.labels = labels.value;
   if (projects.error) return inputs;
   const project = chooseProject(projects.value, deps.chosenProject(inputs.repo));
   inputs.project = project ? { id: project.id, title: project.title, url: project.url } : null;
