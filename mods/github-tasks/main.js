@@ -1,51 +1,29 @@
 // Tasks: the tickets on the GitHub Project linked to the selected space's repo, in the left menu under
 // Spaces: Investigations, Up Next, In Progress, In Review and Backlog (collapsed). Clicking a ticket
-// opens it in a large popup to edit (editor.js, popup.js), and saving pushes the change to GitHub. Each row links
+// opens it in a large popup to edit (editor/editor.js, lib/popup.js), and saving pushes the change to GitHub. Each row links
 // out to GitHub and has Start, which becomes View while its workflow runs. With "taskSource": "local" in the repo's
-// .herdr/tasks/tasks.json the list is the YAML task files instead (local-tasks.js, local-ui.js), read again every 3 seconds.
+// .herdr/tasks/tasks.json the list is the YAML task files instead (runs/local-tasks.js, runs/local-ui.js), read again every 3 seconds.
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
 // workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket, in a popup (props.popup)
-// opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow or refactor type (props.kind) in the center (workflow-editor.js); "run", a started
-// workflow's agents, beside its orchestrator (run-page.js); "investigation", a New Task session's Done button, beside its agent (investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js); "agent-bar", the bar over a peeked agent's terminal in its popup (agent-bar.js).
+// opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow or refactor type (props.kind) in the center (workflow-ui/workflow-editor.js); "run", a started
+// workflow's agents, beside its orchestrator (runs-ui/run-page.js); "investigation", a New Task session's Done button, beside its agent (investigations-ui/investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (investigations-ui/new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (runs-ui/start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js); "agent-bar", the bar over a peeked agent's terminal in its popup (widgets/agent-bar.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, notify, shared, setShared, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
-import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, TASK_SOURCE } from "./model.js";
-import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems } from "./loader.js";
-import { installedAgents } from "./groom.js";
-import { setupProject, setupNote } from "./project-setup.js";
-import { S, icon, stop, note, iconButton, action, gh, later } from "./ui.js";
-import { Auth, REFRESH, LOGIN } from "./auth.js";
-import { TaskEditor, CHANGED } from "./editor.js";
-import { LocalTaskEditor } from "./local-editor.js";
-import { localTasks } from "./local-tasks-env.js";
-import { readPlace } from "./local-ui-env.js";
-import { localStages, rowLabel, LOCAL_ONLY_HERE } from "./local-ui.js";
-import { TaskSettings } from "./settings.js";
-import { matchWorkflows } from "./match.js";
-import { WorkflowEditor } from "./workflow-editor.js";
-import { editorOverlay } from "./popup.js";
-import { RunPage } from "./run-page.js";
+import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, TASK_SOURCE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload } from "./lib/index.js";
+import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, setupProject, setupNote } from "./github/index.js";
+import { installedAgents, investigationsHere, reconnectInvestigations, viewInvestigation, InvestigationPage, NewTaskPage, RefactorPage } from "./investigations-ui/index.js";
+import { S, icon, stop, note, iconButton, action, gh, later, AgentBar } from "./widgets/index.js";
+import { Auth, REFRESH, LOGIN } from "./github-ui/index.js";
+import { TaskEditor, LocalTaskEditor, CHANGED } from "./editor/index.js";
+import { localTasks, readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen } from "./runs-ui/index.js";
+import { localStages, rowLabel, LOCAL_ONLY_HERE, statusColor, statusLabel, cantStartHere, startOverlay, startProps } from "./runs/index.js";
+import { TaskSettings } from "./settings/index.js";
+import { matchWorkflows, REFACTOR } from "./workflow/index.js";
+import { WorkflowEditor, WorkflowList, loadWorkflows } from "./workflow-ui/index.js";
 import { PromptPage } from "./prompts-page.js";
-import { AgentBar } from "./agent-bar.js";
-import { WorkflowList } from "./workflow-list.js";
-import { REFACTOR } from "./kinds.js";
-import { loadWorkflows } from "./workflow-env.js";
-import { liveRunFor, viewRun, reconnectRuns } from "./start.js";
-import { investigationsHere, reconnectInvestigations, viewInvestigation } from "./investigate.js";
-import { investigationRow } from "./investigations.js";
-import { statusColor, statusLabel } from "./runview.js";
-import { InvestigationPage } from "./investigation-page.js";
-import { NewTaskPage } from "./new-task.js";
-import { RefactorPage } from "./refactor.js";
-import { refactorOverlay, TOOLTIP as REFACTOR_TIP } from "./refactor-dialog.js";
-import { AGENT_KEY, newTaskOverlay, newTaskProps, chooseAgent } from "./new-task-dialog.js";
-import { StartPage, startChosen } from "./start-dialog-view.js";
-import { cantStartHere, startOverlay, startProps } from "./start-dialog.js";
-import { initialOpen, investigationsAlone, sectionPlan } from "./sections.js";
-import { startDoctor } from "./doctor-env.js";
-import { DOCTOR_KEY, doctorFor } from "./doctor.js";
-import { SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload } from "./space-lists.js";
+import { investigationRow, refactorOverlay, TOOLTIP as REFACTOR_TIP, AGENT_KEY, newTaskOverlay, newTaskProps, chooseAgent } from "./investigations/index.js";
+import { startDoctor, DOCTOR_KEY, doctorFor } from "./doctor/index.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
@@ -513,7 +491,7 @@ export default class GitHubTasks extends View {
       .child(div().flex_1().child(title));
   }
 
-  // A click opens the ticket in a large popup over the app to edit (editor.js, popup.js). Its folder and machine go
+  // A click opens the ticket in a large popup over the app to edit (editor/editor.js, lib/popup.js). Its folder and machine go
   // along, so the editor asks GitHub from the same place the panel does.
   openTicket(ticket) {
     const ctx = this.ctx, project = this.project, local = Boolean(ticket.local);
