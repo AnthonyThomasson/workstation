@@ -49,7 +49,7 @@ if [ -f "$layout" ]; then
   else
     for name in $references; do
       case "$name" in
-        spaces|agents|changes|files|pane|workspace-chrome)
+        spaces|agents|changes|files|pane|workspace-chrome|artifacts)
           # These mods ship with Herdr and deliberately are not copied here.
           ;;
         *)

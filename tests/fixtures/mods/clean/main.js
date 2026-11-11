@@ -8,6 +8,7 @@ export const panel = new Panel({ ...deps, extra: 2 });
 export function init(id) {
   openOverlay({ mod: "clean" });
   openOverlay({ mod: "new-menu" });
+  openOverlay({ mod: "artifacts" });
   openOverlay(popup());
   setShared(KEY, shared(keyFor(id)) ?? shared("workspace.panels"));
   herdr.shared("clean.namespace");
