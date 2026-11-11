@@ -14,3 +14,9 @@ test("every fixed key is a github-tasks key, and no two are the same", () => {
   for (const key of fixed) assert.match(key, /^github-tasks\./);
   assert.equal(new Set(fixed).size, fixed.length);
 });
+
+test("herdr-tasks' action reaches the mod by its name, and the sidebar knows the command it delivers", () => {
+  assert.equal(keys.CLI_ACTION, "github-tasks.cli");
+  assert.equal(keys.modCommand(keys.CLI_ACTION), "cli");
+  assert.equal(keys.modCommand("editor.save"), "save");
+});

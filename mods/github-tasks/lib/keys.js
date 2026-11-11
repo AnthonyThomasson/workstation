@@ -29,6 +29,11 @@ export const DOCTOR_KEY = "github-tasks.doctor"; // { issues, repo, project }: w
 export const INVESTIGATIONS_KEY = "github-tasks.investigations";
 export const SECTIONS_KEY = "github-tasks.settingsSections";
 
+// The action herdr-tasks (cli/client.js) runs with `herdr-app do`, which tells the sidebar's bridge to look in the mailbox at once.
+export const CLI_ACTION = "github-tasks.cli";
+// The command a "<mod>.<command>" action delivers to that mod's nextCommand(): "cli" for CLI_ACTION.
+export const modCommand = (action) => String(action).slice(String(action).indexOf(".") + 1);
+
 // The overlays' keys.
 export const OVERLAY_KEY = "github-tasks.start"; // the Start dialog
 export const NEW_TASK_OVERLAY_KEY = "github-tasks.new-task";

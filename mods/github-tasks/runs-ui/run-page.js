@@ -51,6 +51,7 @@ export class RunPage {
   // Asks the core for this run's workers, reviewers, final reviewer and investigators, finished ones too (the answer has no labels: the
   // query is the filter). A query that fails keeps its last answer. Called every few seconds by main.js.
   async refresh(cx) {
+    this.sync();
     await this.project.refresh();
     if (this.listing || !this.id) { cx?.notify(); return; }
     this.listing = true;
@@ -63,6 +64,21 @@ export class RunPage {
       for (const [key, list] of got) if (list) this.listed[key] = list;
       cx?.notify();
     } finally { this.listing = false; }
+  }
+
+  // What another copy of this page, or herdr-tasks (cli-ui/), saved since this one opened: a new orchestrator, the pull request, the
+  // final reviewer, the red state and the fixing record. Every change is saved as it is made, so shared state is what holds. Not while
+  // this copy is busy: it is the one changing them.
+  sync() {
+    if (this.busy || !this.id) return;
+    const lead = shared(leadKey(this.id));
+    if (typeof lead === "string" && lead) this.orchestrator = lead;
+    this.pr = shared(prKey(this.id)) || this.pr;
+    this.finalSeen = this.finalSeen || finalSeen({ saved: shared(finalKey(this.id)) });
+    this.failure = restoreFailure(shared(failureKey(this.id)));
+    const fixing = restoreFixing(shared(fixingKey(this.id)));
+    if (fixing && !this.fixing) this.fixingAt = Date.now();
+    this.fixing = fixing;
   }
 
   // The agents now: the live terminals, the core's list and what was saved. What there is to keep is saved when it changed.
@@ -181,12 +197,17 @@ export class RunPage {
     });
   }
 
-  renderActions(t, lead, cx, workers = [], reviewers = [], investigators = []) {
-    // Merge waits for the final review and for every worker, reviewer and investigator to end. With no pull request yet it opens one first.
+  // The Merge button (finish.js mergeView). Merge waits for the final review and for every worker, reviewer and investigator to end.
+  mergeState(workers = [], reviewers = [], investigators = []) {
     const known = Boolean(this.folder && this.branch);
     const ready = canMerge({ finalSeen: this.finalSeen, workers, reviewers, investigators }) && known;
     const wait = mergeWait({ finalSeen: this.finalSeen, workers, reviewers, investigators, known });
-    const view = mergeView({ ready, busy: this.busy, failure: this.failure, fixing: this.fixing, wait });
+    return mergeView({ ready, busy: this.busy, failure: this.failure, fixing: this.fixing, wait });
+  }
+
+  renderActions(t, lead, cx, workers = [], reviewers = [], investigators = []) {
+    // With no pull request yet Merge opens one first.
+    const view = this.mergeState(workers, reviewers, investigators);
     const hidden = view.mode === "hidden"; // gated: no button, a muted line says what it waits for
     const red = view.mode === "red";
     const tip = view.mode === "fixing" ? this.fixing.error : red ? this.failure.error
@@ -256,29 +277,32 @@ export class RunPage {
     const failure = this.failure;
     if (!failure || this.busy) return;
     this.busy = "fix"; this.error = null; this.note = null; cx.notify();
-    cx.spawn(async (cx) => {
-      try {
-        const input = { failure, branch: this.branch, workDir: this.folder };
-        let lead = orchestratorOf(terminals(), this.orchestrator);
-        if (!lead?.live) { // this run may have a live orchestrator the page did not know of: use it, don't start a second one
-          const other = liveOrchestratorFor(terminals(), this.id);
-          if (other) { lead = other; await this.useOrchestrator(other.address); }
-        }
-        let record;
-        if (lead?.live) {
-          const sent = await hc(["send", lead.address, fixMessage(input)]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
-          if (sent.code !== 0) throw new Error(`Couldn't hand it to the Task Orchestrator: ${out(sent) || "hc send failed"}`);
-          record = fixingStart({ failure, status: lead.status, turn: lead.turn });
-        } else {
-          await this.restartLead(restartTask({ runDir: runDir(home(), this.id), ...input }));
-          record = fixingStart({ failure, turn: 0 }); // a new terminal counts its turns from 0; it may still report idle for a moment after its task was sent
-        }
-        this.fixingAt = Date.now();
-        this.setFailure(null);
-        this.setFixing(record);
-      } catch (e) { this.error = String(e?.message ?? e); }
-      this.busy = null; cx.notify();
-    });
+    cx.spawn(async (cx) => { await this.runFix(failure); cx.notify(); });
+  }
+
+  // The hand-over itself, once sendFix (or press) has set busy: clears busy when done, with the reason in error when it failed.
+  async runFix(failure) {
+    try {
+      const input = { failure, branch: this.branch, workDir: this.folder };
+      let lead = orchestratorOf(terminals(), this.orchestrator);
+      if (!lead?.live) { // this run may have a live orchestrator the page did not know of: use it, don't start a second one
+        const other = liveOrchestratorFor(terminals(), this.id);
+        if (other) { lead = other; await this.useOrchestrator(other.address); }
+      }
+      let record;
+      if (lead?.live) {
+        const sent = await hc(["send", lead.address, fixMessage(input)]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+        if (sent.code !== 0) throw new Error(`Couldn't hand it to the Task Orchestrator: ${out(sent) || "hc send failed"}`);
+        record = fixingStart({ failure, status: lead.status, turn: lead.turn });
+      } else {
+        await this.restartLead(restartTask({ runDir: runDir(home(), this.id), ...input }));
+        record = fixingStart({ failure, turn: 0 }); // a new terminal counts its turns from 0; it may still report idle for a moment after its task was sent
+      }
+      this.fixingAt = Date.now();
+      this.setFailure(null);
+      this.setFixing(record);
+    } catch (e) { this.error = String(e?.message ?? e); }
+    this.busy = null;
   }
 
   // Follows an orchestrator of the run found by its labels: its address is kept in shared state and in pane.json, as for a new one.
@@ -334,31 +358,78 @@ export class RunPage {
     if (this.failure) return this.sendFix(cx);
     this.busy = "merge"; this.error = null; this.note = null; cx.notify();
     const ticketSpace = this.rememberTicketSpace(); // found now, while the worktree is there: the steps below remove it
-    cx.spawn(async (cx) => {
-      let at = this.folder; // where gh can run: the worktree, else the repo
-      try {
-        if (!this.pr) await this.openPr();
-        // A Merge that stopped part way can be pressed again: leave out what is already gone (the folder, the branch).
-        const workDirExists = (await exec("git", worktreeArgs(this.folder))).code === 0;
-        if (!workDirExists) at = this.repoRoot;
-        const branchExists = (await exec("git", branchArgs(this.repoRoot, this.branch))).code === 0;
-        // Ask GitHub where the pull request stands now, so a saved state that has gone stale (merged by hand, say) doesn't matter.
-        const view = await exec("gh", prViewArgs(this.branch), { cwd: workDirExists ? this.folder : this.repoRoot });
-        const found = view.code === 0 ? parsePr(view.stdout) : null;
-        if (!found) throw new Error(`Couldn't look up the pull request: ${out(view)}`);
-        if (found.url !== this.pr.url) throw new Error(`The branch's pull request is ${found.url}, not ${this.pr.url} that this run opened. Nothing was merged.`);
-        if (found.state !== this.pr.state) { this.pr = found; setShared(prKey(this.id), found); }
-        const { warnings } = await runSteps(mergeSteps({
-          repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, number: found.number, prMerged: found.state === "MERGED", headOid: found.headOid,
-          status: await this.doneStatus(), runDir: runDir(home(), this.id), workDirExists, branchExists,
-        }), exec);
-        for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
-        if (!(await this.closeSession(ticketSpace))) { this.busy = null; cx.notify(); } // the page is still there: say what is left to do
-      } catch (e) {
-        await this.failMerge(e, at);
-        this.busy = null; cx.notify();
-      }
-    });
+    cx.spawn(async (cx) => { if (!(await this.runMerge(ticketSpace))) cx.notify(); });
+  }
+
+  // Merge's steps, once merge (or press) has set busy. Resolves true when the ticket's space was closed (and this page with it), else
+  // false with busy cleared and what is left to do in error, note or the red state.
+  async runMerge(ticketSpace) {
+    let at = this.folder; // where gh can run: the worktree, else the repo
+    try {
+      if (!this.pr) await this.openPr();
+      // A Merge that stopped part way can be pressed again: leave out what is already gone (the folder, the branch).
+      const workDirExists = (await exec("git", worktreeArgs(this.folder))).code === 0;
+      if (!workDirExists) at = this.repoRoot;
+      const branchExists = (await exec("git", branchArgs(this.repoRoot, this.branch))).code === 0;
+      // Ask GitHub where the pull request stands now, so a saved state that has gone stale (merged by hand, say) doesn't matter.
+      const view = await exec("gh", prViewArgs(this.branch), { cwd: workDirExists ? this.folder : this.repoRoot });
+      const found = view.code === 0 ? parsePr(view.stdout) : null;
+      if (!found) throw new Error(`Couldn't look up the pull request: ${out(view)}`);
+      if (found.url !== this.pr.url) throw new Error(`The branch's pull request is ${found.url}, not ${this.pr.url} that this run opened. Nothing was merged.`);
+      if (found.state !== this.pr.state) { this.pr = found; setShared(prKey(this.id), found); }
+      const { warnings } = await runSteps(mergeSteps({
+        repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, number: found.number, prMerged: found.state === "MERGED", headOid: found.headOid,
+        status: await this.doneStatus(), runDir: runDir(home(), this.id), workDirExists, branchExists,
+      }), exec);
+      for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
+      if (await this.closeSession(ticketSpace)) return true;
+    } catch (e) {
+      await this.failMerge(e, at);
+    }
+    this.busy = null; // the page is still there: say what is left to do
+    return false;
+  }
+
+  // The run as the page shows it, as data, for herdr-tasks show (cli-ui/): the orchestrator, the agents, the pull request and the Merge
+  // button. all: terminals().
+  async describe(all) {
+    await this.refresh();
+    const terms = all();
+    const { workers, reviewers, investigators, needsYou } = this.agents(terms);
+    this.noteFinal(reviewers);
+    const lead = orchestratorOf(terms, this.orchestrator);
+    const view = this.mergeState(workers, reviewers, investigators);
+    const agent = ({ address, name, role, status, live, needsYou: waits, detail }) => ({ address, name, role, status, live, needsYou: waits, detail: detail ?? null });
+    return {
+      id: this.id, title: this.title, workflow: this.workflow, branch: this.branch, folder: this.folder,
+      orchestrator: this.orchestrator, live: Boolean(lead?.live), status: lead?.live ? lead.status : "finished", waiting: needsYou,
+      agents: { workers: workers.map(agent), reviewers: reviewers.map(agent), investigators: investigators.map(agent) },
+      pr: this.pr ?? null,
+      merge: { ...view, error: this.failure?.error ?? null, note: this.fixing ? fixingNote(this.fixing) : null },
+    };
+  }
+
+  // The Merge button pressed from herdr-tasks merge (cli-ui/): only when the page would let it be pressed, doing what a press does, and
+  // waited for. all: terminals(). Resolves with { outcome } and what goes with it:
+  //   "waiting" (wait: what Merge waits for), "fixing" (the red button handed the error to the Task Orchestrator: label, error),
+  //   "merged" (pr; note when the run's space couldn't be closed), "failed" (error; failure: the red button it left, when it did).
+  async press(all) {
+    const run = await this.describe(all);
+    const view = run.merge;
+    if (view.mode === "fixing") return { outcome: "waiting", wait: `The Task Orchestrator is fixing what Merge ran into: ${run.merge.note}` };
+    if (!view.enabled) return { outcome: "waiting", wait: view.wait || `Merge is ${view.label}` };
+    this.error = null; this.note = null;
+    if (this.failure) {
+      const failure = this.failure;
+      this.busy = "fix";
+      await this.runFix(failure);
+      return this.error ? { outcome: "failed", error: this.error } : { outcome: "fixing", label: failure.label, error: failure.error };
+    }
+    this.busy = "merge";
+    const closed = await this.runMerge(this.rememberTicketSpace());
+    if (this.failure) return { outcome: "failed", error: this.failure.error, failure: { label: this.failure.label, error: this.failure.error }, pr: this.pr };
+    if (this.error && !closed) return { outcome: "failed", error: this.error, pr: this.pr };
+    return { outcome: "merged", pr: this.pr, note: closed ? null : this.note };
   }
 
   // How Merge sets the ticket Done: the gh call, a warning when the project has no such option, or null when the run has no project.

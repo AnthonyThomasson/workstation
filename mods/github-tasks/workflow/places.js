@@ -33,6 +33,12 @@ export const refactorDirs = (appHome, repoRoot = null) => kindDirs(appHome, repo
 export const runDir = (home, id) => `${home}/.herdr/workflow-runs/${id}`;
 export const runPanePath = (home, id) => `${runDir(home, id)}/pane.json`;
 
+// The command line's mailbox (cli/): herdr-tasks drops a request in requests/ and the Tasks sidebar's bridge (cli-ui/bridge.js) writes
+// the reply into replies/. `home` is passed in to keep this pure.
+export const cliDir = (home) => `${String(home).replace(/\/+$/, "")}/.herdr/tasks-cli`;
+export const cliRequestsDir = (home) => `${cliDir(home)}/requests`;
+export const cliRepliesDir = (home) => `${cliDir(home)}/replies`;
+
 // Only a child of a .herdr/workflow-runs folder can be removed. In particular, never rm the parent or a path
 // reached through a run id containing traversal; Merge builds this path from home() and the run id.
 // The child's id, or null when the path is not safe to remove.

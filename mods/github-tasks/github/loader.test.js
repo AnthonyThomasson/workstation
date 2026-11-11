@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findRepo, findProjects, createProject, loadItems, loadTask, loadStatusField, saveTask, markWontDo, moveItem, moveTicket, POSITION_MUTATION, STATUS_MUTATION, GitHubError, PAGE_SIZE, MAX_ITEMS } from "./loader.js";
+import { findRepo, findProjects, createProject, createTicket, loadItems, loadTask, loadStatusField, saveTask, markWontDo, moveItem, moveTicket, POSITION_MUTATION, STATUS_MUTATION, GitHubError, PAGE_SIZE, MAX_ITEMS } from "./loader.js";
 
 const ok = (data) => ({ code: 0, stdout: JSON.stringify({ data }), stderr: "" });
 const page = (count, endCursor, hasNextPage) => ok({
@@ -321,4 +321,64 @@ test("moveTicket stops at a failed Status write and never sends the position", a
   const { gh, calls } = recorder({ code: 1, stdout: "", stderr: "boom" });
   await assert.rejects(moveTicket(gh, { projectId: "P1", itemId: "I7", afterId: "I3", status: "Up Next", statusField }), GitHubError);
   assert.equal(calls.length, 1);
+});
+
+// ---- createTicket (herdr-tasks create) ----
+
+const ISSUE_URL = "https://github.com/me/app/issues/31";
+const issueGh = (over = {}) => recorder((args) => {
+  if (args[0] === "issue" && args[1] === "create") return over.create ?? { code: 0, stdout: `Creating issue in me/app\n\n${ISSUE_URL}\n`, stderr: "" };
+  if (args[0] === "issue" && args[1] === "view") return over.view ?? { code: 0, stdout: JSON.stringify({ id: "I_31", number: 31, title: "New", url: ISSUE_URL, state: "OPEN", createdAt: "2026-11-11T00:00:00Z", labels: [{ name: "bug" }] }), stderr: "" };
+  const query = args.find((a) => a.startsWith("query=")) ?? "";
+  if (query.includes("addProjectV2ItemById")) return over.add ?? ok({ addProjectV2ItemById: { item: { id: "ITEM_31" } } });
+  if (query.includes("addProjectV2DraftIssue")) return ok({ addProjectV2DraftIssue: { projectItem: { id: "ITEM_D2", content: { id: "DI_2", title: "Idea", createdAt: "2026-11-11T00:00:00Z" } } } });
+  if (query.includes("updateProjectV2ItemFieldValue")) return over.status ?? { code: 0, stdout: "{}", stderr: "" };
+  return { code: 0, stdout: "{}", stderr: "" };
+});
+
+test("createTicket makes an issue, adds it to the project and sets its status, in the project's spelling", async () => {
+  const { gh, calls } = issueGh();
+  const ticket = await createTicket(gh, { repo: "me/app", project, title: "New", body: "Why", labels: ["bug"], status: "To Do", statusField: field }, { cwd: "/x" });
+  assert.deepEqual(calls[0].args, ["issue", "create", "-R", "me/app", "--title=New", "--body=Why", "--label=bug"]);
+  assert.deepEqual(calls[1].args.slice(0, 3), ["issue", "view", ISSUE_URL]);
+  assert.deepEqual(input(calls, 2), { project: "P1", content: "I_31" });
+  assert.deepEqual(input(calls, 3), { project: "P1", item: "ITEM_31", field: "F1", option: "o1" });
+  assert.deepEqual(calls.map((c) => c.where), Array(4).fill({ cwd: "/x" }));
+  assert.deepEqual(ticket, { key: "ITEM_31", draft: false, number: 31, title: "New", url: ISSUE_URL, state: "OPEN", reason: null, createdAt: "2026-11-11T00:00:00Z", closedAt: null, status: "Todo", labels: ["bug"] });
+});
+
+test("createTicket with no status leaves the item without one, and always sends a body", async () => {
+  const { gh, calls } = issueGh();
+  const ticket = await createTicket(gh, { repo: "me/app", project, title: "New" });
+  assert.ok(calls[0].args.includes("--body="));
+  assert.equal(calls.length, 3);
+  assert.equal(ticket.status, null);
+});
+
+test("createTicket makes a draft, then its description, then its status", async () => {
+  const { gh, calls } = issueGh();
+  const ticket = await createTicket(gh, { project, title: "Idea", body: "More", status: "Done", statusField: field, draft: true });
+  assert.ok(calls[0].args.find((a) => a.startsWith("query=")).includes("addProjectV2DraftIssue"));
+  assert.deepEqual(input(calls, 1), { id: "DI_2", title: "Idea", body: "More" });
+  assert.deepEqual(input(calls, 2), { project: "P1", item: "ITEM_D2", field: "F1", option: "o2" });
+  assert.equal(ticket.draft, true);
+  assert.equal(ticket.status, "Done");
+});
+
+test("createTicket checks the title and the status before it makes anything", async () => {
+  const { gh, calls } = issueGh();
+  await assert.rejects(createTicket(gh, { repo: "me/app", project, title: " " }), /needs a title/);
+  await assert.rejects(createTicket(gh, { repo: "me/app", project, title: "T", status: "Up Next", statusField: field }), (e) => e instanceof GitHubError && /no "Up Next" status/.test(e.message));
+  await assert.rejects(createTicket(gh, { repo: "me/app", project, title: "T", status: "Todo", statusField: null }), /no "Todo" status/);
+  assert.equal(calls.length, 0);
+});
+
+test("createTicket says what was made when a later step fails", async () => {
+  const refused = issueGh({ create: { code: 1, stdout: "", stderr: "could not add label: 'nope' not found" } });
+  await assert.rejects(createTicket(refused.gh, { repo: "me/app", project, title: "T", labels: ["nope"] }), /could not add label/);
+  assert.equal(refused.calls.length, 1);
+  const notAdded = issueGh({ add: { code: 1, stdout: "", stderr: "GraphQL: Something went wrong" } });
+  await assert.rejects(createTicket(notAdded.gh, { repo: "me/app", project, title: "T" }), (e) => /^#31 was made, but adding it to the project failed: GraphQL: Something went wrong/.test(e.message));
+  const noStatus = issueGh({ status: { code: 1, stdout: "", stderr: "boom" } });
+  await assert.rejects(createTicket(noStatus.gh, { repo: "me/app", project, title: "T", status: "Done", statusField: field }), /#31 was made, but its status wasn't set to Done: boom/);
 });

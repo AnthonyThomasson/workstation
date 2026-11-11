@@ -177,6 +177,53 @@ export async function createDraft(gh, projectId, title, where) {
   return { key: item.id, contentId: c.id ?? null, draft: true, number: null, title: c.title ?? title, url: null, state: "OPEN", reason: null, createdAt: c.createdAt ?? new Date().toISOString(), closedAt: null, status: null, labels: [] };
 }
 
+const ADD_ITEM_MUTATION = `mutation($project: ID!, $content: ID!) {
+  addProjectV2ItemById(input: { projectId: $project, contentId: $content }) { item { id } }
+}`;
+
+// A failure after something was made: says what was made, keeping the failing call's kind.
+const partly = (made, cause) => {
+  const failure = new GitHubError(`${made}, but ${cause.message}`);
+  failure.kind = cause.kind;
+  return failure;
+};
+
+// Makes a ticket on the project (herdr-tasks create): an issue of the repo (gh issue create, then added to the project) or, with draft,
+// a draft of the project, and sets its Status. status: the name wanted, found among statusField's options (loadStatusField's) in the
+// project's own spelling, and checked before anything is made; null leaves the item without one. labels: names the repo has (an issue's
+// only). Returns the ticket as normalizeItems does. Throws GitHubError; one thrown after the item exists says so.
+export async function createTicket(gh, { repo, project, title, body = "", labels = [], status = null, statusField = null, draft = false }, where) {
+  if (!String(title ?? "").trim()) throw new GitHubError("A task needs a title.");
+  const option = status ? statusField?.options?.find((o) => o.name === spelled(statusField.options, status)) : null;
+  if (status && !option) throw new GitHubError(`The project has no "${status}" status.`);
+  let ticket;
+  if (draft) {
+    ticket = await createDraft(gh, project.id, title, where);
+    if (body) {
+      try { await mutate(gh, DRAFT_MUTATION, { id: ticket.contentId, title: ticket.title, body }, where); }
+      catch (e) { throw partly("The draft was made", new GitHubError(`its description wasn't saved: ${e.message}`)); }
+    }
+  } else {
+    const made = await gh(["issue", "create", "-R", repo, `--title=${title}`, `--body=${body}`, ...labels.map((l) => `--label=${l}`)], where);
+    const url = made.code === 0 ? String(made.stdout).split("\n").map((l) => l.trim()).find((l) => /^https?:\/\//.test(l)) : null;
+    if (!url) throw new GitHubError(made.stderr || made.stdout);
+    const seen = await gh(["issue", "view", url, "--json", "id,number,title,url,state,createdAt,labels"], where);
+    const issue = seen.code === 0 ? parseJson(seen.stdout) : null;
+    if (!issue?.id) throw partly(`${url} was made`, new GitHubError(`it couldn't be read back to add it to the project: ${new GitHubError(seen.stderr || seen.stdout).message}`));
+    const added = await gh(["api", "graphql", "-f", `query=${ADD_ITEM_MUTATION}`, "-f", `project=${project.id}`, "-f", `content=${issue.id}`], where);
+    const key = added.code === 0 ? parseJson(added.stdout)?.data?.addProjectV2ItemById?.item?.id : null;
+    if (!key) throw partly(`#${issue.number} was made`, new GitHubError(`adding it to the project failed: ${new GitHubError(added.stderr || added.stdout).message}`));
+    ticket = {
+      key, draft: false, number: issue.number, title: issue.title ?? title, url: issue.url ?? url, state: issue.state ?? "OPEN", reason: null,
+      createdAt: issue.createdAt ?? new Date().toISOString(), closedAt: null, status: null, labels: (issue.labels ?? []).map((l) => l.name),
+    };
+  }
+  if (!option) return ticket;
+  try { await mutate(gh, STATUS_MUTATION, { project: project.id, item: ticket.key, field: statusField.id, option: option.id }, where); }
+  catch (e) { throw partly(`${ticket.number ? `#${ticket.number}` : "The draft"} was made`, new GitHubError(`its status wasn't set to ${option.name}: ${e.message}`)); }
+  return { ...ticket, status: option.name };
+}
+
 // The ticket as GitHub has it now: { title, body, labels: [name], updatedAt }. An issue is read by gh
 // issue view, a draft through the project. The caller's own status comes from the project item.
 export async function loadTask(gh, repo, ticket, where) {

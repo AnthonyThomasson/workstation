@@ -1,7 +1,8 @@
 // Tasks: the tickets on the GitHub Project linked to the selected space's repo, in the left menu under
 // Spaces: Investigations, Up Next, Backlog (collapsed), In Progress and In Review. Up Next and Backlog rows drag to reorder and to move between the two (drop() writes it to the project). Clicking a ticket
 // opens it in a large popup to edit (editor/editor.js, lib/popup.js), and saving pushes the change to GitHub. Each row links
-// out to GitHub and has Start, which becomes View while its workflow runs.
+// out to GitHub and has Start, which becomes View while its workflow runs. The sidebar also answers herdr-tasks, the command line
+// (bin/herdr-tasks, cli/), through its bridge (cli-ui/bridge.js): everything the UI does can be done from a shell.
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
 // workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket, in a popup (props.popup)
 // opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow or refactor type (props.kind) in the center (workflow-ui/workflow-editor.js); "run", a started
@@ -9,7 +10,7 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, notify, shared, setShared, terminals, playSound, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
-import { BACK_AFTER, Shakes, bellFirst, bellTip, bellToast, waitingAgents, INVESTIGATION_LABEL, RUN_LABEL, normalizeItems, groupTickets, groupByStage, projectOrdered, planMove, applyMove, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload, CHANGED, AGENT_KEY, DOCTOR_KEY } from "./lib/index.js";
+import { BACK_AFTER, CLI_ACTION, modCommand, Shakes, bellFirst, bellTip, bellToast, waitingAgents, INVESTIGATION_LABEL, RUN_LABEL, normalizeItems, groupTickets, groupByStage, projectOrdered, planMove, applyMove, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload, CHANGED, AGENT_KEY, DOCTOR_KEY } from "./lib/index.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField, moveTicket, setupProject, setupNote } from "./github/index.js";
 import { installedAgents, investigationsHere, reconnectInvestigations, viewInvestigation, InvestigationPage, NewTaskPage, RefactorPage } from "./investigations-ui/index.js";
 import { S, icon, stop, note, iconButton, action, gh, later, AgentBar, AgentBackdrop } from "./widgets/index.js";
@@ -23,6 +24,7 @@ import { WorkflowEditor, WorkflowList, loadWorkflows } from "./workflow-ui/index
 import { PromptPage } from "./prompts-page.js";
 import { investigationRow, refactorOverlay, TOOLTIP as REFACTOR_TIP, newTaskOverlay, newTaskProps, chooseAgent } from "./investigations/index.js";
 import { startDoctor, doctorFor } from "./doctor/index.js";
+import { Bridge } from "./cli-ui/index.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
@@ -104,6 +106,7 @@ export default class GitHubTasks extends View {
     this.agents = []; // installed agents New Task can use
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
     this.doctor = startDoctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
+    this.bridge = new Bridge(cx); // herdr-tasks, the command line: its requests are answered here, by the same calls the buttons make
     cx.timer.every(POLL, (cx) => this.refresh(cx));
     cx.timer.every(REDRAW, (cx) => cx.notify());
     // A restart drops what terminal.show showed: show each live run's orchestrator again in its tab (twice, in case the app was still loading).
@@ -114,6 +117,7 @@ export default class GitHubTasks extends View {
       for (;;) {
         const command = await nextCommand();
         if (command === "focus") this.handle.focus();
+        else if (command === modCommand(CLI_ACTION)) this.bridge.poke(cx); // herdr-tasks has left a request
         cx.notify();
       }
     });

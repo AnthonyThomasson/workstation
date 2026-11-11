@@ -38,6 +38,19 @@ export function connect({ id, orchestrator, title, space, folder, props, existin
 // A run being started, or a tab being connected: one at a time per run, so View (or Start again) never makes a second tab.
 export const connecting = new Set();
 
+// The run page's props for a run, from its orchestrator's terminal (running): the full set Start saved in pane.json, with that terminal
+// as the orchestrator; without a usable pane.json, what the terminal's labels and the ticket say. View opens the page with them, and
+// herdr-tasks (cli-ui/) reads a run through a page made with them.
+export async function runProps(running, { ticket, project } = {}) {
+  const { [RUN_LABEL]: id, [FOLDER_LABEL]: folder } = running.labels ?? {};
+  const partial = {
+    role: "run", id, orchestrator: running.address, title: ticketName(ticket), workflow: "", branch: branchName(ticket), folder: folder ?? "",
+    ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null, status: ticket?.status ?? null }, projectId: project?.id ?? null,
+  };
+  const saved = await readTextFile(runPanePath(home(), id)).catch(() => null);
+  return reopenProps(saved, partial, running.address);
+}
+
 // Brings a run's tab to the front, showing its orchestrator again. When the tab was closed, opens a tab connected to the
 // same orchestrator, in the ticket's space (or, if that was closed too, in a new one at the worktree); when it lost its left pane
 // or its run page, makes that good in the tab that is there. The run itself isn't touched. The run page's props come from
@@ -50,12 +63,7 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
     if (!id) throw new Error("the run has no id, so its details can't be found");
     // pane.json (what Start saved: repoRoot, the main checkout, which the ticket doesn't carry) is read first: both paths find
     // the ticket's own space with it.
-    const partial = {
-      role: "run", id, orchestrator: running.address, title: name, workflow: "", branch: branchName(ticket), folder: folder ?? "",
-      ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null, status: ticket?.status ?? null }, projectId: project?.id ?? null,
-    };
-    const saved = await readTextFile(runPanePath(home(), id)).catch(() => null);
-    const props = reopenProps(saved, partial, running.address);
+    const props = await runProps(running, { ticket, project });
     const workDir = folder ?? props.folder;
     const view = () => ({ slot: shared(slotKey(id)), spaces: spaces(), panes: panes(), name, folder: workDir, repoRoot: props.repoRoot, orchestrators: [running.address, props.orchestrator], terminals: terminals() });
     if (viewQuick({

@@ -45,7 +45,7 @@ export const LAYOUT = {
   entry: "main.js",
   data: ["icons", "starters"],
   tiers: [
-    ["settings"],
+    ["settings", "cli-ui"],
     ["editor", "doctor"],
     ["investigations-ui"],
     ["investigations"],
@@ -54,11 +54,12 @@ export const LAYOUT = {
     ["workflow-ui"],
     ["github-ui"],
     ["widgets"],
+    ["cli"],
     ["workflow"],
     ["github"],
     ["lib"],
   ],
-  pure: ["lib", "github", "workflow", "runs", "investigations"],
+  pure: ["lib", "github", "workflow", "runs", "investigations", "cli"],
 };
 // What a pure folder may not import.
 const HOST_MODULES = ["herdr", "gpui-kit", "gpui-base"];

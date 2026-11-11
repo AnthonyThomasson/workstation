@@ -12,6 +12,17 @@ import { slotKey, INVESTIGATIONS_KEY, investigationAgentsKey } from "../lib/inde
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 
+// Done's work, for the page's button and for herdr-tasks investigation done (cli-ui/): ends the session's agent and everything it started,
+// closes its space, removes its worktrees and session folder and deletes its branches (investigations.js endInvestigation).
+// session: { id, agent, repoRoot, workDir, branch }. Resolves with endInvestigation's { done, error }.
+export const finishInvestigation = ({ id, agent, repoRoot, workDir, branch }) => endInvestigation({
+  hc, terminals, spaces, panes, git, run,
+  slot: () => shared(slotKey(id)), clearSlot: () => setShared(slotKey(id), null),
+  load: () => shared(INVESTIGATIONS_KEY), save: (list) => setShared(INVESTIGATIONS_KEY, list),
+  clearAgents: () => setShared(investigationAgentsKey(id), null),
+  home: home(), removeDir: (path) => exec("rm", ["-rf", path]),
+}, { id, agent, repoRoot, workDir, branch });
+
 export class InvestigationPage {
   constructor(props) {
     this.props = props ?? {};
@@ -91,13 +102,7 @@ export class InvestigationPage {
     cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const result = await endInvestigation({
-          hc, terminals, spaces, panes, git, run,
-          slot: () => shared(slotKey(this.id)), clearSlot: () => setShared(slotKey(this.id), null),
-          load: () => shared(INVESTIGATIONS_KEY), save: (list) => setShared(INVESTIGATIONS_KEY, list),
-          clearAgents: () => setShared(investigationAgentsKey(this.id), null),
-          home: home(), removeDir: (path) => exec("rm", ["-rf", path]),
-        }, { id: this.id, agent: this.agent, repoRoot: this.props.repoRoot, workDir: this.props.folder, branch: this.branch });
+        const result = await finishInvestigation({ id: this.id, agent: this.agent, repoRoot: this.props.repoRoot, workDir: this.props.folder, branch: this.branch });
         if (!result.done) this.error = result.error;
       } catch (e) {
         this.error = String(e?.message ?? e);

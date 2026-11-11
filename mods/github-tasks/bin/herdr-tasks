@@ -1,0 +1,16 @@
+#!/bin/sh
+# herdr-tasks: GitHub Tasks from the command line. Each command does what a button of the Tasks UI does, inside the Herdr app
+# (cli/client.js says how). Link it onto your PATH, for example:
+#   ln -s ~/.config/herdr-app/mods/github-tasks/bin/herdr-tasks ~/.local/bin/herdr-tasks
+# Needs node. `herdr-tasks --help` lists the commands.
+self=$0
+# Follow links (the one on PATH) to this file, so cli/ is found beside it.
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+done
+dir=$(cd "$(dirname "$self")/.." && pwd) || exit 1
+exec node "$dir/cli/client.js" "$@"

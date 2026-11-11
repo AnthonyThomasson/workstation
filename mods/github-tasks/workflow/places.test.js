@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   firstLine, projectConfigPath, repoWorkflowsDir, globalWorkflowsDir, tildePath, workflowDirs, refactorDirs, kindDirs, repoRefactorsDir, globalRefactorsDir,
-  runDir, runPanePath, runIdFromDir, worktreePath, sessionFolder,
+  runDir, runPanePath, runIdFromDir, worktreePath, sessionFolder, cliDir, cliRequestsDir, cliRepliesDir,
 } from "./places.js";
 
 test("firstLine takes the first non-empty line, trimmed", () => {
@@ -87,4 +87,10 @@ test("the session folder is ~/.herdr/investigations/<id>, and only an investigat
   for (const bad of ["", "..", "../x", "inv-", "inv-x/..", "inv-x/sub", "inv-a/b", "inv-1/..", "other", "x", undefined]) assert.equal(sessionFolder("/home/me", bad), null, String(bad));
   assert.equal(sessionFolder("", "inv-x"), null);
   assert.equal(sessionFolder("/", "inv-x"), null);
+});
+
+test("herdr-tasks' mailbox is under ~/.herdr, beside the runs", () => {
+  assert.equal(cliDir("/home/me/"), "/home/me/.herdr/tasks-cli");
+  assert.equal(cliRequestsDir("/home/me"), "/home/me/.herdr/tasks-cli/requests");
+  assert.equal(cliRepliesDir("/home/me"), "/home/me/.herdr/tasks-cli/replies");
 });
