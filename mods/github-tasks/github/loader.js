@@ -1,5 +1,5 @@
 // Asking GitHub, through a gh the caller hands in: gh(args, { cwd, on }) -> { code, stdout, stderr }.
-// A failure throws a GitHubError whose kind is one of model.js classifyError's.
+// A failure throws a GitHubError whose kind is one of lib/gh-sign-in.js classifyError's.
 import { classifyError, changes, checkTask, wontDoOption, STATUSES } from "../lib/index.js";
 
 export const PAGE_SIZE = 100;

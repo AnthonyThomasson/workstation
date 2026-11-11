@@ -5,12 +5,13 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  INVESTIGATION_HOST_LABEL, INVESTIGATION_LABEL, INVESTIGATIONS_KEY, beginInvestigation, checkStart, deleteBranch, endInvestigation, firstLine, investigationBranch,
+  beginInvestigation, checkStart, deleteBranch, endInvestigation, firstLine, investigationBranch,
   investigationHostName, investigationId, investigationLabel, investigationRow, investigationRunArgs, investigationsFor, liveInvestigations, reapplyInvestigations, removeWorktree,
-  prototypesOf, refactorBranch, refactorHostName, refactorLabel, savedList, sessionFolder, tabNameFor, unsafeToRemove, withEntry, withoutEntry,
+  prototypesOf, refactorBranch, refactorHostName, refactorLabel, savedList, tabNameFor, unsafeToRemove, withEntry, withoutEntry,
 } from "./investigations.js";
-import { hostKey, placeholderArgv, slotKey, mainCheckout, prepareWorktree, shQuote, worktreePath } from "../runs/index.js";
-import { slug } from "../workflow/index.js";
+import { placeholderArgv, mainCheckout, prepareWorktree, shQuote } from "../runs/index.js";
+import { slug, sessionFolder, worktreePath } from "../workflow/index.js";
+import { INVESTIGATION_HOST_LABEL, INVESTIGATION_LABEL, INVESTIGATIONS_KEY, hostKey, slotKey } from "../lib/index.js";
 
 // ---- Naming -------------------------------------------------------------------------------------------
 

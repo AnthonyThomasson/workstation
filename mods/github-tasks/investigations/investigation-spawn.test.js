@@ -5,11 +5,12 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  NEW_TASK_PLUMBING, investigationSpawnScript, newTaskAgentArgv, newTaskInvestigatorPrompt, newTaskWorkerPrompt, refactorAgentArgv, sessionFiles, sessionFolder, subAgentArgv,
+  NEW_TASK_PLUMBING, investigationSpawnScript, newTaskAgentArgv, newTaskInvestigatorPrompt, newTaskWorkerPrompt, refactorAgentArgv, sessionFiles, subAgentArgv,
 } from "./investigation-spawn.js";
-import { INVESTIGATION_LABEL, beginInvestigation, investigationRunArgs } from "./investigations.js";
-import { hostKey, shQuote, worktreePath } from "../runs/index.js";
-import { newTaskPrompt, refactorPrompt, ASK_WITH_TOOL } from "../lib/index.js";
+import { beginInvestigation, investigationRunArgs } from "./investigations.js";
+import { shQuote } from "../runs/index.js";
+import { worktreePath } from "../workflow/index.js";
+import { newTaskPrompt, refactorPrompt, ASK_WITH_TOOL, hostKey } from "../lib/index.js";
 
 const DIR = "/home/me/.herdr/investigations/inv-x";
 // The values of a flag that takes any number of them, up to the next flag.
@@ -18,15 +19,6 @@ const values = (argv, flag) => {
   const to = argv.findIndex((a, i) => i >= from && a.startsWith("--"));
   return argv.slice(from, to === -1 ? undefined : to);
 };
-
-// ---- Where the session's files are -------------------------------------------------------------------
-
-test("the session folder is ~/.herdr/investigations/<id>, the one helper start and Done share, and only an investigation's id has one", () => {
-  assert.equal(sessionFolder("/home/me", "inv-x"), DIR);
-  assert.equal(sessionFolder("/home/me/", "inv-x"), DIR, "a trailing slash on home is no matter");
-  for (const bad of ["", "..", "inv-x/..", "inv-x/sub", "other", undefined]) assert.equal(sessionFolder("/home/me", bad), null, String(bad));
-  assert.equal(INVESTIGATION_LABEL, "herdr.investigation");
-});
 
 // ---- The sub-agents' commands ------------------------------------------------------------------------
 

@@ -6,7 +6,6 @@ import { STATUSES, sameStatus, REFRESH, LOGIN } from "../lib/index.js";
 import { ROLES, ROLE_LABELS, CUSTOM, EASY_LABEL } from "../workflow/index.js";
 import { hasLabel } from "../github/index.js";
 
-export const DOCTOR_KEY = "github-tasks.doctor"; // { issues, repo, project }: what the last check found, for the settings and the sidebar
 
 // diagnose(inputs) -> [{ kind, message, ... }], in the order they should be read.
 //   repo           "owner/name"; null when the space is not in a GitHub repo (no project or status checks then); undefined when not known

@@ -2,6 +2,7 @@
 // the New task dialog (new-task-dialog.js): "Pick a refactor type to investigate", a radio list of the place's refactor types, an
 // optional focus, Cancel and Start. refactor.js draws it and starts the session; this file says what it does.
 import { normalizeRefactor as normalize, validateRefactor as validate } from "../workflow/index.js";
+import { PICK_PREFIX, REFACTOR_OVERLAY_KEY } from "../lib/index.js";
 import { panelWidth, newTaskProps } from "./new-task-dialog.js";
 
 export { panelWidth };
@@ -11,11 +12,10 @@ export const FOCUS_LABEL = "Focus (optional)";
 export const FOCUS_PLACEHOLDER = "e.g. only mods/github-tasks";
 export const EMPTY_TEXT = "No refactor types yet. Add one under Refactors in Task settings.";
 export const TOOLTIP = "Start a refactor investigation";
-export const PICK_PREFIX = "github-tasks.refactorPick."; // + the repo's key: the type last started there, as scope:id
 
 // The overlay that shows the dialog. props: what the sidebar knew when the broom was pressed (the New task dialog's, newTaskProps).
 export const refactorOverlay = (props) => ({
-  mod: "github-tasks", kind: "window", key: "github-tasks.refactor", width: 1, height: 1, frame: "none",
+  mod: "github-tasks", kind: "window", key: REFACTOR_OVERLAY_KEY, width: 1, height: 1, frame: "none",
   props: { ...props, role: "refactor" },
 });
 export const refactorProps = newTaskProps;

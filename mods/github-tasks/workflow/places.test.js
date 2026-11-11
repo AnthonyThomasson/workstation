@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { firstLine, repoWorkflowsDir, globalWorkflowsDir, tildePath, workflowDirs, refactorDirs, kindDirs, repoRefactorsDir, globalRefactorsDir } from "./places.js";
+import {
+  firstLine, repoWorkflowsDir, globalWorkflowsDir, tildePath, workflowDirs, refactorDirs, kindDirs, repoRefactorsDir, globalRefactorsDir,
+  runDir, runPanePath, runIdFromDir, worktreePath, sessionFolder,
+} from "./places.js";
 
 test("firstLine takes the first non-empty line, trimmed", () => {
   assert.equal(firstLine("\n  /a/b  \n/c\n"), "/a/b");
@@ -41,4 +44,42 @@ test("refactor types live in refactors folders: the Herdr home's, and a repo's .
     global: "/home/me/.config/herdr-app/refactors", repo: "/code/app/.herdr/refactors",
   });
   assert.deepEqual(kindDirs("/h", "/r", "workflows"), workflowDirs("/h", "/r"));
+});
+
+test("a run folder and its pane.json live under the home's workflow-runs folder", () => {
+  assert.equal(runDir("/home/me", "12-abc"), "/home/me/.herdr/workflow-runs/12-abc");
+  assert.equal(runPanePath("/home/me", "12-abc"), "/home/me/.herdr/workflow-runs/12-abc/pane.json");
+});
+
+test("the run-folder guard accepts only one safe child of workflow-runs", () => {
+  assert.equal(runIdFromDir("/home/me/.herdr/workflow-runs/12-abc"), "12-abc");
+  assert.equal(runIdFromDir(runDir("/home/me", "12-abc")), "12-abc");
+  for (const path of [
+    "/home/me/.herdr/workflow-runs", "/home/me/.herdr/workflow-runs/", "/home/me/.herdr/workflow-runs/.",
+    "/home/me/.herdr/workflow-runs/..", "/home/me/.herdr/workflow-runs/9..abc", "/home/me/.herdr/workflow-runs/9-abc/extra",
+    "relative/.herdr/workflow-runs/9-abc", null,
+  ]) assert.equal(runIdFromDir(path), null, String(path));
+});
+
+test("a ticket's worktree is where Herdr's worktree mod puts that branch", () => {
+  assert.equal(worktreePath("/src/app", "workflow/12-fix", "/Users/me"), "/Users/me/.herdr/worktrees/app/workflow-12-fix");
+});
+
+test("the worktree folder is named for the main checkout, whatever else is passed", () => {
+  assert.equal(worktreePath("/src/my app/", "workflow/3-x", "/h/"), "/h/.herdr/worktrees/my app/workflow-3-x");
+});
+
+test("odd branch names are slugged the way Herdr's worktree mod does", () => {
+  const at = (branch) => worktreePath("/src/app", branch, "/h");
+  assert.equal(at("workflow/12-fix the login: now!"), "/h/.herdr/worktrees/app/workflow-12-fix-the-login-now");
+  assert.equal(at("feat//a..b_c"), "/h/.herdr/worktrees/app/feat-a..b_c");
+  assert.equal(at("/lead/trail/"), "/h/.herdr/worktrees/app/lead-trail");
+});
+
+test("the session folder is ~/.herdr/investigations/<id>, and only an investigation's own id has one", () => {
+  assert.equal(sessionFolder("/home/me", "inv-x"), "/home/me/.herdr/investigations/inv-x");
+  assert.equal(sessionFolder("/home/me/", "inv-x"), "/home/me/.herdr/investigations/inv-x", "a trailing slash on home is no matter");
+  for (const bad of ["", "..", "../x", "inv-", "inv-x/..", "inv-x/sub", "inv-a/b", "inv-1/..", "other", "x", undefined]) assert.equal(sessionFolder("/home/me", bad), null, String(bad));
+  assert.equal(sessionFolder("", "inv-x"), null);
+  assert.equal(sessionFolder("/", "inv-x"), null);
 });

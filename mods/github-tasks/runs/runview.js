@@ -1,6 +1,6 @@
 // What the run page lists, from the core's terminals and `hc ls`. Pure: no Herdr imports, so node --test runs it.
 // A run's terminals carry the labels run.js gives them.
-import { RUN_LABEL as RUN, ROLE_LABEL as ROLE, NAME_LABEL as NAME, FINAL_LABEL as FINAL } from "./run.js";
+import { RUN_LABEL as RUN, ROLE_LABEL as ROLE, NAME_LABEL as NAME, FINAL_LABEL as FINAL } from "../lib/index.js";
 
 // terminals() gives the status as a word and the agent's report beside it; `hc` gives one object with both.
 const statusWord = (k) => (typeof k.status === "string" ? k.status : k.status?.state) ?? null;

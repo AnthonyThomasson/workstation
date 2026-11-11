@@ -3,19 +3,9 @@
 // so node --test runs it. Like a ticket run's spawn script (run.js), the script is the only way they start, so each gets its
 // role's agent, model, permissions and labels whatever the agent types. investigations.js writes the session folder (this
 // module says what is in it); investigation-agents.js lists the helpers on the session's page by the labels set here.
-import { groomArgv } from "../lib/index.js";
+import { groomArgv, FOLDER_LABEL, INVESTIGATION_LABEL, NAME_LABEL, ROLE_LABEL } from "../lib/index.js";
 import { CUSTOM } from "../workflow/index.js";
-import { FOLDER_LABEL, NAME_LABEL, ROLE_LABEL, agentArgv, readOnlyArgv, shQuote } from "../runs/index.js";
-
-export const INVESTIGATION_LABEL = "herdr.investigation"; // on the session's agent and on each of its helpers: the session's id
-
-// The session's folder, ~/.herdr/investigations/<id>/, which holds its spawn script and prompts: null unless the id is an
-// investigation's own (inv-<base 36>), so nothing outside ~/.herdr/investigations can ever be named. The one helper for the folder: the
-// start path writes it (and takes it back if the start fails) and Done removes it. `home` is passed in to keep this pure.
-export function sessionFolder(home, id) {
-  if (!/^inv-[a-z0-9]+$/.test(String(id ?? "")) || !String(home ?? "").replace(/\/+$/, "")) return null;
-  return `${String(home).replace(/\/+$/, "")}/.herdr/investigations/${id}`;
-}
+import { agentArgv, readOnlyArgv, shQuote } from "../runs/index.js";
 
 // What the New Task Orchestrator may run without asking, in Claude's terms: the spawn script and the hc commands it needs to hear from
 // its helpers and end them. Bare `hc run` is left out: it would run anything.
@@ -30,7 +20,7 @@ export function subAgentArgv(role, settings, known, dir) {
   return role === "investigator" ? readOnlyArgv(own, base, dir) : agentArgv("worker", own, base, dir);
 }
 
-// The New Task Orchestrator's command: the one New Task always opened (model.js groomArgv) and, when it is Claude and has a session folder,
+// The New Task Orchestrator's command: the one New Task always opened (lib/agent-settings.js groomArgv) and, when it is Claude and has a session folder,
 // the right to run that folder's spawn script and hc. Nothing else is restricted.
 export function newTaskAgentArgv(agent, groomer, dir) {
   const argv = groomArgv(agent.key, agent.run, groomer ?? {});

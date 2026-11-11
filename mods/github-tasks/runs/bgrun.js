@@ -20,13 +20,8 @@
 // An Investigation's agent (investigations.js) gets the same kind of host, labelled herdr.investigation.host=<id> instead (the
 // label is a parameter of the functions below; the default is a ticket run's), and there a host that
 // won't open fails the start (launchRun's hostRequired): the agent has no pane either, so it would never be listed.
-import { FOLDER_LABEL, HOST_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL, shQuote } from "./run.js";
-
-// Where the run's tab is saved (shared state, as herdr.tab labels are gone): { tab, left, space }.
-export const slotKey = (id) => `github-tasks.runtab.${id}`;
-
-// Where the run's host is saved (shared state): { tab, space, created } (created: Start made the space for it).
-export const hostKey = (id) => `github-tasks.host.${id}`;
+import { shQuote } from "./run.js";
+import { FOLDER_LABEL, HOST_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL } from "../lib/index.js";
 
 // The orchestrator's hc name: the run id and `-orch`, cut and cleaned to hc's rule (1-32 of a-z 0-9 - _), unique per run.
 const orchestratorName = (id) => `${String(id).toLowerCase().replace(/[^a-z0-9_-]/g, "-").slice(0, 27)}-orch`;

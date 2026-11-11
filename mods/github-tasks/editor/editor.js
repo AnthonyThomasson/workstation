@@ -7,7 +7,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, TextView } from "gpui-base";
 import { run, setShared, theme, closeOverlay } from "herdr";
-import { markdownLiteral, snapshot, isDirty, changes, pickableStatuses, panelSize, panelAppeared, closeStep, escStep, afterSave, PRESS_BUTTONS, wontDoFooter, wontDoPrompt, retryAfterSignIn } from "../lib/index.js";
+import { markdownLiteral, snapshot, isDirty, changes, pickableStatuses, panelSize, panelAppeared, closeStep, escStep, afterSave, PRESS_BUTTONS, wontDoFooter, wontDoPrompt, retryAfterSignIn, CHANGED } from "../lib/index.js";
 import { GitHubError, loadTask, loadStatusField, saveTask, markWontDo, loadLabels } from "../github/index.js";
 import { S, icon, stop, note, iconButton, action, gh, scrim } from "../widgets/index.js";
 import { Auth, REFRESH, LOGIN } from "../github-ui/index.js";
@@ -16,8 +16,6 @@ import { loadWorkflows } from "../workflow-ui/index.js";
 import { StartDialog } from "../runs/index.js";
 import { renderStartDialog, startChosen } from "../runs-ui/index.js";
 
-// Set to the time of each save, so the panel's list refreshes.
-export const CHANGED = "github-tasks.changed";
 
 const tabName = (ticket, title) => (ticket.draft ? title : `#${ticket.number} ${title}`);
 // Stops presses of every button (but `except`) on an element, so the popup's window isn't dragged by them.

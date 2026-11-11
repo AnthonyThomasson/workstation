@@ -2,35 +2,16 @@
 // start.js writes these out and opens the tab; the agents do the rest. The "run" role (run-page.js) shows them.
 
 import { slug } from "../workflow/index.js";
-import { ASK_WITH_TOOL } from "../lib/index.js";
+import { ASK_WITH_TOOL, FINAL_LABEL, FOLDER_LABEL, NAME_LABEL, ROLE_LABEL, RUN_LABEL } from "../lib/index.js";
 
 export const TOKEN_LIMIT = "120k";
 export const SKILL = "hc --skill"; // the manual for the desktop app's herdr-core; the `herdr` skill is the older CLI's
-
-// Labels on a run's terminals. runview.js reads the same ones.
-export const RUN_LABEL = "herdr.workflow.run"; // on every terminal of a run: its id
-export const TICKET_LABEL = "herdr.workflow.ticket"; // on the orchestrator: which ticket, so Start finds a run in progress
-export const FOLDER_LABEL = "herdr.workflow.folder"; // on every terminal: the folder it works in
-export const FINAL_LABEL = "herdr.workflow.final"; // "1" on the final reviewer, which reviews the whole ticket branch
-export const NAME_LABEL = "herdr.workflow.name"; // on a worker, reviewer or investigator: the name the orchestrator gave it
-export const HOST_LABEL = "herdr.workflow.host"; // on a run's host terminal (bgrun.js): the run id. Never RUN_LABEL: the host is not an agent of the run
-export const ROLE_LABEL = "herdr.role"; // orchestrator | worker | reviewer | investigator | host
 
 // "#12 Fix login!" -> workflow/12-fix-login. A draft has no number.
 export function branchName(ticket) {
   const name = slug(ticket?.title, 40) || "ticket";
   return ticket?.number ? `workflow/${ticket.number}-${name}` : `workflow/${name}`;
 }
-
-// Where Herdr's own worktree mod puts a branch: <home>/.herdr/worktrees/<repo>/<branch slug>, so Herdr nests the
-// ticket's space under the repo's. `repoRoot` is the main checkout (never a worktree), which names <repo>; the slug is
-// the mod's own (runs of anything but letters, digits, . _ - become one -, none at the ends), so "workflow/12-fix" is
-// "workflow-12-fix". The jobs' worktrees are this path plus `--<job>`. `home` is passed in to keep this pure.
-export const worktreePath = (repoRoot, branch, home) => {
-  const repo = repoRoot.replace(/\/+$/, "").split("/").pop();
-  const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return `${home.replace(/\/+$/, "")}/.herdr/worktrees/${repo}/${slug}`;
-};
 
 // Short, because it starts every terminal's name, which may only be 32 long.
 export const runId = (ticket, now = Date.now()) => `${ticket?.number ?? "draft"}-${now.toString(36)}`;

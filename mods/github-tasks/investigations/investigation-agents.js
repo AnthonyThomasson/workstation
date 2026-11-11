@@ -1,8 +1,8 @@
 // What an Investigation's page lists, from the core's terminals and `hc ls`: the session's investigators and prototype workers
 // (the labels investigations.js gives them: herdr.investigation=<id>, herdr.role=investigator|worker). Pure: no Herdr imports,
 // so node --test runs it. The same shape as runview.js's agentsFor for a run, kept apart from it.
-import { FOLDER_LABEL, NAME_LABEL, ROLE_LABEL, row, keep } from "../runs/index.js";
-import { INVESTIGATION_LABEL as SESSION } from "./investigation-spawn.js"; // pure, unlike investigations.js (which pulls in bgrun.js)
+import { row, keep } from "../runs/index.js";
+import { FOLDER_LABEL, INVESTIGATION_LABEL as SESSION, NAME_LABEL, ROLE_LABEL } from "../lib/index.js";
 const ROLES = ["investigator", "worker"];
 
 // Arguments of the two queries, in the order of `listed`: { investigator, worker }.

@@ -6,17 +6,11 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, notify, panes, run, setShared, shared, spaces, terminals, readTextFile, theme, writeTextFile } from "herdr";
-import { endRun, findHost, findTicketSpace, hostKey, mergeOutcome, peekSpace, restartOrchestrator, runTabParts, slotFromPage, slotKey, RUN_LABEL as RUN, out, agentsFor, liveOrchestratorFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel, branchArgs, canMerge, finalSeen, fixMessage, fixingDone, fixingNote, fixingStart, mergeFailure, mergeSteps, mergeView, mergeWait, movesTo, openPullRequest, optionFor, parsePr, parsePrState, prStateArgs, prViewArgs, restartTask, restoreFailure, restoreFixing, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "../runs/index.js";
+import { endRun, findHost, findTicketSpace, mergeOutcome, peekSpace, restartOrchestrator, runTabParts, slotFromPage, out, agentsFor, liveOrchestratorFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel, branchArgs, canMerge, finalSeen, fixMessage, fixingDone, fixingNote, fixingStart, mergeFailure, mergeSteps, mergeView, mergeWait, movesTo, openPullRequest, optionFor, parsePr, parsePrState, prStateArgs, prViewArgs, restartTask, restoreFailure, restoreFixing, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "../runs/index.js";
 import { openAgentPopup, S, app, icon, note, stop } from "../widgets/index.js";
+import { hostKey, slotKey, RUN_LABEL as RUN, autoPrKey, failureKey, finalKey, fixingKey, leadKey, prKey, runAgentsKey, stageKey } from "../lib/index.js";
+import { runDir, runPanePath } from "../workflow/index.js";
 
-const stageKey = (id) => `github-tasks.run.${id}.stage`;
-const prKey = (id) => `github-tasks.run.${id}.pr`;
-const finalKey = (id) => `github-tasks.run.${id}.final`; // the final reviewer has been seen: Merge waits for that
-const autoPrKey = (id) => `github-tasks.run.${id}.autopr`; // the page has tried to open the pull request by itself: it does that once per run
-const agentsKey = (id) => `github-tasks.run.${id}.agents`; // the workers, reviewers and investigators seen, so a reload still lists the finished ones
-const failureKey = (id) => `github-tasks.run.${id}.mergefailure`; // the red Merge button: { kind, label, error }
-const fixingKey = (id) => `github-tasks.run.${id}.fixing`; // the orchestrator is fixing it: { label, error, seenWorking, turn, busy }
-const leadKey = (id) => `github-tasks.run.${id}.orchestrator`; // the address of the orchestrator, when a new one was started for the run
 const POLL_MS = 30000;
 const GRACE_MS = 10000; // a just-started orchestrator may not be in the core's list yet: until then "not there" doesn't end the fixing state
 
@@ -46,7 +40,7 @@ export class RunPage {
     this.fixingAt = this.fixing ? Date.now() : 0; // when it was asked, in this page's life; a restored one counts from the load, as the core's list may still be empty
     this.note = null; // { text, detail }: Merged, but the run's space couldn't be closed (closeSession); not an error
     this.polling = false;
-    const saved = shared(agentsKey(this.id));
+    const saved = shared(runAgentsKey(this.id));
     this.saved = Array.isArray(saved) ? saved : []; // the rows kept from before (runview.js keep)
     this.listed = { worker: null, reviewer: null, final: null, investigator: null }; // the last answer of each `hc ls --all` query
     this.listing = false;
@@ -71,7 +65,7 @@ export class RunPage {
   // The agents now: the live terminals, the core's list and what was saved. What there is to keep is saved when it changed.
   agents(all) {
     const found = agentsFor({ id: this.id, terminals: all, listed: this.listed, saved: this.saved });
-    if (!sameKept(found.kept, this.saved)) { this.saved = found.kept; setShared(agentsKey(this.id), found.kept); }
+    if (!sameKept(found.kept, this.saved)) { this.saved = found.kept; setShared(runAgentsKey(this.id), found.kept); }
     return found;
   }
 
@@ -272,7 +266,7 @@ export class RunPage {
           if (sent.code !== 0) throw new Error(`Couldn't hand it to the Task Orchestrator: ${out(sent) || "hc send failed"}`);
           record = fixingStart({ failure, status: lead.status, turn: lead.turn });
         } else {
-          await this.restartLead(restartTask({ runDir: `${home()}/.herdr/workflow-runs/${this.id}`, ...input }));
+          await this.restartLead(restartTask({ runDir: runDir(home(), this.id), ...input }));
           record = fixingStart({ failure, turn: 0 }); // a new terminal counts its turns from 0; it may still report idle for a moment after its task was sent
         }
         this.fixingAt = Date.now();
@@ -293,7 +287,7 @@ export class RunPage {
 
   // pane.json is replaced with writeTextFile's compare-and-swap: it wants the text it replaces, so that is read first.
   async writePaneJson(props) {
-    const path = `${home()}/.herdr/workflow-runs/${this.id}/pane.json`;
+    const path = runPanePath(home(), this.id);
     const current = (await readTextFile(path).catch(() => null)) ?? null;
     await writeTextFile(path, JSON.stringify(props), current);
   }
@@ -353,7 +347,7 @@ export class RunPage {
         if (found.state !== this.pr.state) { this.pr = found; setShared(prKey(this.id), found); }
         const { warnings } = await runSteps(mergeSteps({
           repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, number: found.number, prMerged: found.state === "MERGED", headOid: found.headOid,
-          status: await this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
+          status: await this.doneStatus(), runDir: runDir(home(), this.id), workDirExists, branchExists,
         }), exec);
         for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
         if (!(await this.closeSession(ticketSpace))) { this.busy = null; cx.notify(); } // the page is still there: say what is left to do

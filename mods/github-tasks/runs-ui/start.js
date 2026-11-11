@@ -5,9 +5,10 @@
 // the run page (run-page.js), the list of its agents, on the right. Merge closes that space again. From there the
 // orchestrator runs the ticket itself (run.js says how).
 import { exec, focused, hc, home, knownAgents, notify, panes, readTextFile, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
-import { connectRun, endHost, findHost, guarded, hostKey, hostTabName, launchRun, openHost, reapplyRuns, runTabParts, slotKey, undoRunTab, viewConnect, viewQuick, viewTarget, mainCheckout, prepareWorktree, out, agentArgv, branchName, FOLDER_LABEL, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, soloPrompt, workerPrompt, worktreePath } from "../runs/index.js";
+import { connectRun, endHost, findHost, guarded, hostTabName, launchRun, openHost, reapplyRuns, runTabParts, undoRunTab, viewConnect, viewQuick, viewTarget, mainCheckout, prepareWorktree, out, agentArgv, branchName, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, runId, spawnScript, ticketFile, ticketKey, ticketName, soloPrompt, workerPrompt } from "../runs/index.js";
 import { app } from "../widgets/index.js";
-import { blank, ROLES, isEasy } from "../workflow/index.js";
+import { blank, ROLES, isEasy, worktreePath, runDir as runDirFor, runPanePath } from "../workflow/index.js";
+import { hostKey, slotKey, FOLDER_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL } from "../lib/index.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 
@@ -54,7 +55,7 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
       role: "run", id, orchestrator: running.address, title: name, workflow: "", branch: branchName(ticket), folder: folder ?? "",
       ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null, status: ticket?.status ?? null }, projectId: project?.id ?? null,
     };
-    const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
+    const saved = await readTextFile(runPanePath(home(), id)).catch(() => null);
     const props = reopenProps(saved, partial, running.address);
     const workDir = folder ?? props.folder;
     const view = () => ({ slot: shared(slotKey(id)), spaces: spaces(), panes: panes(), name, folder: workDir, repoRoot: props.repoRoot, orchestrators: [running.address, props.orchestrator], terminals: terminals() });
@@ -145,7 +146,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
 
   const solo = isEasy(ticket); // the easy label: the worker does the whole ticket alone, in the orchestrator's place
   const id = runId(ticket);
-  const runDir = `${home()}/.herdr/workflow-runs/${id}`;
+  const runDir = runDirFor(home(), id);
   const argv = await resolveAgents(workflow, runDir); // before the worktree: this fails without changing anything
   const branch = branchName(ticket);
   const workDir = await prepareWorktree(git, repoRoot, branch, worktreePath(repoRoot, branch, home()));
@@ -166,7 +167,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   const space = viewTarget({ spaces: spaces(), panes: panes(), folder: workDir, repoRoot });
   let created = null; // the space this Start made
   const launched = await guarded(connecting, id, () => launchRun({
-    hc, writePaneJson: (p) => writeTextFile(`${runDir}/pane.json`, JSON.stringify(p), null),
+    hc, writePaneJson: (p) => writeTextFile(runPanePath(home(), id), JSON.stringify(p), null),
     connect: async (p) => { const slot = await connect({ id, orchestrator: p.orchestrator, title: p.title, space, folder: workDir, props: p }, cx); created = slot.created ? slot.space : null; return slot; },
     closeTab: () => { undoRunTab({ created, part: runTabOf(id), run: (n, a) => run(n, a) }); created = null; setShared(slotKey(id), null); },
     // The run's host (bgrun.js): the orchestrator's parent, so the Agents panel lists the run's agents. Ended again when the start fails.
