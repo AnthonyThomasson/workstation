@@ -374,7 +374,7 @@ export default class GitHubTasks extends View {
     return Object.fromEntries(Object.entries(lists).map(([section, items]) => [section, projectOrdered(section) ? items : bellFirst(items, (item) => waiting.get(this.rowId(section, item)).length > 0)]));
   }
 
-  // What a row that needs the person gets: the bell, which opens the waiting agent's popup (the rest of the row keeps its click), and
+  // What a row that needs the person gets: the bell in place of its dot, which opens the waiting agent's popup (so does a click anywhere on the row), and
   // for a moment after it started needing them a shake. The row is pushed aside, and `BACK_AFTER` (140ms) later let go with a spring that
   // overshoots, so it swings back and forth and settles: native (spring), with no timer drawing it; the one timer here only draws the
   // frame where it is let go.
@@ -387,9 +387,17 @@ export default class GitHubTasks extends View {
       this.cx.timer.after(release + 30, () => { this.releasing.delete(id); this.cx.notify(); });
     }
     const color = agents[0].status === "error" ? t.ansi1 : t.blocked;
+    // The bell takes the place of the row's dot and rings (rocks from side to side) for as long as someone waits. GPUI can't rotate an
+    // element, so it is two copies of the bell tilted each way (icons/bell-left.svg, bell-right.svg, swung about the top), stacked, with
+    // native opacity loops in opposite phase: one fades in as the other fades out, and ease-in-out keeps each crisp at its end.
+    const swing = (side, from, to) => icon(`bell-${side}`, 15, color).absolute().top(0).left(0).loop("opacity", { from, to, period: 360 });
+    const glyph = div().relative().size(15).child(swing("left", 1, 0)).child(swing("right", 0, 1));
+    const open = () => openAgentPopup(agents[0].address);
     return {
+      open, tip: bellTip(agents), // the whole row's click and tooltip do the same while the bell shows
       shake: (el) => el.relative().left(phase === "out" ? 10 : 0).spring("left", { response: 260, damping: 0.22 }),
-      button: iconButton(`bell-${id}`, "bell", t, () => openAgentPopup(agents[0].address), false, bellTip(agents), color),
+      lead: h_flex().id(`bell-${id}`).w(16).h(20).flex_none().justify_center().items_center().rounded(4).cursor_pointer().hover((s) => s.bg(t.hover))
+        .tooltip(bellTip(agents)).on_mouse_down("left", stop).on_click(open).child(glyph),
     };
   }
 
@@ -399,18 +407,18 @@ export default class GitHubTasks extends View {
     return investigationsHere({ repoRoot: this.place?.remote ? null : this.place?.mainRoot ?? null, repo: this.repo });
   }
 
-  // One session on one line: a dot in its agent's status colour (grey once it has ended) and its first line, cut to fit. A click
+  // One session on one line: a dot in its agent's status colour (grey once it has ended; the wiggling bell while one needs the person) and its first line, cut to fit. A click
   // switches to its space and tab (viewInvestigation), reopening them if they were closed.
   investigationRowView(t, entry) {
     const view = investigationRow(entry);
     const color = statusColor(view.status, t), bell = this.bellFor(t, `investigation-${entry.id}`);
     return h_flex().id(`investigation-${entry.id}`).flex_none().mx(8).mb(1).px(6).h(28).gap(8).items_center().rounded(6)
       .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop)
-      .tooltip(`${view.text}: ${statusLabel(view.status)}. ${view.tip}`)
-      .on_click((_e, cx) => cx.spawn(async (cx) => { await viewInvestigation(entry, cx); }))
-      .child(div().w(8).h(8).flex_none().rounded_full().bg(color))
-      .child(div().flex_1().min_w(0).truncate().text_size(S().body).text_color(view.ended ? t.muted : t.foreground).child(view.text))
-      .when(Boolean(bell), (el) => bell.shake(el).child(bell.button));
+      .tooltip(bell ? `${view.text}\n${bell.tip}` : `${view.text}: ${statusLabel(view.status)}. ${view.tip}`)
+      .on_click((_e, cx) => (bell ? bell.open() : cx.spawn(async (cx) => { await viewInvestigation(entry, cx); })))
+      .when(Boolean(bell), (el) => bell.shake(el).child(bell.lead))
+      .when(!bell, (el) => el.child(div().w(8).h(8).flex_none().rounded_full().bg(color)))
+      .child(div().flex_1().min_w(0).truncate().text_size(S().body).text_color(view.ended ? t.muted : t.foreground).child(view.text));
   }
 
   // The repo has no project: say so, and offer to make one linked to it.
@@ -590,28 +598,27 @@ export default class GitHubTasks extends View {
     });
   }
 
-  // One ticket on one line: a dot for its stage, its name with the middle cut out to fit, a link to GitHub, and
+  // One ticket on one line: a dot for its stage (the wiggling bell instead while an agent of its run needs the person), its name with the middle cut out to fit, a link to GitHub, and
   // Start (View while its workflow runs).
   row(t, ticket, color, section) {
     const running = liveRunFor(this.repo, ticket), busy = this.starting.has(ticket.key), bell = this.bellFor(t, this.rowId("ticket", ticket));
     const width = find(layout(), COLUMN)?.size?.px ?? 268;
-    const room = width - 16 - 12 - 8 - 16 - (ticket.url ? 28 : 0) - 28 - (bell ? 28 : 0); // what the name has left, in px
+    const room = width - 16 - 12 - (bell ? 16 : 8) - 16 - (ticket.url ? 28 : 0) - 28; // what the name has left, in px (the bell, when shown, is in the dot's place)
     const max = Math.max(12, Math.floor(room / (S().body * 0.55)));
     const draggable = projectOrdered(section), landing = this.drag !== null && draggable && this.drag !== ticket.key; // not the dragged row itself
     return h_flex().id(`ticket-${ticket.key}`).flex_none().mx(8).mb(1).px(6).h(28).gap(8).items_center().rounded(6)
       .cursor_pointer().hover((s) => (landing ? s.bg(t.hover).border_color(t.accent) : s.bg(t.hover)))
-      .on_click((_e, cx) => this.openTicket(ticket, cx))
-      .tooltip(ticket.title)
+      .on_click((_e, cx) => (bell ? bell.open() : this.openTicket(ticket, cx)))
+      .tooltip(bell ? `${ticket.title}\n${bell.tip}` : ticket.title)
       // A press on an Up Next / Backlog row starts a drag; releasing on the same row is still a click (opens the editor), on another
       // Up Next / Backlog row drops above it. While dragging the row under the pointer shows its landing edge (an accent line on top).
       .on_mouse_down("left", draggable ? (_e, cx) => { cx.stop_propagation(); this.drag = ticket.key; cx.notify(); } : stop)
       .when(draggable, (el) => el.on_mouse_up("left", (_e, cx) => this.drop({ kind: "row", key: ticket.key }, cx)))
       .when(draggable, (el) => el.border_t(2).border_color(IDLE)) // always there, so a press never moves a row
       .when(this.drag === ticket.key, (el) => el.opacity(0.4))
-      .when(Boolean(bell), (el) => bell.shake(el))
-      .child(div().w(8).h(8).flex_none().rounded_full().when(ticket.draft, (el) => el.border(1.5).border_color(color)).when(!ticket.draft, (el) => el.bg(color)))
+      .when(Boolean(bell), (el) => bell.shake(el).child(bell.lead))
+      .when(!bell, (el) => el.child(div().w(8).h(8).flex_none().rounded_full().when(ticket.draft, (el) => el.border(1.5).border_color(color)).when(!ticket.draft, (el) => el.bg(color))))
       .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(ticket.title, max)))
-      .when(Boolean(bell), (el) => el.child(bell.button))
       .when(Boolean(ticket.url), (el) => el.child(iconButton(`open-${ticket.key}`, "external", t, (_e, cx) => cx.open_url(ticket.url), false, "Open on GitHub")))
       .when(Boolean(running), (el) => el.child(iconButton(`view-${ticket.key}`, "eye", t, (_e, cx) => cx.spawn(async (cx) => { await viewRun(running, cx, { ticket, repo: this.repo, project: this.project }); }), false, "View the running agent")))
       .when(!running, (el) => el.child(iconButton(`start-${ticket.key}`, busy ? "ring" : "play", t, (_e, cx) => this.startTicket(ticket, cx), busy, "Start")));
