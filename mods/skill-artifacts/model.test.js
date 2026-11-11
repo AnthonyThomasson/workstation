@@ -90,7 +90,7 @@ test("project folders: the folder, what is inside it, its worktrees and the proj
   assert.equal(matchProject(dir(`${HOME}/.herdr/worktrees/ws/wf-2`), [wt], HOME), "wf-2");
   assert.equal(matchProject(dir(wt), [wt], HOME), "wf-1");
   // the project around a subfolder
-  assert.equal(matchProject(dir(main), [`${main}/mods/sync`], HOME), "ws");
+  assert.equal(matchProject(dir(main), [`${main}/src/lib`], HOME), "ws");
   // other projects, the home folder and what is above it do not match
   assert.equal(matchProject(dir(`${HOME}/code/other`), [main], HOME), null);
   assert.equal(matchProject(dir(HOME), [`${main}/mods`], HOME), null);
@@ -104,7 +104,7 @@ test("project folders: the folder, what is inside it, its worktrees and the proj
 test("a run belongs to the project of its worktree, its repo or a sibling worktree", () => {
   const run = { folder: `${HOME}/.herdr/worktrees/ws/wf-80`, repoRoot: `${HOME}/code/ws` };
   assert.equal(runMatches(run, [`${HOME}/code/ws`], HOME), true); // the main checkout
-  assert.equal(runMatches(run, [`${HOME}/code/ws/mods/sync`], HOME), true); // inside it
+  assert.equal(runMatches(run, [`${HOME}/code/ws/src/lib`], HOME), true); // inside it
   assert.equal(runMatches(run, [`${HOME}/.herdr/worktrees/ws/wf-80`], HOME), true); // the run's worktree
   assert.equal(runMatches(run, [`${HOME}/.herdr/worktrees/ws/wf-80--job`], HOME), true); // a sibling worktree
   assert.equal(runMatches(run, [`${HOME}/.herdr/worktrees/ws/wf-80/mods`], HOME), true);

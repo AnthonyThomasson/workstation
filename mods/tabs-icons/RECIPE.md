@@ -15,7 +15,7 @@ Tabs Icons is a Herdr tab bar with program icons, agent status, draggable pills,
 
 - The mod chooses a tab's first agent program icon, falling back to its first pane's program. A generated name matching `tb<number>` displays that program's name (or `Terminal`); a manually assigned tab name stays unchanged.
 - Working status spins once every 900ms using `theme().working`; blocked and done dots use their matching theme colors; idle and unreported statuses add no status marker.
-- Click a tab to select it. Double-click its label to run `tab.rename`. Press one tab and release over another to move it to that position. Right-click opens the built-in `menu` popup for that tab and space. Vertical wheel scrolling over the tab row runs `tab.prev` or `tab.next`. The active tab's close icon runs `tab.close` without also selecting the tab.
+- Click a tab to select it. Double-click its label to run `tab.rename`. Press one tab and release over another to move it to that position. Right-click opens the `menu` popup ([`mods/menu`](../menu/RECIPE.md), this repo's own copy) for that tab and space. Vertical wheel scrolling over the tab row runs `tab.prev` or `tab.next`. The active tab's close icon runs `tab.close` without also selecting the tab.
 - **+** opens the built-in `new-menu` popup at 250×512. Each Files or Changes button selects its child in `panel-body` and shows `panel`, or hides the panel if already selected.
 - The mod remembers the selected open side panel per space in its own `localStorage` under `panels`. Switching spaces restores that space's enabled panel, or closes it; a panel outside `workspace.panels` is not restored. A one-second pending window prevents the restore from being saved over before it lands.
 - Mouse-down stops propagation on pills and controls so they do not start a window drag. The horizontal tab list uses `overflow_x_scrollbar`.
@@ -73,7 +73,7 @@ Tabs Icons is a Herdr tab bar with program icons, agent status, draggable pills,
 
 ## Watch out
 
-- The host layout must explicitly place the mod because `place` is `none`. It additionally needs built-in `menu`, `new-menu`, `workspace-chrome`, `pane`, `files` and `changes` for the popups and shipped assets named above.
+- The host layout must explicitly place the mod because `place` is `none`. It additionally needs the repo's own `menu` mod (`mods/menu`) and the built-in `new-menu`, `workspace-chrome`, `pane`, `files` and `changes` for the popups and shipped assets named above.
 - The Files/Changes toggles and per-space memory depend on the exact ids `panel` and `panel-body`, and child ids `files` and `changes`. Changing them requires changing the mod too. Other custom toggles in Tony follow the same host-panel convention.
 - The mod runs no external programs, reads no files outside Herdr's mod state and makes no network requests.
 - Renaming `tabs-icons` requires changing the layout reference and its four `mods/tabs-icons/win-*.svg` paths.
