@@ -46,11 +46,14 @@ export const LAYOUT = {
     ["editor", "doctor"],
     ["investigations"],
     ["runs"],
+    ["workflow-ui"],
+    ["github-ui"],
+    ["widgets"],
     ["workflow"],
     ["github"],
     ["lib"],
   ],
-  pure: [],
+  pure: ["lib", "github", "workflow"],
 };
 // What a pure folder may not import.
 const HOST_MODULES = ["herdr", "gpui-kit", "gpui-base"];
