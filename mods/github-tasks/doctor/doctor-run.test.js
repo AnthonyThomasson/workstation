@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { gather, check, Doctor, TIMEOUT } from "./doctor-run.js";
 import { DOCTOR_KEY } from "./doctor.js";
-import { PLACE, WORKFLOWS_CHANGED, STATUSES } from "./lib/index.js";
+import { PLACE, WORKFLOWS_CHANGED, STATUSES } from "../lib/index.js";
 
 const PROJECT = { id: "P1", title: "app", url: "https://github.com/users/me/projects/3", closed: false };
 const OK_AUTH = { code: 0, stdout: "  ✓ Logged in to github.com account me\n  - Active account: true\n  - Token scopes: 'repo', 'project'\n", stderr: "" };

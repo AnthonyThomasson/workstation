@@ -1,11 +1,11 @@
 // Tasks: the tickets on the GitHub Project linked to the selected space's repo, in the left menu under
 // Spaces: Investigations, Up Next, In Progress, In Review and Backlog (collapsed). Clicking a ticket
-// opens it in a large popup to edit (editor.js, popup.js), and saving pushes the change to GitHub. Each row links
+// opens it in a large popup to edit (editor/editor.js, lib/popup.js), and saving pushes the change to GitHub. Each row links
 // out to GitHub and has Start, which becomes View while its workflow runs. With "taskSource": "local" in the repo's
 // .herdr/tasks/tasks.json the list is the YAML task files instead (local-tasks.js, local-ui.js), read again every 3 seconds.
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
 // workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket, in a popup (props.popup)
-// opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow or refactor type (props.kind) in the center (workflow-editor.js); "run", a started
+// opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow or refactor type (props.kind) in the center (workflow-ui/workflow-editor.js); "run", a started
 // workflow's agents, beside its orchestrator (run-page.js); "investigation", a New Task session's Done button, beside its agent (investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js); "agent-bar", the bar over a peeked agent's terminal in its popup (agent-bar.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -15,17 +15,15 @@ import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItem
 import { installedAgents, investigationsHere, reconnectInvestigations, viewInvestigation, InvestigationPage, NewTaskPage, RefactorPage } from "./investigations-ui/index.js";
 import { S, icon, stop, note, iconButton, action, gh, later, AgentBar } from "./widgets/index.js";
 import { Auth, REFRESH, LOGIN } from "./github-ui/index.js";
-import { TaskEditor, CHANGED } from "./editor.js";
-import { LocalTaskEditor } from "./local-editor.js";
+import { TaskEditor, LocalTaskEditor, CHANGED } from "./editor/index.js";
 import { localTasks, readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen } from "./runs-ui/index.js";
 import { localStages, rowLabel, LOCAL_ONLY_HERE, statusColor, statusLabel, cantStartHere, startOverlay, startProps } from "./runs/index.js";
-import { TaskSettings } from "./settings.js";
+import { TaskSettings } from "./settings/index.js";
 import { matchWorkflows, REFACTOR } from "./workflow/index.js";
 import { WorkflowEditor, WorkflowList, loadWorkflows } from "./workflow-ui/index.js";
 import { PromptPage } from "./prompts-page.js";
 import { investigationRow, refactorOverlay, TOOLTIP as REFACTOR_TIP, AGENT_KEY, newTaskOverlay, newTaskProps, chooseAgent } from "./investigations/index.js";
-import { startDoctor } from "./doctor-env.js";
-import { DOCTOR_KEY, doctorFor } from "./doctor.js";
+import { startDoctor, DOCTOR_KEY, doctorFor } from "./doctor/index.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;

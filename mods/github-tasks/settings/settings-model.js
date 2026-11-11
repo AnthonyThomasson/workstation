@@ -1,7 +1,7 @@
 // Pure state and prompt selection for the Task settings sections and their read-only prompt tabs.
-import { newTaskPrompt, refactorPrompt, spelled, STATUSES } from "./lib/index.js";
-import { localNewTaskPrompt, localRefactorPrompt, orchestratorPrompt, workerPrompt, reviewerPrompt, investigatorPrompt } from "./runs/index.js";
-import { newTaskInvestigatorPrompt, newTaskWorkerPrompt } from "./investigations/index.js";
+import { newTaskPrompt, refactorPrompt, spelled, STATUSES } from "../lib/index.js";
+import { localNewTaskPrompt, localRefactorPrompt, orchestratorPrompt, workerPrompt, reviewerPrompt, investigatorPrompt } from "../runs/index.js";
+import { newTaskInvestigatorPrompt, newTaskWorkerPrompt } from "../investigations/index.js";
 
 // The agent sections of Task settings, grouped by who starts them. Entries don't repeat their group's word, so the Task
 // Orchestrator is "Task" under Orchestrators. `role` names the entry's state, its prompt tab and promptForRole; `note` is the one
@@ -78,9 +78,3 @@ const SAMPLE = {
   repo: "<owner/repo>", runDir: "<run folder>", workDir: "<ticket worktree>", repoRoot: "<main checkout>", branch: "<branch>",
 };
 const clean = (text) => text.replace(/#0 <ticket title>/g, "<ticket>");
-
-// Placeholders are text, not HTML. Inline code and fenced blocks stay as they are so their Markdown still works.
-export function markdownLiteral(text) {
-  return String(text ?? "").split(/(```[\s\S]*?(?:```|$)|`[^`\n]*`)/)
-    .map((part, i) => (i % 2 ? part : part.replace(/</g, "\\<").replace(/&(?=#?\w+;)/g, "\\&"))).join("");
-}

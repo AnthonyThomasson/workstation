@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { diagnose, fixPrompt, parseAuthStatus, doctorSignature, samePlace, doctorFor } from "./doctor.js";
-import { STATUSES, REFRESH, LOGIN } from "./lib/index.js";
+import { STATUSES, REFRESH, LOGIN } from "../lib/index.js";
 
 const PROJECT = { id: "P1", title: "app", url: "https://github.com/users/me/projects/3" };
 const ALL = Object.values(STATUSES).map((name) => ({ name }));

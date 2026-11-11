@@ -5,11 +5,11 @@
 import { div } from "gpui-kit";
 import { h_flex, InputState, Input } from "gpui-base";
 import { run, setShared } from "herdr";
-import { snapshot, STATUSES } from "./lib/index.js";
+import { snapshot, STATUSES } from "../lib/index.js";
 import { TaskEditor, CHANGED } from "./editor.js";
-import { localTasks } from "./runs-ui/index.js";
-import { LOCAL_STATUS_OPTIONS, typedLabels } from "./runs/index.js";
-import { S, icon, stop, note } from "./widgets/index.js";
+import { localTasks } from "../runs-ui/index.js";
+import { LOCAL_STATUS_OPTIONS, typedLabels } from "../runs/index.js";
+import { S, icon, stop, note } from "../widgets/index.js";
 
 const tabName = (ticket, title) => `#${ticket.number} ${title}`;
 

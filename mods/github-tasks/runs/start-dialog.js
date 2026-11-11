@@ -1,6 +1,6 @@
 // The Start dialog: the pure side of it. It lists the workflows a ticket's saved labels trigger to choose from, or says why there is
 // none, and starts the one chosen. Two places show it, both drawn by start-dialog-view.js: over the ticket editor (the editor's Start
-// button, editor.js) and as an overlay of its own over the workspace (a row's Start with several or no matching workflows, main.js).
+// button, editor/editor.js) and as an overlay of its own over the workspace (a row's Start with several or no matching workflows, main.js).
 // This file holds the state, what closes it, and the texts and layout; the view draws them.
 
 export const WIDTH = 560;

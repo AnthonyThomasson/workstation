@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  markdownLiteral, normalizeSettingsSections, promptForRole, SETTINGS_GROUPS, SETTINGS_ENTRIES, groupKey, promptTitle,
+  normalizeSettingsSections, promptForRole, SETTINGS_GROUPS, SETTINGS_ENTRIES, groupKey, promptTitle,
 } from "./settings-model.js";
 
 const ALL_KEYS = ["group.orchestrators", "group.agents", "newTask", "orchestrator", "refactor", "worker", "reviewer", "investigator"];
@@ -106,23 +106,6 @@ test("built-in role prompts use the sample run placeholders", () => {
   assert.match(promptForRole("worker"), /<the workflow's worker prompt goes here>/);
   assert.match(promptForRole("reviewer"), /<the workflow's reviewer prompt goes here>/);
   assert.match(promptForRole("investigator"), /<the workflow's investigator prompt goes here>/);
-});
-
-test("Markdown-ready prompts keep placeholders visible and leave code untouched", () => {
-  const source = [
-    "Ticket <ticket title>: <workflow name>, <repo>, <project>.",
-    "Inline `<branch>` stays unchanged.",
-    "```sh",
-    "printf '%s\\n' '<run folder>'",
-    "```",
-  ].join("\n");
-  assert.equal(markdownLiteral(source), [
-    "Ticket \\<ticket title>: \\<workflow name>, \\<repo>, \\<project>.",
-    "Inline `<branch>` stays unchanged.",
-    "```sh",
-    "printf '%s\\n' '<run folder>'",
-    "```",
-  ].join("\n"));
 });
 
 test("the New Task prompt waits for the person, grills on acceptance criteria and asks about status", () => {

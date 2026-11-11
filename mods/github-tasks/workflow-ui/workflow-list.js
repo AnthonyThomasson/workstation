@@ -1,7 +1,7 @@
 // The workflows, or the refactor types (kind, see kinds.js), listed in the Task settings page: where they are kept
 // (Global, and the selected space's repo when it is a local git repo), a New button, and a row for each, which opens
 // in a tab of its own to edit (workflow-editor.js). One class serves both kinds. Not a View of its own: main.js builds
-// one per kind for the settings role and settings.js draws them.
+// one per kind for the settings role and settings/settings.js draws them.
 // Works with no linked project: it needs only the folder of the selected space, which the sidebar publishes.
 import { div } from "gpui-kit";
 import { v_flex, h_flex, Popover } from "gpui-base";

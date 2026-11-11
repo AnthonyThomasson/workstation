@@ -6,16 +6,16 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Popover, TextView } from "gpui-base";
 import { home, run, shared, setShared, theme } from "herdr";
-import { normalizeGroomer, normalizeSubAgent, GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, EFFORTS, PLACE, TASK_SOURCE } from "./lib/index.js";
-import { CHANGED } from "./editor.js";
-import { CLAUDE_MODELS } from "./workflow/index.js";
-import { installedAgents } from "./investigations-ui/index.js";
-import { loadStatusField } from "./github/index.js";
-import { normalizeSettingsSections, markdownLiteral, SETTINGS_GROUPS, groupKey, promptTitle } from "./settings-model.js";
-import { DOCTOR_KEY, fixPrompt, doctorFor } from "./doctor.js";
-import { statusDir, sourceFor, sourceToggle } from "./runs/index.js";
-import { tasksConfig } from "./runs-ui/index.js";
-import { S, stop, note, icon, iconButton, action, gh } from "./widgets/index.js";
+import { markdownLiteral, normalizeGroomer, normalizeSubAgent, GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, EFFORTS, PLACE, TASK_SOURCE } from "../lib/index.js";
+import { CHANGED } from "../editor/index.js";
+import { CLAUDE_MODELS } from "../workflow/index.js";
+import { installedAgents } from "../investigations-ui/index.js";
+import { loadStatusField } from "../github/index.js";
+import { normalizeSettingsSections, SETTINGS_GROUPS, groupKey, promptTitle } from "./settings-model.js";
+import { DOCTOR_KEY, fixPrompt, doctorFor } from "../doctor/index.js";
+import { statusDir, sourceFor, sourceToggle } from "../runs/index.js";
+import { tasksConfig } from "../runs-ui/index.js";
+import { S, stop, note, icon, iconButton, action, gh } from "../widgets/index.js";
 
 const SECTIONS_KEY = "github-tasks.settingsSections";
 // The helpers the New Task Orchestrator may start (investigation-spawn.js), each with agent, model and effort of its own and a prompt tab.

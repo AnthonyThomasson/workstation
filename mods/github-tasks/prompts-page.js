@@ -4,7 +4,8 @@
 import { div } from "gpui-kit";
 import { v_flex, TextView } from "gpui-base";
 import { theme } from "herdr";
-import { markdownLiteral, promptForRole, promptTitle } from "./settings-model.js";
+import { markdownLiteral } from "./lib/index.js";
+import { promptForRole, promptTitle } from "./settings/index.js";
 import { S, note } from "./widgets/index.js";
 
 const PAGES = [
