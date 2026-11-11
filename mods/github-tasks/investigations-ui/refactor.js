@@ -8,7 +8,7 @@ import { REFACTOR } from "../workflow/index.js";
 import { store, repoRootOf } from "../workflow-ui/index.js";
 import { startTask, stopPresses } from "./new-task.js";
 import { S, stop, action, note } from "../widgets/index.js";
-import { EMPTY_TEXT, refactorDialogENTER_HINT as ENTER_HINT, FOCUS_HEIGHT, FOCUS_LABEL, FOCUS_PLACEHOLDER, RefactorDialog, SUBTITLE, refactorDialogTITLE as TITLE, refactorDialogEnterStep as enterStep, focusRows, refactorDialogPanelWidth as panelWidth, pickKey, pickValue, typeRows } from "../investigations/index.js";
+import { EMPTY_TEXT, FOCUS_HEIGHT, FOCUS_LABEL, FOCUS_PLACEHOLDER, RefactorDialog, SUBTITLE, refactorDialogTITLE as TITLE, refactorDialogEnterStep as enterStep, focusRows, refactorDialogPanelWidth as panelWidth, pickKey, pickValue, typeRows } from "../investigations/index.js";
 
 const baseName = (path) => String(path ?? "").split("/").filter(Boolean).pop() ?? "";
 
@@ -30,6 +30,8 @@ export class RefactorPage {
     this.input = TextareaState.new({ value: "", rows: focusRows(S().body), placeholder: FOCUS_PLACEHOLDER });
     this.dialog = new RefactorDialog(() => {});
     this.input.on("change", (_e, cx) => { this.dialog.setFocus(this.input.value()); cx.notify(); });
+    // If the text box reports a plain Enter itself (a submit event) before the panel's key handler sees it, that starts the refactor too.
+    this.input.on("submit", (ev, cx) => { if (!ev?.shift && !ev?.secondary) this.start(cx); });
     this.window = null;
     cx.timer.after(50, () => this.input.focus?.()); // a window doesn't take the keyboard when it opens
     cx.spawn(async (cx) => {
@@ -64,7 +66,8 @@ export class RefactorPage {
   onKey(e, cx) {
     if (e.key === "escape") { this.close(); cx.stop_propagation(); return; }
     const m = e.modifiers ?? {};
-    if (e.key !== "enter" || m.control || m.alt || m.platform) return;
+    const key = String(e.key ?? "").toLowerCase();
+    if ((key !== "enter" && key !== "return") || m.control || m.alt || m.platform) return;
     const step = enterStep({ starting: this.dialog.starting, canStart: this.dialog.canStart(), shift: Boolean(m.shift) });
     if (step === "newline") return;
     cx.stop_propagation();
@@ -110,7 +113,7 @@ export class RefactorPage {
           .child(Textarea.new(this.input).size_full().text_size(S().body).text_color(t.foreground))))
       .when(Boolean(d.error), (el) => el.child(div().id("refactor-error").flex_none().text_size(S().secondary).text_color(t.blocked).child(`! ${d.error}`)))
       .child(h_flex().gap(8).items_center()
-        .child(div().id("refactor-hint").flex_1().min_w(0).truncate().text_size(S().label).text_color(t.muted).child(ENTER_HINT))
+        .child(div().flex_1().min_w(0))
         .child(action("refactor-cancel", "Cancel", t, () => this.close(), true, d.starting))
         .child(action("refactor-start", d.starting ? "Starting…" : "Start", t, (_e, cx) => this.start(cx), false, !d.canStart())));
     return stopPresses(backdrop, "left").when(Boolean(width), (el) => el.child(stopPresses(panel)));

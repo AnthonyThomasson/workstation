@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { EMPTY_TEXT, ENTER_HINT, FOCUS_HEIGHT, FOCUS_LABEL, FOCUS_PLACEHOLDER, PICK_PREFIX, RefactorDialog, SUBTITLE, TITLE, TOOLTIP, enterStep, focusRows, initialPick, pickKey, pickValue, refactorOverlay, typeKey, typeRows } from "./refactor-dialog.js";
+import { EMPTY_TEXT, FOCUS_HEIGHT, FOCUS_LABEL, FOCUS_PLACEHOLDER, PICK_PREFIX, RefactorDialog, SUBTITLE, TITLE, TOOLTIP, enterStep, focusRows, initialPick, pickKey, pickValue, refactorOverlay, typeKey, typeRows } from "./refactor-dialog.js";
 import { blankRefactor as blank } from "../workflow/index.js";
 
 const make = (id, name, scope = "global", over = {}) => {
@@ -13,7 +13,6 @@ test("the dialog says what the mock-up says", () => {
   assert.equal(SUBTITLE, "Pick a refactor type to investigate");
   assert.equal(FOCUS_LABEL, "Focus (optional)");
   assert.equal(FOCUS_PLACEHOLDER, "e.g. only mods/github-tasks");
-  assert.equal(ENTER_HINT, "Enter to start");
   assert.equal(EMPTY_TEXT, "No refactor types yet. Add one under Refactors in Task settings.");
   assert.equal(TOOLTIP, "Start a refactor investigation");
 });

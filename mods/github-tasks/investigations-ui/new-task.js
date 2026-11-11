@@ -7,7 +7,7 @@ import { shared, theme, closeOverlay } from "herdr";
 import { GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, STATUSES, normalizeGroomer, normalizeSubAgent, spelled, PRESS_BUTTONS } from "../lib/index.js";
 import { loadStatusField } from "../github/index.js";
 import { installedAgents, startNewTask, startLocalNewTask } from "./groom.js";
-import { AGENT_KEY, newTaskDialogENTER_HINT as ENTER_HINT, NewTaskDialog, PROMPT, newTaskDialogTITLE as TITLE, chooseAgent, boxRows, newTaskDialogEnterStep as enterStep, newTaskDialogPanelWidth as panelWidth } from "../investigations/index.js";
+import { AGENT_KEY, NewTaskDialog, PROMPT, newTaskDialogTITLE as TITLE, chooseAgent, boxRows, newTaskDialogEnterStep as enterStep, newTaskDialogPanelWidth as panelWidth } from "../investigations/index.js";
 import { S, stop, action, gh } from "../widgets/index.js";
 
 export const stopPresses = (el, except) => PRESS_BUTTONS.filter((b) => b !== except).reduce((e, b) => e.on_mouse_down(b, stop), el);
@@ -35,6 +35,8 @@ export class NewTaskPage {
     this.input = TextareaState.new({ value: "", rows: boxRows(S().body) });
     this.dialog = new NewTaskDialog(() => {});
     this.input.on("change", (_e, cx) => { this.dialog.setText(this.input.value()); cx.notify(); });
+    // If the text box reports a plain Enter itself (a submit event) before the panel's key handler sees it, that starts the task too.
+    this.input.on("submit", (ev, cx) => { if (!ev?.shift && !ev?.secondary) this.continue(cx); });
     this.window = null;
     cx.timer.after(50, () => this.input.focus?.()); // a window doesn't take the keyboard when it opens
   }
@@ -60,7 +62,8 @@ export class NewTaskPage {
   onKey(e, cx) {
     if (e.key === "escape") { this.close(); cx.stop_propagation(); return; }
     const m = e.modifiers ?? {};
-    if (e.key !== "enter" || m.control || m.alt || m.platform) return;
+    const key = String(e.key ?? "").toLowerCase();
+    if ((key !== "enter" && key !== "return") || m.control || m.alt || m.platform) return;
     const step = enterStep({ starting: this.dialog.starting, text: this.dialog.text, shift: Boolean(m.shift) });
     if (step === "newline") return;
     cx.stop_propagation();
@@ -88,7 +91,7 @@ export class NewTaskPage {
         .child(Textarea.new(this.input).size_full().text_size(S().body).text_color(t.foreground)))
       .when(Boolean(d.error), (el) => el.child(div().id("new-task-error").flex_none().text_size(S().secondary).text_color(t.blocked).child(`! ${d.error}`)))
       .child(h_flex().gap(8).items_center()
-        .child(div().id("new-task-hint").flex_1().min_w(0).truncate().text_size(S().label).text_color(t.muted).child(ENTER_HINT))
+        .child(div().flex_1().min_w(0))
         .child(action("new-task-cancel", "Cancel", t, () => this.close(), true, d.starting))
         .child(action("new-task-continue", d.starting ? "Starting…" : "Continue", t, (_e, cx) => this.continue(cx), false, !d.canContinue())));
     return stopPresses(backdrop, "left").when(Boolean(width), (el) => el.child(stopPresses(panel)));

@@ -16,7 +16,7 @@ function fakes(over = {}) {
     repo: { code: 0, stdout: JSON.stringify({ nameWithOwner: "me/app" }), stderr: "" },
     projects: { code: 0, stdout: JSON.stringify({ data: { repository: { projectsV2: { nodes: [PROJECT] } } } }), stderr: "" },
     field: { code: 0, stdout: JSON.stringify({ data: { node: { field: { id: "F", options: ALL.map((name, i) => ({ id: String(i), name })) } } } }), stderr: "" },
-    labels: { code: 0, stdout: JSON.stringify([{ name: "bug", color: "d73a4a" }]), stderr: "" },
+    labels: { code: 0, stdout: JSON.stringify([{ name: "bug", color: "d73a4a" }, { name: "easy", color: "0e8a16" }]), stderr: "" },
     ...over,
   };
   const calls = [];
@@ -136,10 +136,12 @@ test("a label a saved workflow triggers on and the repo lacks is reported", asyn
   assert.deepEqual(found.issues.map((i) => [i.kind, i.label]), [["label-missing", "feature"]]);
 });
 
-test("labels are not asked about without trigger labels, and a failed read flags nothing", async () => {
+test("labels are asked about even without trigger labels, for the easy label, and a failed read flags nothing", async () => {
   const none = fakes();
   assert.deepEqual((await check(place, none)).issues, []);
-  assert.ok(!none.calls.includes("labels"));
+  assert.ok(none.calls.includes("labels"));
+  const noEasy = fakes({ labels: { code: 0, stdout: JSON.stringify([{ name: "bug" }]), stderr: "" } });
+  assert.deepEqual((await check(place, noEasy)).issues.map((i) => i.label), ["easy"]);
   const failed = fakes({ labels: { code: 1, stdout: "", stderr: "HTTP 502" }, deps: { loadWorkflows: async () => story("bug") } });
   assert.deepEqual((await check(place, failed)).issues, []);
 });
@@ -160,7 +162,7 @@ test("a full page of labels may be cut short, so the labels are unknown and noth
   assert.equal((await gather({ cwd: "/repo" }, deps)).labels, undefined);
   assert.deepEqual((await check(place, deps)).issues, []);
   const fewer = fakes({ labels: { code: 0, stdout: JSON.stringify(Array.from({ length: 199 }, (_, i) => ({ name: `l${i}` }))), stderr: "" }, deps: { loadWorkflows: async () => story("bug") } });
-  assert.deepEqual(kinds(await check(place, fewer)), ["label-missing"]);
+  assert.deepEqual(kinds(await check(place, fewer)), ["label-missing", "label-missing"]);
 });
 
 test("a failed repo view keeps the last label issues for the same place", async () => {
@@ -508,7 +510,7 @@ test("a github place is checked as before, with the github source", async () => 
   const found = await check({ ...place, source: "github", main: "/main" }, deps);
   assert.equal(found.source, "github");
   assert.equal(found.repo, "me/app");
-  assert.deepEqual(deps.calls, ["auth", "repo", "projects", "field"]);
+  assert.deepEqual(deps.calls.slice().sort(), ["auth", "field", "labels", "projects", "repo"]);
 });
 
 test("the watcher reads tasks.json of the main checkout and publishes the source", async () => {

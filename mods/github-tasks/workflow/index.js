@@ -1,6 +1,6 @@
 // Public interface of workflow/: the only file code outside this folder may import.
 export { REFACTOR, WORKFLOW, changedKey, editorTitle, emptyNote, hasPermissions, hasTrigger, kindOf, kindSubject, listMenuLabel, newItemName, noRepoNote, promptField, restoreNote } from "./kinds.js";
-export { isEasy, matchWorkflows } from "./match.js";
+export { EASY_LABEL, isEasy, matchWorkflows } from "./match.js";
 export { CLAUDE_MODELS, hasModel, matchModels, modelsFor, parseCodexModels, parseKimiModels } from "./models.js";
 export { firstLine, globalKindDir, kindDirs, repoKindDir, tildePath } from "./places.js";
 export { blank as blankRefactor, normalize as normalizeRefactor, validate as validateRefactor } from "./refactor-model.js";

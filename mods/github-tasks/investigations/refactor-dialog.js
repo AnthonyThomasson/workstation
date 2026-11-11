@@ -9,7 +9,6 @@ export const TITLE = "Refactor";
 export const SUBTITLE = "Pick a refactor type to investigate";
 export const FOCUS_LABEL = "Focus (optional)";
 export const FOCUS_PLACEHOLDER = "e.g. only mods/github-tasks";
-export const ENTER_HINT = "Enter to start"; // the muted line on the button row
 export const EMPTY_TEXT = "No refactor types yet. Add one under Refactors in Task settings.";
 export const TOOLTIP = "Start a refactor investigation";
 export const PICK_PREFIX = "github-tasks.refactorPick."; // + the repo's key: the type last started there, as scope:id

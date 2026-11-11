@@ -7,7 +7,6 @@ export const WIDTH = 520;
 export const TITLE = "New task";
 export const AGENT_KEY = "github-tasks.groomAgent"; // the agent saved before the settings page held it
 export const PROMPT = "Describe the ticket you want";
-export const ENTER_HINT = "Enter to continue · Shift+Enter for a new line"; // the muted line on the button row
 
 // The panel's width for a window of `size`: 520px, or what the window has left after the margin on each side. Null until measured.
 export function panelWidth(size) {
