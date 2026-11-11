@@ -1,6 +1,6 @@
 // Asking GitHub, through a gh the caller hands in: gh(args, { cwd, on }) -> { code, stdout, stderr }.
 // A failure throws a GitHubError whose kind is one of lib/gh-sign-in.js classifyError's.
-import { classifyError, changes, checkTask, wontDoOption, STATUSES } from "../lib/index.js";
+import { classifyError, changes, checkTask, wontDoOption, spelled, STATUSES } from "../lib/index.js";
 
 export const PAGE_SIZE = 100;
 export const MAX_ITEMS = 1000;
@@ -235,6 +235,18 @@ export async function saveTask(gh, { repo, ticket, project, statusField, before,
 // left out for the top: gh's -f would send an empty string, which is not a valid ID. Throws GitHubError (kind from the failing gh call).
 export async function moveItem(gh, { projectId, itemId, afterId }, where) {
   await mutate(gh, POSITION_MUTATION, { project: projectId, item: itemId, ...(afterId ? { after: afterId } : {}) }, where);
+}
+
+// A dragged ticket's write to GitHub: its Status first when the move changes section (status: the name wanted, found among the Status
+// field's options in the project's own spelling), then its position. Nothing is sent when the project has no such status. Throws GitHubError.
+export async function moveTicket(gh, { projectId, itemId, afterId, status, statusField }, where) {
+  if (status) {
+    const name = spelled(statusField?.options, status);
+    const option = statusField?.options.find((o) => o.name === name);
+    if (!option) throw new GitHubError(`The project has no "${status}" status.`);
+    await mutate(gh, STATUS_MUTATION, { project: projectId, item: itemId, field: statusField.id, option: option.id }, where);
+  }
+  await moveItem(gh, { projectId, itemId, afterId }, where);
 }
 
 // Marks an issue as not going to be done: sets the project Status to Won't Do, then closes the issue as "not planned".

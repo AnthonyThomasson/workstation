@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findRepo, findProjects, createProject, loadItems, loadTask, loadStatusField, saveTask, markWontDo, moveItem, POSITION_MUTATION, GitHubError, PAGE_SIZE, MAX_ITEMS } from "./loader.js";
+import { findRepo, findProjects, createProject, loadItems, loadTask, loadStatusField, saveTask, markWontDo, moveItem, moveTicket, POSITION_MUTATION, STATUS_MUTATION, GitHubError, PAGE_SIZE, MAX_ITEMS } from "./loader.js";
 
 const ok = (data) => ({ code: 0, stdout: JSON.stringify({ data }), stderr: "" });
 const page = (count, endCursor, hasNextPage) => ok({
@@ -286,4 +286,39 @@ test("moveItem to the top leaves the after variable out: gh would send an empty 
 test("moveItem throws GitHubError when gh fails", async () => {
   const { gh } = recorder({ code: 1, stdout: "", stderr: "gh auth login required" });
   await assert.rejects(moveItem(gh, { projectId: "P1", itemId: "I", afterId: null }), (e) => e instanceof GitHubError && e.kind === "no-auth");
+});
+
+// ---- moving a ticket: its Status (when the section changes), then its position ----
+
+const statusField = { id: "F1", options: [{ id: "o-todo", name: "Todo" }, { id: "o-next", name: "Up Next" }] };
+
+test("moveTicket sets the Status, in the project's spelling, then the position", async () => {
+  const { gh, calls } = recorder();
+  await moveTicket(gh, { projectId: "P1", itemId: "I7", afterId: "I3", status: "To Do", statusField }, { cwd: "/x" });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].args[3], `query=${STATUS_MUTATION}`);
+  assert.deepEqual(input(calls, 0), { project: "P1", item: "I7", field: "F1", option: "o-todo" });
+  assert.equal(calls[1].args[3], `query=${POSITION_MUTATION}`);
+  assert.deepEqual(input(calls, 1), { project: "P1", item: "I7", after: "I3" });
+  assert.deepEqual(calls[1].where, { cwd: "/x" });
+});
+
+test("moveTicket with no status only moves the position, to the top when nothing precedes", async () => {
+  const { gh, calls } = recorder();
+  await moveTicket(gh, { projectId: "P1", itemId: "I7", afterId: null, status: null, statusField: null });
+  assert.equal(calls.length, 1);
+  assert.deepEqual(input(calls), { project: "P1", item: "I7" });
+});
+
+test("moveTicket moves nothing when the project has no such status", async () => {
+  const { gh, calls } = recorder();
+  await assert.rejects(moveTicket(gh, { projectId: "P1", itemId: "I7", afterId: "I3", status: "In Review", statusField }), (e) => e instanceof GitHubError && /In Review/.test(e.message));
+  await assert.rejects(moveTicket(gh, { projectId: "P1", itemId: "I7", afterId: "I3", status: "Up Next", statusField: null }), GitHubError);
+  assert.equal(calls.length, 0);
+});
+
+test("moveTicket stops at a failed Status write and never sends the position", async () => {
+  const { gh, calls } = recorder({ code: 1, stdout: "", stderr: "boom" });
+  await assert.rejects(moveTicket(gh, { projectId: "P1", itemId: "I7", afterId: "I3", status: "Up Next", statusField }), GitHubError);
+  assert.equal(calls.length, 1);
 });
