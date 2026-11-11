@@ -1,4 +1,4 @@
-// The small part of YAML a workflow file uses: maps, lists of strings, strings (long ones as `|` blocks),
+// The small part of YAML a workflow or project config file uses: maps, lists of strings or maps, strings (long ones as `|` blocks),
 // numbers, booleans and null. Pure, and written here because a mod has no packages to import.
 // parse() also reads what a person writes by hand: comments, 'single' and "double" quotes, `>` folded
 // blocks, `[a, b]` lists, and a list at the same indent as its key.
@@ -126,21 +126,17 @@ export function parse(source) {
     for (skip(); i < lines.length && indentOf(lines[i]) === ind && /^-(\s|$)/.test(lines[i].trimStart()); skip()) {
       const n = i, rest = lines[i++].trimStart().slice(1).trim();
       if (!rest || rest.startsWith("#")) out.push(node(ind + 1));
-      else if (/^[^\s"'\[{][^:]*:(\s|$)/.test(rest)) fail(n, "a list of maps is not supported here");
+      else if (/^[^\s"'\[{][^:]*:(\s|$)/.test(rest)) out.push(map(ind + 2, rest));
       else out.push(value(rest, n));
     }
     return out;
   }
 
-  function map(ind) {
+  function map(ind, first = null) {
     const out = {};
-    for (skip(); i < lines.length; skip()) {
-      const line = lines[i], n = i;
-      if (indentOf(line) < ind) break;
-      if (indentOf(line) > ind) fail(n, "this line is indented too far");
+    function entry(line, n) {
       const m = /^("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s:#"'][^:]*?)\s*:(?:\s+(.*))?$/.exec(line.trim());
       if (!m) fail(n, "expected `key: value`");
-      i++;
       const key = m[1][0] === '"' || m[1][0] === "'" ? quoted(m[1], n) : m[1];
       const rest = (m[2] ?? "").trim();
       if (Object.hasOwn(out, key)) fail(n, `"${key}" is written twice`);
@@ -152,6 +148,14 @@ export function parse(source) {
         const sameList = next && indentOf(next) === ind && /^-(\s|$)/.test(next.trimStart());
         out[key] = sameList ? list(ind) : node(ind + 1);
       }
+    }
+    if (first) entry(first, i - 1);
+    for (skip(); i < lines.length; skip()) {
+      const line = lines[i], n = i;
+      if (indentOf(line) < ind) break;
+      if (indentOf(line) > ind) fail(n, "this line is indented too far");
+      i++;
+      entry(line, n);
     }
     return out;
   }

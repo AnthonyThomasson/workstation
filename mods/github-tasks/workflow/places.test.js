@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  firstLine, repoWorkflowsDir, globalWorkflowsDir, tildePath, workflowDirs, refactorDirs, kindDirs, repoRefactorsDir, globalRefactorsDir,
+  firstLine, projectConfigPath, repoWorkflowsDir, globalWorkflowsDir, tildePath, workflowDirs, refactorDirs, kindDirs, repoRefactorsDir, globalRefactorsDir,
   runDir, runPanePath, runIdFromDir, worktreePath, sessionFolder,
 } from "./places.js";
 
@@ -10,6 +10,11 @@ test("firstLine takes the first non-empty line, trimmed", () => {
   assert.equal(firstLine(""), null);
   assert.equal(firstLine(undefined), null);
   assert.equal(firstLine("  \n \n"), null);
+});
+
+test("project buttons are configured in the ticket worktree", () => {
+  assert.equal(projectConfigPath("/code/ticket"), "/code/ticket/.herdr/config.yaml");
+  assert.equal(projectConfigPath("/code/ticket/"), "/code/ticket/.herdr/config.yaml");
 });
 
 test("a repo's workflows are in its .herdr folder", () => {

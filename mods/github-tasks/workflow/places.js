@@ -15,6 +15,9 @@ export const globalWorkflowsDir = (appHome) => globalKindDir(appHome, "workflows
 export const repoRefactorsDir = (repoRoot) => repoKindDir(repoRoot, "refactors");
 export const globalRefactorsDir = (appHome) => globalKindDir(appHome, "refactors");
 
+// Project buttons on run and investigation pages come from this file in the ticket worktree.
+export const projectConfigPath = (folder) => `${String(folder).replace(/\/+$/, "")}/.herdr/config.yaml`;
+
 // A path as people write it: under the home folder it starts with ~.
 export const tildePath = (path, home) => (path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path);
 
