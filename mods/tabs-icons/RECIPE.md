@@ -8,7 +8,7 @@ Tabs Icons is a Herdr tab bar with program icons, agent status, draggable pills,
 
 - The tab row has a `theme().chrome` background, a bottom border and 10px horizontal padding. Tabs are nonstretching 29px-high pills with 10px horizontal padding, 7px internal gaps, 7px corners, 12.8px text and 3px between tabs. The active pill has a `theme().raised` fill, `theme().border` outline and foreground text; inactive pills use chrome fill, chrome outline and muted text. All gain `theme().hover` on hover.
 - A tab can show its 14px program icon, a name truncated to 170px, and ` Z` when zoomed. Working agents add a 12px spinner; blocked and done agents add a 6px status dot. The active tab has a 12px close icon.
-- A right-aligned **+**, optional Files and Changes buttons, and platform window controls follow the scrolling tab list. Files and Changes appear when listed in shared `workspace.panels` (default `[]`, so both are hidden).
+- A right-aligned **+**, optional Files and Changes buttons, and platform window controls follow the scrolling tab list. The Files and Changes buttons are hidden: `main.js` keeps an empty `enabled` list and ignores shared `workspace.panels`.
 - Where Herdr reports native window buttons, the row adds minimize, maximize/restore and close controls. Windows uses the included vector art; other platforms use text symbols and the built-in pane close asset. On macOS with the title bar hidden and not fullscreen, left padding grows to keep tabs clear of the configured traffic lights, including when the sidebar is hidden or narrow.
 
 ## How it behaves

@@ -246,22 +246,8 @@ Copy `layouts/Tony.json` and the mod code and assets from every folder under `mo
                 {
                   "id": "panel-body",
                   "type": "stack",
-                  "active": "files",
+                  "active": "skills",
                   "children": [
-                    {
-                      "id": "files",
-                      "type": "block",
-                      "content": {
-                        "mod": "files"
-                      }
-                    },
-                    {
-                      "id": "changes",
-                      "type": "block",
-                      "content": {
-                        "mod": "changes"
-                      }
-                    },
                     {
                       "id": "skills",
                       "type": "block",
@@ -319,7 +305,11 @@ Copy `layouts/Tony.json` and the mod code and assets from every folder under `mo
 }
 ```
 
+<<<<<<< Updated upstream
 The built-in mods Tony uses are **`spaces`, `agents`, `changes`, `files`, `pane`, and `workspace-chrome`**. The tab bar also opens `menu` (this repo ships its own copy, [`mods/menu`](mods/menu/RECIPE.md), which adds Open in VS Code) and the built-in `new-menu`.
+=======
+The built-in mods Tony places are **`spaces`, `agents`, `pane`, and `workspace-chrome`**. It also invokes built-in `menu` and `new-menu` from the tab bar. Tony has no Files or Changes panel: the built-in `files` and `changes` mods are not placed, though Tabs Icons still names their shipped icons for its (hidden) buttons.
+>>>>>>> Stashed changes
 
 ### Custom mods
 
@@ -337,9 +327,15 @@ No `keys.json` belongs to the Tony layout: it supplies no layout-specific key bi
 
 ## Watch out
 
+<<<<<<< Updated upstream
 - Install all eight custom mod folders, and the six listed built-ins must be available. A missing custom panel leaves a toggle without its intended content.
 - The panel toggles depend on the exact ids `panel` and `panel-body`, and child ids `files`, `changes`, `skills`, `html-artifacts`, `github-tasks` and `sync`. Changing them requires changing the custom mods too.
 - The layout itself runs no external programs, reads no files outside Herdr's mod state and makes no network requests. Custom mod capabilities vary: Usage contacts Kimi on explicit refresh, Skills and GitHub Tasks (including workflows) run their CLIs and agents, HTML Artifacts reads file names and HTML titles from your temporary folders (and deletes a single file only after you confirm), and Sync runs Git (read-only, plus the branch switch you click) and the picked folder's `mods/sync/sync.sh`, which also drives Skillshare. Read their recipes before enabling those actions.
+=======
+- Install all six custom mod folders, and the listed built-ins must be available. A missing custom panel leaves a toggle without its intended content.
+- The panel toggles depend on the exact ids `panel` and `panel-body`, and child ids `skills`, `github-tasks` and `sync`. Changing them requires changing the custom mods too.
+- The layout itself runs no external programs, reads no files outside Herdr's mod state and makes no network requests. Custom mod capabilities vary: Usage contacts Kimi on explicit refresh, Skills and GitHub Tasks (including workflows) run their CLIs and agents, and Sync runs Git (read-only, plus the branch switch you click) and the picked folder's `mods/sync/sync.sh`, which also drives Skillshare. Read their recipes before enabling those actions.
+>>>>>>> Stashed changes
 - Tony deliberately leaves theme and font choices unset. Do not add hard-coded colors where the source uses theme tokens. The preview image is a wireframe of the window (sidebar lists and usage meter, tab bar, terminal pane, right panel, status bar); it is a picker picture only, installed as `layouts/Tony.png` and not used by the layout itself.
 - The sidebar's own `resizable: false` does not remove Herdr commands that hide or resize it. Tony's root sets the macOS traffic-light position to `[12, 16]`.
 - Renaming any custom mod requires changing its layout reference and following the asset/self-overlay changes described in its own recipe.

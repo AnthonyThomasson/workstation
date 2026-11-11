@@ -220,22 +220,8 @@
                 {
                   "id": "panel-body",
                   "type": "stack",
-                  "active": "files",
+                  "active": "skills",
                   "children": [
-                    {
-                      "id": "files",
-                      "type": "block",
-                      "content": {
-                        "mod": "files"
-                      }
-                    },
-                    {
-                      "id": "changes",
-                      "type": "block",
-                      "content": {
-                        "mod": "changes"
-                      }
-                    },
                     {
                       "id": "skills",
                       "type": "block",
