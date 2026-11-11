@@ -8,7 +8,7 @@ import { exec, hc, home, panes, run, setShared, shared, spaces, terminals, theme
 import { peekSpace, slotFromPage, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "../runs/index.js";
 import { investigationAgentsFor, investigationQueries, endInvestigation } from "../investigations/index.js";
 import { openAgentPopup, S, stop } from "../widgets/index.js";
-import { hostKey, slotKey, INVESTIGATIONS_KEY, investigationAgentsKey } from "../lib/index.js";
+import { slotKey, INVESTIGATIONS_KEY, investigationAgentsKey } from "../lib/index.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 
@@ -96,7 +96,6 @@ export class InvestigationPage {
           slot: () => shared(slotKey(this.id)), clearSlot: () => setShared(slotKey(this.id), null),
           load: () => shared(INVESTIGATIONS_KEY), save: (list) => setShared(INVESTIGATIONS_KEY, list),
           clearAgents: () => setShared(investigationAgentsKey(this.id), null),
-          host: () => shared(hostKey(this.id)), clearHost: () => setShared(hostKey(this.id), null),
           home: home(), removeDir: (path) => exec("rm", ["-rf", path]),
         }, { id: this.id, agent: this.agent, repoRoot: this.props.repoRoot, workDir: this.props.folder, branch: this.branch });
         if (!result.done) this.error = result.error;

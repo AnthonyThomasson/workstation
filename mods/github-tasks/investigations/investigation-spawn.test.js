@@ -10,7 +10,7 @@ import {
 import { beginInvestigation, investigationRunArgs } from "./investigations.js";
 import { shQuote } from "../runs/index.js";
 import { worktreePath } from "../workflow/index.js";
-import { newTaskPrompt, refactorPrompt, ASK_WITH_TOOL, hostKey } from "../lib/index.js";
+import { newTaskPrompt, refactorPrompt, ASK_WITH_TOOL } from "../lib/index.js";
 
 const DIR = "/home/me/.herdr/investigations/inv-x";
 // The values of a flag that takes any number of them, up to the next flag.
@@ -285,27 +285,26 @@ test("the session folder holds the spawn script, investigator.md and worker.md",
   assert.equal(files["worker.md"], newTaskWorkerPrompt({ workDir: "/wt/x", repoRoot: "/src/app", branch: "investigate/x" }));
 });
 
-// ---- The agent's command, with its parent ------------------------------------------------------------
+// ---- The agent's command: no parent ------------------------------------------------------------------
 
-test("with a host the agent is started under it, outliving it, with its labels; without one it has no parent", () => {
+test("#78 the agent is started --no-parent, with its labels: never --parent, --outlive-parent or --no-notify, even when a parent is offered", () => {
   const base = { id: "inv-x", workDir: "/w", argv: ["claude"] };
   const labelsOf = (args) => args.flatMap((a, i) => (args[i - 1] === "--label" ? [a] : []));
-  const under = investigationRunArgs({ ...base, parent: "tH" });
-  assert.deepEqual(under.slice(0, 8), ["run", "--bg", "--json", "--parent", "tH", "--outlive-parent", "--no-notify", "--cwd"]);
-  assert.ok(!under.includes("--no-parent"));
-  assert.deepEqual(labelsOf(under).sort(), ["herdr.investigation=inv-x", "herdr.role=investigation", "herdr.workflow.folder=/w"]);
-  assert.deepEqual(under.slice(under.indexOf("--") + 1), ["claude"]);
-  const bare = investigationRunArgs(base);
-  assert.ok(bare.includes("--no-parent") && !bare.includes("--parent") && !bare.includes("--outlive-parent"));
+  for (const args of [investigationRunArgs(base), investigationRunArgs({ ...base, parent: "tH" })]) {
+    assert.deepEqual(args.slice(0, 5), ["run", "--bg", "--json", "--no-parent", "--cwd"]);
+    assert.ok(!args.includes("--parent") && !args.includes("--outlive-parent") && !args.includes("--no-notify"));
+    assert.deepEqual(labelsOf(args).sort(), ["herdr.investigation=inv-x", "herdr.role=investigation", "herdr.workflow.folder=/w"]);
+    assert.deepEqual(args.slice(args.indexOf("--") + 1), ["claude"]);
+  }
 });
 
-// ---- Starting: the folder and the host -----------------------------------------------------------------
+// ---- Starting: the session folder -----------------------------------------------------------------
 
 const AGENT = { key: "claude", run: ["claude"] };
 const ARGS = { agent: AGENT, description: "Fix the login redirect", repo: "o/app", groomer: { effort: "high" }, where: { cwd: "/repo/app" } };
 const T = (1_000_000).toString(36);
 
-function fakeStart({ run, writeFails, hostFails, ready = { code: 0, stdout: '{"status":"idle"}', stderr: "" } } = {}) {
+function fakeStart({ run, writeFails, ready = { code: 0, stdout: '{"status":"idle"}', stderr: "" } } = {}) {
   const log = [], hcCalls = [], written = [];
   let saved = [];
   const deps = {
@@ -317,8 +316,6 @@ function fakeStart({ run, writeFails, hostFails, ready = { code: 0, stdout: '{"s
     knownAgents: async () => [{ key: "claude", run: ["claude"], installed: true }],
     writeSession: async (dir, files) => { log.push("write session"); written.push({ dir, files }); if (writeFails) throw new Error("disk full"); },
     removeSession: async (dir) => { log.push(`remove session ${dir}`); },
-    openHost: async (info) => { log.push("open host"); written.push({ host: info }); if (hostFails) throw new Error("no room"); return { address: "tH", tab: "tHT", space: "sH", created: true }; },
-    closeHost: async (host) => { log.push(`close host ${host.address}`); },
     hc: async (a) => { hcCalls.push(a); log.push(`hc ${a[0]}`); return a[0] === "run" ? (run ?? { code: 0, stdout: '{"address":"t9"}', stderr: "" }) : a[0] === "wait" ? ready : { code: 0, stdout: "", stderr: "" }; },
     connect: async () => { log.push("connect"); return { tab: "tX", left: "pX", space: "s1" }; },
     closeTab: () => log.push("close tab"),
@@ -328,11 +325,11 @@ function fakeStart({ run, writeFails, hostFails, ready = { code: 0, stdout: '{"s
   return { deps, log, hcCalls, written, saved: () => saved };
 }
 
-test("start: the session folder is written after the worktree and before the host and the agent, and the prompt is given the folder", async () => {
+test("start: the session folder is written after the worktree and before the agent, and the prompt is given the folder", async () => {
   const f = fakeStart();
   const { entry } = await beginInvestigation(f.deps, ARGS);
   const dir = `/home/me/.herdr/investigations/inv-${T}`;
-  assert.deepEqual(f.log, [`task ${dir}`, "worktree", "write session", "open host", "hc run", `save inv-${T}`, "connect", "hc wait", "hc send"]);
+  assert.deepEqual(f.log, [`task ${dir}`, "worktree", "write session", "hc run", `save inv-${T}`, "connect", "hc wait", "hc send"]);
   assert.equal(f.written[0].dir, dir);
   assert.deepEqual(Object.keys(f.written[0].files).sort(), ["investigator.md", "spawn", "worker.md"]);
   assert.ok(f.written[0].files.spawn.includes(`herdr.investigation=`) && f.written[0].files.spawn.includes(`session_id='inv-${T}'`));
@@ -362,54 +359,41 @@ test("start: with no settings saved the sub-agents are Claude at medium effort a
   for (const role of ["investigator", "worker"]) assert.ok(line(role).startsWith(`  ${role}) set -- 'claude'`) && line(role).includes("'--effort' 'medium'") && !line(role).includes("'--model'"), role);
 });
 
-test("start: the host opens first, named for the description, and the agent starts under it", async () => {
+test("#78 start: the agent starts --no-parent with its labels, and no host is opened or ended", async () => {
   const f = fakeStart();
   const { entry } = await beginInvestigation(f.deps, ARGS);
-  const info = f.written.find((w) => w.host).host;
-  assert.deepEqual(info, { id: entry.id, name: "Fix the login redirect agents", label: "Fix the login redirect", workDir: entry.workDir, repoRoot: "/repo/app" });
   const run = f.hcCalls[0];
-  assert.equal(run[run.indexOf("--parent") + 1], "tH");
-  assert.ok(run.includes("--outlive-parent") && !run.includes("--no-parent"));
+  assert.deepEqual(run.slice(0, 5), ["run", "--bg", "--json", "--no-parent", "--cwd"]);
+  assert.ok(!run.includes("--parent") && !run.includes("--outlive-parent") && !run.includes("--no-notify"));
   assert.ok(run.includes(`herdr.investigation=${entry.id}`) && run.includes("herdr.role=investigation"), "its labels are kept");
-  assert.ok(!f.log.some((l) => l.startsWith("close host")), "the host stays while the session lives");
+  assert.equal(f.hcCalls.filter((a) => a[0] === "run").length, 1, "one terminal is started: the agent");
 });
 
-test("#57 start: a host that won't open fails the start with the reason: no agent, no tab, and the session folder, entry and worktree are taken back", async () => {
-  const f = fakeStart({ hostFails: true });
-  await assert.rejects(beginInvestigation(f.deps, ARGS), /The agent didn't start: its host tab didn't open \(no room\)/);
-  assert.ok(!f.hcCalls.length, "no agent was started");
-  assert.ok(!f.log.includes("connect") && !f.log.some((l) => l.startsWith("close host")));
-  assert.ok(f.log.includes(`remove session /home/me/.herdr/investigations/inv-${T}`));
-  assert.ok(f.log.findIndex((l) => l.startsWith("remove session")) < f.log.findIndex((l) => l.startsWith("cleanup")));
-  assert.deepEqual(f.saved(), []);
-});
-
-test("start: an agent that doesn't start ends the host, takes the session folder back, then the worktree", async () => {
+test("start: an agent that doesn't start takes the session folder back, then the worktree", async () => {
   const f = fakeStart({ run: { code: 1, stdout: "", stderr: "no such program" } });
   await assert.rejects(beginInvestigation(f.deps, ARGS), /The agent didn't start: no such program/);
   assert.ok(f.log.includes(`remove session /home/me/.herdr/investigations/inv-${T}`));
-  assert.ok(f.log.indexOf("close host tH") < f.log.findIndex((l) => l.startsWith("remove session")));
   assert.ok(f.log.findIndex((l) => l.startsWith("remove session")) < f.log.findIndex((l) => l.startsWith("cleanup")));
   assert.deepEqual(f.saved(), []);
 });
 
-test("start: an agent that ends while starting or won't take its prompt also ends the host and takes the folder back", async () => {
+test("start: an agent that ends while starting or won't take its prompt also takes the folder back", async () => {
   for (const f of [fakeStart({ ready: { code: 0, stdout: '{"reason":"exit","exit_code":1}', stderr: "" } })]) {
     await assert.rejects(beginInvestigation(f.deps, ARGS), /didn't start properly/);
-    assert.ok(f.log.includes("close tab") && f.log.includes("close host tH") && f.log.some((l) => l.startsWith("remove session")));
+    assert.ok(f.log.includes("close tab") && f.log.some((l) => l.startsWith("remove session")));
     assert.ok(f.log.at(-1).startsWith("cleanup "));
   }
   const g = fakeStart();
   const hc = g.deps.hc;
   g.deps.hc = async (a) => (a[0] === "send" ? { code: 1, stdout: "", stderr: "busy" } : hc(a));
   await assert.rejects(beginInvestigation(g.deps, ARGS), /didn't take its task/);
-  assert.ok(g.log.includes("close host tH") && g.log.some((l) => l.startsWith("remove session")));
+  assert.ok(g.log.includes("close tab") && g.log.some((l) => l.startsWith("remove session")));
 });
 
-test("start: a session folder that can't be written takes back what was made: no host, no agent, the worktree goes", async () => {
+test("start: a session folder that can't be written takes back what was made: no agent, the worktree goes", async () => {
   const f = fakeStart({ writeFails: true });
   await assert.rejects(beginInvestigation(f.deps, ARGS), /disk full/);
-  assert.ok(!f.log.includes("open host") && !f.log.includes("hc run"));
+  assert.ok(!f.log.includes("hc run"));
   assert.ok(f.log.some((l) => l.startsWith("remove session")), "what was half written");
   assert.ok(f.log.at(-1).startsWith("cleanup "));
   assert.deepEqual(f.saved(), []);
@@ -419,7 +403,7 @@ test("start: a session folder that can't be named (no home) is refused before an
   const f = fakeStart();
   f.deps.home = "";
   await assert.rejects(beginInvestigation(f.deps, ARGS), /folder for the session's helpers/);
-  assert.deepEqual(f.log, [], "no prompt, worktree, folder, host or agent");
+  assert.deepEqual(f.log, [], "no prompt, worktree, folder or agent");
   assert.deepEqual(f.saved(), []);
 });
 
@@ -428,10 +412,6 @@ test("start: a prompt that can't be made leaves nothing behind, and no folder is
   f.deps.task = async () => { throw new Error("no tasks folder"); };
   await assert.rejects(beginInvestigation(f.deps, ARGS), /no tasks folder/);
   assert.deepEqual(f.log, []);
-});
-
-test("the host is found again under its own key", () => {
-  assert.equal(hostKey("inv-x"), "github-tasks.host.inv-x");
 });
 
 // ---- A refactor session ---------------------------------------------------------------------------------

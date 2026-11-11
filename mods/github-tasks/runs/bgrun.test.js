@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { viewQuick, viewConnect, connectRun, endRun, guarded, mergeOutcome, launchRun, holdShown, findRunTab, runTabParts, waitReady, orchestratorRunArgs, parseStarted, placeholderArgv, reapplyRuns, viewTarget, findTicketSpace, peekSpace, undoRunTab, restartOrchestrator, slotFromPage, hostArgv, hostTabName, findRepoSpace, findHost, openHost, endHost } from "./bgrun.js";
-import { spawnSync } from "node:child_process";
+import { viewQuick, viewConnect, connectRun, endRun, guarded, mergeOutcome, launchRun, holdShown, findRunTab, runTabParts, waitReady, orchestratorRunArgs, parseStarted, placeholderArgv, reapplyRuns, viewTarget, findTicketSpace, peekSpace, undoRunTab, restartOrchestrator, slotFromPage } from "./bgrun.js";
+import * as bgrun from "./bgrun.js";
 import { ticketName } from "./run.js";
-import { hostKey, slotKey } from "../lib/index.js";
+import { slotKey } from "../lib/index.js";
 
 const SPACES = [{ id: "s1", tabs: [{ id: "tA" }, { id: "tB" }] }, { id: "s2", tabs: [{ id: "tC" }] }];
 const PANES = [{ pane: "pA", tab: "tA", terminal: "t9" }, { pane: "pB", tab: "tB", terminal: "t8" }, { pane: "pM", tab: "tB", mod: "github-tasks", terminal: null }];
@@ -586,7 +586,7 @@ test("launch: pane.json is written and the tab opened before the wait for the ag
   const f = fakeLaunch();
   const got = await launchRun(f.deps, launch);
   assert.deepEqual(f.log, ["hc run --bg", "pane.json t9", "connect", "hc wait t9", "hc send t9"]);
-  assert.deepEqual(got, { orchestrator: "t9", problems: [], host: null });
+  assert.deepEqual(got, { orchestrator: "t9", problems: [] });
 });
 
 test("launch: the props saved and shown carry the orchestrator's address", async () => {
@@ -925,384 +925,76 @@ test("#35 viewQuick keeps a whole tab the person moved to another space while th
   assert.deepEqual(f.log, [["space.select", { id: "s2" }], ["tab.select", { id: "tX" }], ["show", "pX"]]);
 });
 
-// ---- #41: the run's host terminal, the parent that makes the Agents panel list the orchestrator and its workers ----
+// ---- #78: no host terminals; every agent starts --no-parent ----
+// Herdr's tab close ends the whole sub-agent tree of a pane's terminal and ignores --outlive-parent, so an agent under a host (or any
+// terminal in a tab) dies with that tab. An agent with no parent and no pane survives any tab or space close.
 
-const HOST_ARGS = { id: "41-mw8u4rxz", key: "o/r#41", workDir: "/w", argv: ["claude"] };
+const NO_PARENT_ARGS = { id: "41-mw8u4rxz", key: "o/r#41", workDir: "/w", argv: ["claude"] };
+const familyOf = (args) => args.filter((a) => ["--parent", "--outlive-parent", "--no-notify", "--no-parent"].includes(a));
 
-test("#41 with a parent the orchestrator keeps its labels and outlives it, with no notes typed into it and a name of its own", () => {
-  const args = orchestratorRunArgs({ ...HOST_ARGS, parent: "t5" });
-  assert.ok(!args.includes("--no-parent"));
-  assert.equal(args[args.indexOf("--parent") + 1], "t5");
-  assert.ok(args.includes("--outlive-parent"));
-  assert.ok(args.includes("--no-notify"));
+test("#78 the orchestrator starts --no-parent, with its labels and a name of its own, and never --parent, --outlive-parent or --no-notify", () => {
+  const args = orchestratorRunArgs(NO_PARENT_ARGS);
+  assert.deepEqual(familyOf(args), ["--no-parent"]);
   assert.equal(args[args.indexOf("--name") + 1], "41-mw8u4rxz-orch");
   const labels = args.flatMap((a, i) => (args[i - 1] === "--label" ? [a] : []));
   assert.deepEqual(labels.sort(), ["herdr.role=orchestrator", "herdr.workflow.folder=/w", "herdr.workflow.run=41-mw8u4rxz", "herdr.workflow.ticket=o/r#41"]);
   assert.deepEqual(args.slice(args.indexOf("--") + 1), ["claude"]);
 });
 
-test("#41 the orchestrator's name is a valid hc name even for a long run id; with no parent it is as before", () => {
-  const name = (id) => { const a = orchestratorRunArgs({ ...HOST_ARGS, id, parent: "t5" }); return a[a.indexOf("--name") + 1]; };
+test("#78 a parent handed to orchestratorRunArgs is ignored: no argv ever names one", () => {
+  assert.deepEqual(familyOf(orchestratorRunArgs({ ...NO_PARENT_ARGS, parent: "t5" })), ["--no-parent"]);
+});
+
+test("#78 the orchestrator's name is a valid hc name even for a long run id", () => {
+  const name = (id) => { const a = orchestratorRunArgs({ ...NO_PARENT_ARGS, id }); return a[a.indexOf("--name") + 1]; };
   for (const id of ["41-mw8u4rxz", "x".repeat(60), "draft-Ab.c d"]) assert.match(name(id), /^[a-z0-9_-]{1,32}$/);
   assert.ok(name("x".repeat(60)).endsWith("-orch"));
-  const bare = orchestratorRunArgs(HOST_ARGS);
-  assert.ok(bare.includes("--no-parent") && !bare.includes("--parent") && !bare.includes("--outlive-parent") && !bare.includes("--no-notify"));
 });
 
-test("#41 the host reports a status by OSC 7501, says what it is, and waits for ever without reading input", () => {
-  const argv = hostArgv();
-  assert.deepEqual(argv.slice(0, 2), ["sh", "-c"]);
-  const sh = spawnSync("sh", ["-c", argv[2].replace(/exec tail -f \/dev\/null/, "true")], { encoding: "utf8" });
-  assert.equal(sh.status, 0);
-  assert.ok(sh.stdout.startsWith("\x1b]7501;state=idle\x07"), "the report comes first, in the format the core reads");
-  assert.match(sh.stdout.slice(sh.stdout.indexOf("\x07") + 1), /^[^\n]+\n$/, "one line of note");
-  assert.match(argv[2], /exec tail -f \/dev\/null$/);
-  assert.ok(!/\bread\b|\bcat\b/.test(argv[2]));
+test("#78 bgrun.js has no host: nothing to open, end, find or name one", () => {
+  for (const name of ["openHost", "endHost", "findHost", "hostKey", "hostArgv", "hostTabName", "findRepoSpace"]) assert.equal(bgrun[name], undefined, name);
 });
 
-test("#41 the host tab is named for the ticket", () => {
-  assert.equal(hostTabName({ number: 41, title: "Agents" }), "#41 agents");
-  assert.equal(hostTabName({ title: "A draft" }), "A draft agents");
-});
-
-const REPO = "/home/me/repo";
-const RSPACES = [
-  { id: "sR", folder: REPO, tabs: [{ id: "tR" }] },
-  { id: "sT", folder: "/wt/repo/b", tabs: [{ id: "tT" }] },
-  { id: "sM", folder: REPO, machine: "vps", tabs: [{ id: "tM" }] },
-];
-const RPANES = [{ pane: "pR", tab: "tR", terminal: "t1", cwd: REPO }, { pane: "pT", tab: "tT", terminal: "t2", cwd: "/wt/repo/b" }];
-
-test("#41 the repo's space is the one whose first terminal is in the main checkout, never the ticket's or another machine's", () => {
-  assert.equal(findRepoSpace({ spaces: RSPACES, panes: RPANES, repoRoot: REPO }), "sR");
-  assert.equal(findRepoSpace({ spaces: RSPACES, panes: [{ pane: "pR", tab: "tR", terminal: "t1", cwd: `${REPO}/sub` }], repoRoot: REPO }), "sR");
-  assert.equal(findRepoSpace({ spaces: RSPACES.slice(1), panes: RPANES, repoRoot: REPO }), null);
-  assert.equal(findRepoSpace({ spaces: RSPACES, panes: RPANES, repoRoot: "" }), null);
-});
-
-function fakeHostApp({ terminal = "t20", label = { code: 0, stdout: "", stderr: "" }, tabFails = false } = {}) {
-  const log = [];
-  return {
-    log,
-    deps: {
-      app: async (n, a) => { log.push([n, a]); if (tabFails) throw new Error("no"); return n === "space.new" ? { space: "sN", tab: "tN", terminal } : { tab: "tN", terminal }; },
-      hc: async (a) => { log.push(["hc", a]); return a[0] === "label" ? label : { code: 0, stdout: "", stderr: "" }; },
-      run: (n, a) => log.push([n, a]),
-    },
-  };
-}
-const OPEN = { id: "41-x", name: "#41 agents", repoRoot: REPO, spaces: RSPACES, panes: RPANES };
-
-test("#41 the host opens as a tab in the repo's space, rooted at the main checkout, and is labelled so it can be found again", async () => {
-  const f = fakeHostApp();
-  const host = await openHost(f.deps, OPEN);
-  assert.deepEqual(host, { address: "t20", tab: "tN", space: "sR", created: false });
-  const [n, a] = f.log[0];
-  assert.equal(n, "tab.new");
-  assert.deepEqual({ ...a, argv: undefined }, { name: "#41 agents", folder: REPO, space: "sR", argv: undefined });
-  assert.deepEqual(a.argv, hostArgv());
-  assert.deepEqual(f.log[1], ["hc", ["label", "t20", "herdr.workflow.host=41-x", "herdr.role=host"]]);
-});
-
-test("#41 the host never carries the run label (the run page would list it as an agent) nor the space and tab labels", async () => {
-  const f = fakeHostApp();
-  await openHost(f.deps, OPEN);
-  const labels = f.log.find(([n]) => n === "hc")[1].slice(2);
-  assert.ok(!labels.some((l) => l.startsWith("herdr.workflow.run") || l.startsWith("herdr.space") || l.startsWith("herdr.tab") || l.startsWith("herdr.workflow.folder")));
-});
-
-test("#41 with the repo's space not open the host gets a space of its own named for the repo, and says it made it", async () => {
-  const f = fakeHostApp();
-  const host = await openHost(f.deps, { ...OPEN, spaces: [], panes: [] });
-  assert.deepEqual(host, { address: "t20", tab: "tN", space: "sN", created: true });
-  assert.equal(f.log[0][0], "space.new");
-  assert.deepEqual(f.log[0][1], { name: "repo", tab: "#41 agents", folder: REPO, argv: hostArgv() });
-});
-
-test("#41 a host that can't be made or labelled throws, and a tab made is closed again", async () => {
-  await assert.rejects(openHost(fakeHostApp({ tabFails: true }).deps, OPEN), /host tab couldn't be made/);
-  const f = fakeHostApp({ label: { code: 1, stdout: "", stderr: "nope" } });
-  await assert.rejects(openHost(f.deps, OPEN), /couldn't be labelled.*nope/);
-  assert.ok(f.log.some(([n, a]) => n === "hc" && a[0] === "kill"), "the unlabelled host can't be found later: it is ended");
-  assert.ok(f.log.some(([n, a]) => n === "tab.close" && a.id === "tN"));
-  const g = fakeHostApp({ terminal: null });
-  await assert.rejects(openHost(g.deps, OPEN), /no terminal/);
-});
-
-test("#41 the host is found by its label among the live terminals, not by saved ids", () => {
-  const ts = [
-    { address: "t1", state: "live", labels: { "herdr.workflow.host": "other" } },
-    { address: "t2", state: "finished", labels: { "herdr.workflow.host": "41-x" } },
-    { address: "t3", state: "live", labels: { "herdr.workflow.host": "41-x" } },
-    { address: "t4", state: "live", labels: { "herdr.workflow.run": "41-x", "herdr.role": "orchestrator" } },
-  ];
-  assert.equal(findHost(ts, "41-x").address, "t3");
-  assert.equal(findHost(ts, "nope"), null);
-  assert.equal(findHost(undefined, "41-x"), null);
-});
-
-function fakeEnd({ stuck = false, live = true } = {}) {
-  const log = [];
-  let alive = live;
-  return {
-    log,
-    deps: {
-      id: "41-x",
-      hc: async (a) => { log.push(["hc", ...a]); if (a[0] === "kill") { if (stuck) return { code: 1, stderr: "denied", stdout: "" }; alive = false; } return { code: 0, stdout: "", stderr: "" }; },
-      terminals: () => (alive ? [{ address: "t20", state: "live", labels: { "herdr.workflow.host": "41-x" } }] : []),
-      run: (n, a) => log.push([n, a]),
-      spaces: [{ id: "sR", tabs: [{ id: "tR" }, { id: "tH" }] }], panes: [{ pane: "pH", tab: "tH", terminal: "t20" }],
-      record: { tab: "tH", space: "sR", created: false },
-    },
-  };
-}
-
-test("#41 ending the host kills and removes it, then closes its tab (the repo's space stays)", async () => {
-  const f = fakeEnd();
-  assert.deepEqual(await endHost(f.deps), { error: null });
-  assert.deepEqual(f.log, [["hc", "kill", "t20"], ["hc", "rm", "t20"], ["tab.close", { id: "tH", confirmed: true }]]);
-});
-
-test("#41 a space made for the host is closed with it, but only when it holds nothing else", async () => {
-  const only = fakeEnd();
-  only.deps.spaces = [{ id: "sH", tabs: [{ id: "tH" }] }];
-  only.deps.record = { tab: "tH", space: "sH", created: true };
-  await endHost(only.deps);
-  assert.deepEqual(only.log.at(-1), ["space.close", { id: "sH", confirmed: true }]);
-  const shared = fakeEnd();
-  shared.deps.spaces = [{ id: "sH", tabs: [{ id: "tH" }, { id: "tO" }] }];
-  shared.deps.record = { tab: "tH", space: "sH", created: true };
-  await endHost(shared.deps);
-  assert.ok(!shared.log.some(([n]) => n === "space.close"));
-});
-
-test("#41 a host already gone is no failure, a host that can't be killed is an error naming it, and a tab already closed doesn't throw", async () => {
-  const gone = fakeEnd({ live: false });
-  assert.deepEqual(await endHost(gone.deps), { error: null });
-  assert.ok(!gone.log.some(([n]) => n === "hc"));
-  const stuck = fakeEnd({ stuck: true });
-  const got = await endHost(stuck.deps);
-  assert.match(got.error, /t20: denied/);
-  assert.ok(!stuck.log.some(([n]) => n === "tab.close"), "a live host keeps its tab");
-  const closed = fakeEnd();
-  closed.deps.run = () => { throw new Error("no such tab"); };
-  assert.deepEqual(await endHost(closed.deps), { error: null });
-});
-
-test("#41 a host just made, whose label the app doesn't list yet, is still ended when named", async () => {
-  const f = fakeEnd({ live: false });
-  assert.deepEqual(await endHost({ ...f.deps, also: ["t20"] }), { error: null });
-  assert.deepEqual(f.log, [["hc", "kill", "t20"], ["hc", "rm", "t20"], ["tab.close", { id: "tH", confirmed: true }]]);
-});
-
-test("#41 the host tab is never mistaken for the run's tab, even in the same space and under the same name", () => {
-  const spaces = [{ id: "s1", tabs: [{ id: "tH", name: "#22 x" }] }];
-  const panes = [{ pane: "pH", tab: "tH", terminal: "t20" }];
-  const terminals = [{ address: "t20", state: "live", argv: hostArgv(), labels: { "herdr.workflow.host": "r1" } }];
-  for (const slot of [null, { tab: "tOld", left: "pOld", space: "s1" }]) assert.equal(runTabParts({ slot, spaces, panes, name: "#22 x", ticketSpace: "s1", orchestrators: ["t7"], terminals }), null);
-  assert.equal(slotFromPage({ orchestrators: ["t7"], terminals, spaces, panes, slot: null }), null);
-});
-
-test("#41 Merge ends the host too, after the run's terminals and before the ticket's space goes", async () => {
-  const core = fakeCore();
-  const base = core.terminals;
-  let hostAlive = true;
-  core.terminals = () => [...base(), ...(hostAlive ? [{ address: "tH1", state: "live", labels: { "herdr.workflow.host": "r1" } }] : [])];
-  const hc = core.hc;
-  core.hc = async (a) => { if (a[0] === "kill" && a[1] === "tH1") hostAlive = false; return hc(a); };
-  const got = await endRun(endDeps(core, { terminals: core.terminals, hc: core.hc, host: { tab: "tHT", space: "sRepo", created: false }, panes: [...PANES, { pane: "pH", tab: "tHT", terminal: "tH1" }], clearHost: () => core.log.push("clear host") }));
-  assert.deepEqual(got, { closed: true, error: null });
-  assert.deepEqual(core.log, ["kill t7", "rm t7", "kill t3", "rm t3", "kill tH1", "rm tH1", "tab.close tHT", "clear host", "clear", "space.close s1"]);
-});
-
-test("#41 a host that can't be ended keeps the space and says so, like any terminal that won't die", async () => {
-  const core = fakeCore({ live: ["t7"] });
-  const base = core.terminals;
-  core.terminals = () => [...base(), { address: "tH1", state: "live", labels: { "herdr.workflow.host": "r1" } }];
-  const hc = core.hc;
-  core.hc = async (a) => (a[0] === "kill" && a[1] === "tH1" ? { code: 1, stderr: "denied", stdout: "" } : hc(a));
-  const got = await endRun(endDeps(core, { terminals: core.terminals, hc: core.hc, panes: PANES }));
-  assert.equal(got.closed, false);
-  assert.match(got.error, /tH1: denied/);
-  assert.ok(!core.log.includes("space.close s1"));
-});
-
-// launchRun with a host
-function hostLaunch(over = {}) {
-  const f = fakeLaunch(over.launch);
-  f.deps.openHost = async () => { f.log.push("open host"); if (over.hostFails) throw new Error("no room"); return { address: "tH", tab: "tHT", space: "sR", created: false }; };
-  f.deps.closeHost = async (h) => { f.log.push(`close host ${h?.address}`); };
+test("#78 launch: the orchestrator is started --no-parent, first of everything", async () => {
+  const f = fakeLaunch();
   const runs = [];
   const hc = f.deps.hc;
   f.deps.hc = async (a) => { if (a[0] === "run") runs.push(a); return hc(a); };
-  return { ...f, runs };
-}
-
-test("#41 launch: the host opens first and the orchestrator is started under it", async () => {
-  const f = hostLaunch();
   const got = await launchRun(f.deps, launch);
-  assert.deepEqual(f.log.slice(0, 2), ["open host", "hc run --bg"]);
-  assert.equal(f.runs[0][f.runs[0].indexOf("--parent") + 1], "tH");
-  assert.deepEqual(f.runs[0], orchestratorRunArgs({ ...launch, parent: "tH" }));
-  assert.deepEqual(got, { orchestrator: "t9", problems: [], host: { address: "tH", tab: "tHT", space: "sR", created: false } });
+  assert.equal(f.log[0], "hc run --bg");
+  assert.deepEqual(runs, [orchestratorRunArgs(launch)]);
+  assert.deepEqual(familyOf(runs[0]), ["--no-parent"]);
+  assert.deepEqual(got, { orchestrator: "t9", problems: [] });
 });
 
-test("#41 launch: a host that won't open is a problem to say and the run starts as before, with no parent", async () => {
-  const f = hostLaunch({ hostFails: true });
-  const got = await launchRun(f.deps, launch);
-  assert.deepEqual(f.runs[0], orchestratorRunArgs(launch));
-  assert.equal(got.orchestrator, "t9");
-  assert.equal(got.host, null);
-  assert.match(got.problems[0], /Agents panel.*no room/);
+test("#78 launch: whichever runArgs builds the command, launchRun hands it no parent", async () => {
+  const f = fakeLaunch();
+  let given;
+  await launchRun(f.deps, { ...launch, runArgs: (a) => { given = a; return ["run", "--bg", "--json", "--no-parent"]; } });
+  assert.ok(!("parent" in given), "no parent is offered to the command builder");
 });
 
-test("#41 launch: when the start fails the host is ended again, whichever step failed", async () => {
-  const noStart = hostLaunch({ launch: { run: { code: 1, stdout: "", stderr: "boom" } } });
-  await assert.rejects(launchRun(noStart.deps, launch), /boom/);
-  assert.ok(noStart.log.includes("close host tH"));
-  const ended = hostLaunch({ launch: { ready: answer({ reason: "exit", exit_code: 1 }) } });
+test("#78 launch: a failed start ends only the orchestrator (kill, rm) and the tab: nothing else was made", async () => {
+  const ended = fakeLaunch({ ready: answer({ reason: "exit", exit_code: 1 }) });
   await assert.rejects(launchRun(ended.deps, launch), /ended while starting/);
-  assert.ok(ended.log.includes("close host tH"));
-  const noTask = hostLaunch({ launch: { send: { code: 1, stdout: "", stderr: "no" } } });
-  await assert.rejects(launchRun(noTask.deps, launch), /take its task/);
-  assert.ok(noTask.log.includes("close host tH"));
-  const fine = hostLaunch();
-  await launchRun(fine.deps, launch);
-  assert.ok(!fine.log.some((l) => String(l).startsWith("close host")), "a good start keeps its host");
+  assert.deepEqual(ended.log, ["hc run --bg", "pane.json t9", "connect", "hc wait t9", "hc kill t9", "hc rm t9", "close tab"]);
+  const noStart = fakeLaunch({ run: { code: 1, stdout: "", stderr: "boom" } });
+  await assert.rejects(launchRun(noStart.deps, launch), /boom/);
+  assert.deepEqual(noStart.log, ["hc run --bg"]);
 });
 
-test("#41 restart: the new orchestrator goes under the run's live host when there is one, else as before", async () => {
+test("#78 restart: the new orchestrator is started --no-parent like the first", async () => {
   const f = fakeRestart();
-  f.deps.findHost = () => ({ address: "tH" });
   await restartOrchestrator(f.deps, restart);
-  assert.deepEqual(f.runs[0], orchestratorRunArgs({ id: "r1", key: "o/r#1", workDir: "/w", argv: ["claude", "--effort", "high"], parent: "tH" }));
-  const g = fakeRestart();
-  g.deps.findHost = () => null;
-  await restartOrchestrator(g.deps, restart);
-  assert.deepEqual(g.runs[0], orchestratorRunArgs({ id: "r1", key: "o/r#1", workDir: "/w", argv: ["claude", "--effort", "high"] }));
+  assert.deepEqual(f.runs[0], orchestratorRunArgs({ id: "r1", key: "o/r#1", workDir: "/w", argv: ["claude", "--effort", "high"] }));
+  assert.deepEqual(familyOf(f.runs[0]), ["--no-parent"]);
 });
 
-test("#41 the host's saved record is per run", () => assert.notEqual(hostKey("a"), hostKey("b")));
-
-test("#56 a session's host says what it is (the note), in the repo's space or a space of its own", async () => {
-  const note = "Host of this session's agents.";
-  const f = fakeHostApp();
-  await openHost(f.deps, { id: "inv-x", name: "Fix it agents", repoRoot: REPO, spaces: RSPACES, panes: RPANES, note });
-  assert.equal(f.log[0][0], "tab.new");
-  assert.deepEqual(f.log[0][1].argv, hostArgv(note));
-  const g = fakeHostApp();
-  await openHost(g.deps, { id: "inv-x", name: "Fix it agents", repoRoot: REPO, spaces: [], panes: [], note });
-  assert.deepEqual(g.log[0], ["space.new", { name: "repo", tab: "Fix it agents", folder: REPO, argv: hostArgv(note) }]);
-});
-
-test("#56 a session's host that can't be labelled is ended, and the space made for it closed", async () => {
-  const f = fakeHostApp({ label: { code: 1, stdout: "", stderr: "nope" } });
-  await assert.rejects(openHost(f.deps, { id: "inv-x", name: "agents", repoRoot: REPO, spaces: [], panes: [] }), /couldn't be labelled/);
-  assert.ok(f.log.some(([n, a]) => n === "space.close" && a.id === "sN"));
-});
-
-test("#56 the host's note can be said for a session, and is the ticket's by default", () => {
-  assert.match(hostArgv()[2], /Ends when the ticket is merged/);
-  const text = hostArgv("Host of 'this' session.")[2];
-  assert.match(text, /Host of '\\''this'\\'' session\./);
-  assert.equal(spawnSync("sh", ["-c", text.replace(/exec tail -f \/dev\/null/, "true")], { encoding: "utf8" }).stdout.split("\x07")[1], "Host of 'this' session.\n");
-});
-
-test("#56 a failed start's host takes its space with it by id, even when the snapshot is stale (it still lists the agent's closed tab, or doesn't list the new space at all)", async () => {
-  const stale = fakeEnd();
-  stale.deps.spaces = [{ id: "sH", tabs: [{ id: "tH" }, { id: "tA" }] }]; // tA was closed a moment ago
-  stale.deps.record = { tab: "tH", space: "sH", created: true };
-  await endHost(stale.deps);
-  assert.ok(!stale.log.some(([n]) => n === "space.close"), "by default a space with another tab in the snapshot is kept (Done's way)");
-  const forced = fakeEnd();
-  forced.deps.spaces = stale.deps.spaces;
-  forced.deps.record = stale.deps.record;
-  assert.deepEqual(await endHost({ ...forced.deps, closeSpace: true }), { error: null });
-  assert.deepEqual(forced.log.filter(([n]) => n === "space.close"), [["space.close", { id: "sH", confirmed: true }]], "closed once, after the host's tab");
-  assert.ok(forced.log.findIndex(([n]) => n === "tab.close") < forced.log.findIndex(([n]) => n === "space.close"));
-  const unlisted = fakeEnd();
-  unlisted.deps.spaces = [{ id: "sR", tabs: [{ id: "tR" }] }]; // the snapshot predates the new space
-  unlisted.deps.record = { tab: "tH", space: "sH", created: true };
-  await endHost({ ...unlisted.deps, closeSpace: true });
-  assert.deepEqual(unlisted.log.at(-1), ["space.close", { id: "sH", confirmed: true }]);
-  const notMade = fakeEnd();
-  notMade.deps.record = { tab: "tH", space: "sR", created: false };
-  await endHost({ ...notMade.deps, closeSpace: true });
-  assert.ok(!notMade.log.some(([n]) => n === "space.close"), "a space the start didn't make is never closed");
-  const gone = fakeEnd();
-  gone.deps.record = { tab: "tH", space: "sH", created: true };
-  gone.deps.run = (n) => { if (n === "space.close") throw new Error("no such space"); };
-  assert.deepEqual(await endHost({ ...gone.deps, closeSpace: true }), { error: null }, "already closed is no failure");
-});
-
-test("#56 the agent's tab, not the host's, is the one selected once it is made in the session's space", async () => {
+test("#56 the agent's tab is the one selected once it is made in an existing space", async () => {
   const f = fakeApp();
-  await connectRun(f.deps, { ...base, kind: "investigation", space: "sH" }); // sH: the space whose first tab is the host's
+  await connectRun(f.deps, { ...base, kind: "investigation", space: "sH" }); // sH: a space that has other tabs already
   assert.deepEqual(f.runs.slice(0, 2), [["space.select", { id: "sH" }], ["tab.select", { id: "tNew" }]]);
   assert.ok(f.runs.every(([n, a]) => n !== "tab.select" || a.id === "tNew"), "no other tab is selected");
   assert.equal(f.runs.at(-1)[0], "pane.focus");
 });
 
-// ---- #57: an Investigation's host carries its own label ----
-
-const IHOST = "herdr.investigation.host";
-
-test("#57 an Investigation's host is labelled by its own label, in the repo's space, and never with the run's, the investigation's or the pane labels", async () => {
-  const f = fakeHostApp();
-  const host = await openHost(f.deps, { ...OPEN, id: "inv-x", name: "agents", label: IHOST });
-  assert.deepEqual(host, { address: "t20", tab: "tN", space: "sR", created: false });
-  assert.equal(f.log[0][0], "tab.new");
-  assert.deepEqual(f.log[1], ["hc", ["label", "t20", `${IHOST}=inv-x`, "herdr.role=host"]]);
-  const labels = f.log[1][1].slice(2);
-  assert.ok(!labels.some((l) => l.startsWith("herdr.investigation=") || l.startsWith("herdr.workflow.")), "not the agent's label, not the run's (folder or host)");
-});
-
-test("#57 a host's label is a parameter whichever way it is placed; a run's is the default", async () => {
-  const f = fakeHostApp();
-  await openHost(f.deps, { ...OPEN, id: "inv-x", name: "agents", label: IHOST });
-  assert.deepEqual(f.log[1], ["hc", ["label", "t20", `${IHOST}=inv-x`, "herdr.role=host"]], "in the repo's space too");
-  const g = fakeHostApp();
-  await openHost(g.deps, OPEN);
-  assert.deepEqual(g.log[1], ["hc", ["label", "t20", "herdr.workflow.host=41-x", "herdr.role=host"]]);
-});
-
-test("#57 hosts are found and ended by their own label: a ticket's host and an Investigation's never touch each other", async () => {
-  const ts = [
-    { address: "t1", state: "live", labels: { "herdr.workflow.host": "x" } },
-    { address: "t2", state: "live", labels: { [IHOST]: "x" } },
-  ];
-  assert.equal(findHost(ts, "x").address, "t1", "the default is the ticket's label");
-  assert.equal(findHost(ts, "x", IHOST).address, "t2");
-  assert.equal(findHost(ts, "y", IHOST), null);
-  const log = [];
-  let live = ts;
-  const hc = async (a) => { log.push(a.join(" ")); if (a[0] === "kill") live = live.filter((k) => k.address !== a[1]); return { code: 0, stdout: "", stderr: "" }; };
-  const got = await endHost({ id: "x", label: IHOST, hc, terminals: () => live, run: () => {}, spaces: [], panes: [] });
-  assert.deepEqual(got, { error: null });
-  assert.deepEqual(log, ["kill t2", "rm t2"]);
-  assert.deepEqual(live.map((k) => k.address), ["t1"]);
-});
-
-test("#57 a host that stays live after its kill is an error naming the host, whatever its label", async () => {
-  const live = [{ address: "t2", state: "live", labels: { [IHOST]: "x" } }];
-  const got = await endHost({ id: "x", label: IHOST, hc: async () => ({ code: 1, stdout: "", stderr: "denied" }), terminals: () => live, run: () => {}, spaces: [], panes: [] });
-  assert.match(got.error, /t2: denied/);
-  assert.match(got.error, /host/);
-  assert.doesNotMatch(got.error, /run's/);
-});
-
-test("#57 launch with a host required: a host that won't open fails the start with the reason, and nothing is started", async () => {
-  const f = hostLaunch({ hostFails: true });
-  await assert.rejects(launchRun(f.deps, { ...launch, hostRequired: true, who: "agent" }), /The agent didn't start: its host tab didn't open \(no room\)/);
-  assert.deepEqual(f.runs, [], "no agent was started");
-  assert.deepEqual(f.log, ["open host"], "nothing else was done: no tab, no pane.json, no host to close");
-});
-
-test("#57 launch with a host required but no way to open one fails too, and an opened host is still the parent and ended on a later failure", async () => {
-  const f = fakeLaunch();
-  await assert.rejects(launchRun(f.deps, { ...launch, hostRequired: true }), /host/);
-  const g = hostLaunch({ launch: { send: { code: 1, stdout: "", stderr: "no" } } });
-  await assert.rejects(launchRun(g.deps, { ...launch, hostRequired: true }), /take its task/);
-  assert.equal(g.runs[0][g.runs[0].indexOf("--parent") + 1], "tH");
-  assert.ok(g.log.includes("close host tH"));
-});
