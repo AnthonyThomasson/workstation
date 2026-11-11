@@ -12,8 +12,7 @@ export const startOverlay = (props) => ({
   props: { ...props, role: "start" },
 });
 
-// What the overlay needs, as plain data: the ticket (with its saved labels), where to start it from (GitHub mode has a repo and a project,
-// local mode neither), and what the sidebar already found: the matching workflows and the unreadable workflow files.
+// What the overlay needs, as plain data: the ticket (with its saved labels), where to start it from (a repo and a project), and what the sidebar already found: the matching workflows and the unreadable workflow files.
 export const startProps = ({ ticket, repo, project, where, matches, skipped }) => ({
   ticket, repo: repo ?? null, project: project ? { id: project.id, title: project.title } : null,
   where: { cwd: where?.cwd, on: where?.on },

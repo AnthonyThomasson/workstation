@@ -7,7 +7,6 @@
 import { exec, focused, hc, home, knownAgents, notify, panes, readTextFile, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
 import { connectRun, endHost, findHost, guarded, hostKey, hostTabName, launchRun, openHost, reapplyRuns, runTabParts, slotKey, undoRunTab, viewConnect, viewQuick, viewTarget, mainCheckout, prepareWorktree, out, agentArgv, branchName, FOLDER_LABEL, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, soloPrompt, workerPrompt, worktreePath } from "../runs/index.js";
 import { app } from "../widgets/index.js";
-import { localTasks, repoHasGithubRemote, tasksConfig } from "./local-tasks-env.js";
 import { blank, ROLES, isEasy } from "../workflow/index.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
@@ -49,17 +48,16 @@ export async function viewRun(running, cx, { ticket, repo, project } = {}) {
   const name = ticketName(ticket);
   try {
     if (!id) throw new Error("the run has no id, so its details can't be found");
-    // pane.json (what Start saved: repoRoot, the main checkout, which a GitHub ticket doesn't carry) is read first: both paths find
+    // pane.json (what Start saved: repoRoot, the main checkout, which the ticket doesn't carry) is read first: both paths find
     // the ticket's own space with it.
     const partial = {
       role: "run", id, orchestrator: running.address, title: name, workflow: "", branch: branchName(ticket), folder: folder ?? "",
       ticket: { number: ticket?.number ?? null, key: ticket?.key ?? null, status: ticket?.status ?? null }, projectId: project?.id ?? null,
-      ...(ticket?.local ? { taskSource: "local", mainRoot: ticket.mainRoot, repoRoot: ticket.mainRoot } : {}),
     };
     const saved = await readTextFile(`${home()}/.herdr/workflow-runs/${id}/pane.json`).catch(() => null);
     const props = reopenProps(saved, partial, running.address);
     const workDir = folder ?? props.folder;
-    const view = () => ({ slot: shared(slotKey(id)), spaces: spaces(), panes: panes(), name, folder: workDir, repoRoot: props.repoRoot ?? ticket?.mainRoot, orchestrators: [running.address, props.orchestrator], terminals: terminals() });
+    const view = () => ({ slot: shared(slotKey(id)), spaces: spaces(), panes: panes(), name, folder: workDir, repoRoot: props.repoRoot, orchestrators: [running.address, props.orchestrator], terminals: terminals() });
     if (viewQuick({
       ...view(), setSlot: (slot) => setShared(slotKey(id), slot), run,
       show: (left) => { app("terminal.show", { terminal: running.address, pane: left }).catch(() => {}); }, // if it had slipped off, put it back
@@ -102,22 +100,6 @@ async function resolveAgents(workflow, runDir) {
   return argv;
 }
 
-// With a local task source, the task as its file holds it: { ticket, local: { task, githubRemote } }; the ticket is the one Start was
-// given with the file's title, text, labels and status (the file is the truth, the sidebar's copy may be a few seconds old).
-// Nothing for a repo on GitHub tasks, so GitHub mode goes through unchanged. Throws with a message when the task's file is gone.
-async function localTaskFor(repoRoot, ticket) {
-  const local = (await tasksConfig.read(repoRoot)) === "local";
-  // The list the person clicked in was the other source (tasks.json changed since): don't start the wrong ticket.
-  if (Boolean(ticket?.local) !== local) throw new Error("The task source changed; refresh the list and try again.");
-  if (!local) return null;
-  const task = ticket?.number ? await localTasks(repoRoot).get(ticket.number) : null;
-  if (!task) throw new Error(`There is no local task #${ticket?.number ?? "?"} in ${repoRoot}'s tasks. Refresh the list and try again.`);
-  return {
-    task, githubRemote: await repoHasGithubRemote(repoRoot),
-    ticket: { ...ticket, number: task.id, title: task.title, body: task.description, labels: task.labels, status: task.status, url: undefined },
-  };
-}
-
 async function writeRunFolder(id, parts, argv) {
   const { runDir, workDir, branch, solo } = parts;
   const made = await exec("mkdir", ["-p", runDir]);
@@ -127,7 +109,7 @@ async function writeRunFolder(id, parts, argv) {
     writeTextFile(`${runDir}/worker.md`, workerPrompt(parts), null),
     writeTextFile(`${runDir}/reviewer.md`, reviewerPrompt(parts), null),
     writeTextFile(`${runDir}/investigator.md`, investigatorPrompt(parts), null),
-    writeTextFile(`${runDir}/ticket.md`, ticketFile(parts.ticket, parts.repo, parts.local), null),
+    writeTextFile(`${runDir}/ticket.md`, ticketFile(parts.ticket, parts.repo), null),
     writeTextFile(`${runDir}/spawn`, spawnScript({ id, runDir, workDir, branch, argv }), null),
     writeTextFile(`${runDir}/merge`, mergeScript({ id, workDir, branch, number: parts.ticket?.number, runDir }), null),
   ]);
@@ -160,8 +142,6 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   }
 
   const repoRoot = await mainCheckout(git, where.cwd); // the main checkout, even when Start is used from one of its worktrees
-  const found = await localTaskFor(repoRoot, ticket); // a local task: its file describes the run; the project and its status field are not used
-  if (found) { ticket = found.ticket; board = {}; repo = repo || repoRoot.split("/").filter(Boolean).pop(); }
 
   const solo = isEasy(ticket); // the easy label: the worker does the whole ticket alone, in the orchestrator's place
   const id = runId(ticket);
@@ -169,7 +149,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   const argv = await resolveAgents(workflow, runDir); // before the worktree: this fails without changing anything
   const branch = branchName(ticket);
   const workDir = await prepareWorktree(git, repoRoot, branch, worktreePath(repoRoot, branch, home()));
-  await writeRunFolder(id, { solo, workflow, ticket, repo, runDir, workDir, repoRoot, branch, local: Boolean(found), noRemote: Boolean(found) && !found.githubRemote }, argv);
+  await writeRunFolder(id, { solo, workflow, ticket, repo, runDir, workDir, repoRoot, branch }, argv);
 
   const name = ticketName(ticket);
   const props = {
@@ -178,8 +158,6 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
     projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
     // What a new orchestrator needs if this one ends and the person presses the red Merge button (bgrun.js restartOrchestrator).
     orchestratorArgv: solo ? argv.solo : argv.orchestrator, ticketLabel: key, solo,
-    // A local task: the page moves the task's file, and Merge depends on whether origin is on GitHub (no remote: a local squash).
-    ...(found ? { taskSource: "local", mainRoot: repoRoot, githubRemote: found.githubRemote } : {}),
   };
   // The orchestrator runs in the background, owned by no tab or pane, so closing the tab never ends it. It is guarded as
   // a whole: from the moment it exists View and Start see it, and the tab is opened here, not by them (bgrun.js launchRun).

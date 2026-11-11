@@ -6,9 +6,8 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, notify, panes, run, setShared, shared, spaces, terminals, readTextFile, theme, writeTextFile } from "herdr";
-import { endRun, findHost, findTicketSpace, hostKey, mergeOutcome, peekSpace, restartOrchestrator, runTabParts, slotFromPage, slotKey, RUN_LABEL as RUN, out, agentsFor, liveOrchestratorFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel, branchArgs, canMerge, finalSeen, fixMessage, fixingDone, fixingNote, fixingStart, mergeFailure, mergeSteps, mergeView, mergeWait, movesTo, openPullRequest, optionFor, parsePr, parsePrState, prStateArgs, prViewArgs, restartTask, restoreFailure, restoreFixing, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs, defaultBranchOf, localMergeSteps, localPrBody, moveToStage, squashMessage } from "../runs/index.js";
+import { endRun, findHost, findTicketSpace, hostKey, mergeOutcome, peekSpace, restartOrchestrator, runTabParts, slotFromPage, slotKey, RUN_LABEL as RUN, out, agentsFor, liveOrchestratorFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel, branchArgs, canMerge, finalSeen, fixMessage, fixingDone, fixingNote, fixingStart, mergeFailure, mergeSteps, mergeView, mergeWait, movesTo, openPullRequest, optionFor, parsePr, parsePrState, prStateArgs, prViewArgs, restartTask, restoreFailure, restoreFixing, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "../runs/index.js";
 import { openAgentPopup, S, app, icon, note, stop } from "../widgets/index.js";
-import { localTasks, repoHasGithubRemote } from "./local-tasks-env.js";
 
 const stageKey = (id) => `github-tasks.run.${id}.stage`;
 const prKey = (id) => `github-tasks.run.${id}.pr`;
@@ -20,7 +19,6 @@ const fixingKey = (id) => `github-tasks.run.${id}.fixing`; // the orchestrator i
 const leadKey = (id) => `github-tasks.run.${id}.orchestrator`; // the address of the orchestrator, when a new one was started for the run
 const POLL_MS = 30000;
 const GRACE_MS = 10000; // a just-started orchestrator may not be in the core's list yet: until then "not there" doesn't end the fixing state
-const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 
 export class RunPage {
   constructor(props) {
@@ -37,10 +35,6 @@ export class RunPage {
     this.ticket = props?.ticket ?? null; // { number, key }
     this.projectId = props?.projectId ?? null;
     this.statusField = props?.statusField ?? null; // { id, options }
-    // A run on a local task (start.js): its file in ~/.herdr/tasks moves instead of the project's Status. githubRemote: origin is on GitHub, so the pull request flow stays.
-    this.local = props?.taskSource === "local";
-    this.mainRoot = props?.mainRoot ?? props?.repoRoot ?? "";
-    this.githubRemote = props?.githubRemote !== false;
     this.stage = Number(shared(stageKey(this.id))) || 0; // the furthest status already set
     this.pr = shared(prKey(this.id)) || null; // { url, state, number }
     this.finalSeen = finalSeen({ saved: shared(finalKey(this.id)) });
@@ -132,7 +126,7 @@ export class RunPage {
   // When Merge would be allowed and the run has no pull request, open it by itself, once: the attempt is saved before it
   // is made, so neither a reload nor a failure tries again. A failure shows its error; pressing Merge opens the pull request again.
   autoPr(cx, workers, reviewers, investigators = []) {
-    if (!this.folder || !this.branch || this.noPr()) return;
+    if (!this.folder || !this.branch) return;
     const ready = canMerge({ finalSeen: this.finalSeen, workers, reviewers, investigators });
     if (!shouldAutoPr({ ready, pr: this.pr, tried: this.autoPrTried, busy: this.busy })) return;
     this.autoPrTried = true;
@@ -147,19 +141,15 @@ export class RunPage {
 
   // The ticket follows the run: In Progress as soon as the run has launched (this page is open: Start opens it right after the orchestrator
   // starts), In Review once a reviewer has. It never goes back: a ticket already at or past the stage (a re-run of one In Review or Done)
-  // keeps its status. A local task's status is the folder its file is in now; a GitHub ticket's is what Start was given.
+  // keeps its status. Its status is what Start was given.
   advance(cx, workers, reviewers) {
     const stage = stageOf({ workers, reviewers, launched: true });
     if (stage <= this.stage || this.moving) return;
-    if (this.local ? !this.mainRoot || !this.ticket?.number : !this.statusField || !this.projectId || !this.ticket?.key) return;
+    if (!this.statusField || !this.projectId || !this.ticket?.key) return;
     this.moving = true;
     cx.spawn(async (cx) => {
       try {
-        if (this.local) {
-          const tasks = localTasks(this.mainRoot);
-          const task = await tasks.get(this.ticket.number).catch(() => null);
-          if (movesTo(task?.status, stage)) await moveToStage(tasks, this.ticket.number, stage); // the task's file goes to the stage's folder
-        } else if (movesTo(this.ticket.status, stage)) {
+        if (movesTo(this.ticket.status, stage)) {
           const option = optionFor(this.statusField.options, stage);
           if (option) {
             const r = await exec("gh", statusArgs({ projectId: this.projectId, itemId: this.ticket.key, fieldId: this.statusField.id, optionId: option.id }));
@@ -177,20 +167,13 @@ export class RunPage {
   }
 
   // The run's pull request: look for it now and then, so the PR link shows once there is one and when it is merged.
-  // A local task in a repo whose origin isn't on GitHub: no pull request, and Merge is a local squash.
-  noPr() { return this.local && !this.githubRemote; }
-
   startPolling(cx) {
     if (this.polling || !this.folder) return;
     this.polling = true;
     cx.spawn(async (cx) => {
       for (;;) {
         if (this.pr?.state === "MERGED") break;
-        if (this.local && !this.busy) { // origin may be added or changed while the run goes on
-          const now = await repoHasGithubRemote(this.mainRoot).catch(() => this.githubRemote);
-          if (now !== this.githubRemote) { this.githubRemote = now; cx.notify(); }
-        }
-        if (!this.busy && !this.noPr()) {
+        if (!this.busy) {
           const r = await exec("gh", prViewArgs(this.branch), { cwd: this.folder }).catch(() => ({ code: 1, stdout: "" }));
           const found = r.code === 0 ? parsePr(r.stdout) : null;
           if (found && (found.url !== this.pr?.url || found.state !== this.pr?.state)) { this.pr = found; setShared(prKey(this.id), found); cx.notify(); }
@@ -209,7 +192,6 @@ export class RunPage {
     const hidden = view.mode === "hidden"; // gated: no button, a muted line says what it waits for
     const red = view.mode === "red";
     const tip = view.mode === "fixing" ? this.fixing.error : red ? this.failure.error
-      : this.noPr() ? "Merges the ticket branch into the default branch of the main checkout, as one commit. Nothing is pushed."
       : !this.pr ? "Opens the pull request, then merges it." : undefined;
     const merge = h_flex().id("run-merge").h(26).px(10).items_center().rounded(6).text_size(S().secondary).font_medium()
       .when(red, (el) => el.bg(t.blocked).text_color(t.background)) // red: the fix's label; pressing it hands the error to the orchestrator
@@ -240,9 +222,7 @@ export class RunPage {
   // Opens the pull request (finish.js openPullRequest: push -u, then gh pr create) and remembers it. Throws with the reason.
   async openPr() {
     const title = this.title.replace(/^#\d+\s+/, "");
-    // A local task has no GitHub issue to close: the body describes the task instead.
-    const body = this.local ? localPrBody(await localTasks(this.mainRoot).get(this.ticket?.number).catch(() => null), { id: this.ticket?.number, title }) : undefined;
-    this.pr = await openPullRequest(exec, { folder: this.folder, branch: this.branch, title, number: this.ticket?.number, body });
+    this.pr = await openPullRequest(exec, { folder: this.folder, branch: this.branch, title, number: this.ticket?.number });
     setShared(prKey(this.id), this.pr);
   }
 
@@ -280,7 +260,7 @@ export class RunPage {
     this.busy = "fix"; this.error = null; this.note = null; cx.notify();
     cx.spawn(async (cx) => {
       try {
-        const input = { failure, branch: this.branch, workDir: this.folder, noRemote: this.noPr() };
+        const input = { failure, branch: this.branch, workDir: this.folder };
         let lead = orchestratorOf(terminals(), this.orchestrator);
         if (!lead?.live) { // this run may have a live orchestrator the page did not know of: use it, don't start a second one
           const other = liveOrchestratorFor(terminals(), this.id);
@@ -355,7 +335,6 @@ export class RunPage {
   merge(cx) {
     if (this.busy || this.fixing) return;
     if (this.failure) return this.sendFix(cx);
-    if (this.noPr()) return this.mergeLocal(cx);
     this.busy = "merge"; this.error = null; this.note = null; cx.notify();
     const ticketSpace = this.rememberTicketSpace(); // found now, while the worktree is there: the steps below remove it
     cx.spawn(async (cx) => {
@@ -385,38 +364,8 @@ export class RunPage {
     });
   }
 
-  // Merge for a local task with no GitHub remote (local-runs.js has the steps): the main checkout must be on the default branch and
-  // clean and the ticket worktree clean; the work is squashed into it and committed as "<title> (#<id>)", never pushed. A conflict is
-  // undone and listed. Then the task goes to done/ and the worktree, branch, run files and terminals go as in the pull request Merge.
-  // A failure before the merge turns the button red, as in the pull request Merge.
-  mergeLocal(cx) {
-    if (this.busy) return;
-    this.busy = "merge"; this.error = null; this.note = null; cx.notify();
-    const ticketSpace = this.rememberTicketSpace(); // found now, while the worktree is there: the steps below remove it
-    cx.spawn(async (cx) => {
-      try {
-        const workDirExists = (await exec("git", worktreeArgs(this.folder))).code === 0;
-        const branchExists = (await exec("git", branchArgs(this.repoRoot, this.branch))).code === 0;
-        const task = await localTasks(this.mainRoot).get(this.ticket?.number).catch(() => null);
-        const title = task?.title ?? this.title.replace(/^#\d+\s+/, "");
-        const { warnings } = await runSteps(localMergeSteps({
-          repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, defaultBranch: branchExists ? await defaultBranchOf(git, this.repoRoot) : null,
-          message: squashMessage(title, this.ticket?.number), status: await this.doneStatus(), runDir: `${home()}/.herdr/workflow-runs/${this.id}`, workDirExists, branchExists,
-        }), exec);
-        for (const body of warnings) notify({ title: "The task didn't move", body, level: "warning" });
-        if (!(await this.closeSession(ticketSpace))) { this.busy = null; cx.notify(); } // the page is still there: closeSession said what is left to do
-      } catch (e) { await this.failMerge(e, this.repoRoot); this.busy = null; cx.notify(); }
-    });
-  }
-
   // How Merge sets the ticket Done: the gh call, a warning when the project has no such option, or null when the run has no project.
-  // A local task: moving its file to done/, or a warning when the file is gone.
   async doneStatus() {
-    if (this.local) {
-      const tasks = localTasks(this.mainRoot), id = this.ticket?.number;
-      if (!id || !(await tasks.get(id).catch(() => null))) return { warn: `Task #${id ?? "?"} isn't in the local tasks any more, so it wasn't moved to done/.` };
-      return { move: () => moveToStage(tasks, id, 3) };
-    }
     if (!this.statusField || !this.projectId || !this.ticket?.key) return null;
     const option = optionFor(this.statusField.options, 3);
     if (!option) return { warn: `The project has no "Done" status, so the ticket's status wasn't set. Set it by hand.` };

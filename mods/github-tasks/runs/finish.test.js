@@ -459,23 +459,6 @@ test("merge steps, run for real: a retry after the PR merged but the cleanup sto
   assert.ok(!existsSync(w.workDir) && !existsSync(w.runDir));
 });
 
-test("prArgs takes a body of its own, for a task with no GitHub issue to close", () => {
-  const a = prArgs({ branch: "b", title: "T", number: 4, body: "Local task #4: T" });
-  assert.deepEqual(a.slice(-4), ["--title", "#4 T", "--body", "Local task #4: T"]);
-  assert.doesNotMatch(a.join(" "), /Closes/);
-  assert.equal(prArgs({ branch: "b", title: "T", number: 4, body: "" }).at(-1), "", "an empty body is still the caller's");
-});
-
-test("mergeSteps can move a local task's file to done/ instead of setting a project status", async () => {
-  const moved = [];
-  const steps = mergeSteps({ ...ctx, status: { move: async () => { moved.push("done"); } } });
-  assert.deepEqual(names(steps), ["tree-status", "fetch", "ahead", "pr-merge", "status", "remove-worktree", "delete-branch", "remove-run-files"]);
-  const { exec } = fake();
-  const out = await runSteps(steps, exec);
-  assert.deepEqual(moved, ["done"]);
-  assert.match(out.done.join(";"), /moved the task to done/);
-});
-
 test("runSteps: a step can be code (run) and a check can read the output (check)", async () => {
   const { exec } = fake();
   const ran = [];
@@ -581,8 +564,8 @@ const here = { branch: "workflow/9-x", workDir: "/r-9-x" };
 
 test("fixMessage is one line with no double quotes, carrying the label, the whole error, the branch and the worktree", () => {
   const error = 'Merging b conflicts in:\n  a.txt\n  "b c.txt"\nNothing was cleaned up.';
-  for (const kind of Object.keys(LABELS)) for (const noRemote of [false, true]) {
-    const text = fixMessage({ failure: failure(kind, error), ...here, noRemote });
+  for (const kind of Object.keys(LABELS)) {
+    const text = fixMessage({ failure: failure(kind, error), ...here });
     assert.ok(!text.includes('"') && !text.includes("\n"), `${kind}: one line, no double quotes`);
     assert.ok(text.includes(LABELS[kind]), kind);
     assert.ok(text.includes("Merging b conflicts in: a.txt 'b c.txt' Nothing was cleaned up."), "the error, on one line");
@@ -592,7 +575,7 @@ test("fixMessage is one line with no double quotes, carrying the label, the whol
   }
 });
 
-test("fixMessage per kind, with a remote", () => {
+test("fixMessage per kind", () => {
   const m = (kind) => fixMessage({ failure: failure(kind), ...here });
   assert.match(m("conflicts"), /rebase.*default branch.*\/r-9-x/);
   assert.ok(m("conflicts").includes("`git -C /r-9-x push --force-with-lease origin workflow/9-x`"));
@@ -605,20 +588,9 @@ test("fixMessage per kind, with a remote", () => {
   assert.match(m("merge"), /needs the person.*say that you can't fix it/);
 });
 
-test("fixMessage for a local run pushes nothing", () => {
-  for (const kind of Object.keys(LABELS)) {
-    const text = fixMessage({ failure: failure(kind), ...here, noRemote: true });
-    assert.doesNotMatch(text, /git -C \S+ push/, kind);
-    assert.doesNotMatch(text, /force-with-lease|origin/, kind);
-    assert.match(text, /push nothing/, kind);
-  }
-  assert.match(fixMessage({ failure: failure("conflicts"), ...here, noRemote: true }), /rebase it onto the default branch in \/r-9-x/);
-  assert.match(fixMessage({ failure: failure("commit"), ...here, noRemote: true }), /commit what is left.*new work\)\. Report back when it is done/);
-});
-
 test("fixMessage and restartTask ask for a report back once", () => {
-  for (const kind of Object.keys(LABELS)) for (const noRemote of [false, true]) {
-    assert.equal(fixMessage({ failure: failure(kind), ...here, noRemote }).match(/report back/gi).length, 1, `${kind} ${noRemote}`);
+  for (const kind of Object.keys(LABELS)) {
+    assert.equal(fixMessage({ failure: failure(kind), ...here }).match(/report back/gi).length, 1, kind);
   }
 });
 
@@ -631,7 +603,6 @@ test("restartTask is the first task of a new orchestrator: the rules, no plannin
   assert.ok(text.includes("Fix conflicts") && text.includes("the error: it failed") && text.includes("/r-9-x") && text.includes("workflow/9-x"));
   assert.ok(text.includes("--force-with-lease"));
   assert.ok(!text.includes('"') && !text.includes("\n"));
-  assert.doesNotMatch(restartTask({ runDir: "/r", failure: failure("conflicts"), ...here, noRemote: true }), /origin|push --force/);
   assert.match(restartTask({ runDir: "/r", failure: failure("merge"), ...here }), /can't fix it/);
 });
 
@@ -791,10 +762,9 @@ test("openPullRequest pushes with -u, then opens the pull request and returns it
   assert.deepEqual(calls, ["git -C /w push -u origin workflow/9-x", "gh pr create --head workflow/9-x --title #9 Do it --body Closes #9"]);
 });
 
-test("openPullRequest: a body replaces the Closes line, and 'already exists' on stderr still gives the url", async () => {
+test("openPullRequest: 'already exists' on stderr still gives the url", async () => {
   const { exec, calls } = prExec({ "pr create": { code: 1, stderr: "a pull request for branch already exists:\nhttps://github.com/o/r/pull/3\n" } });
-  assert.equal((await openPullRequest(exec, { ...pr, body: "Local task 9" })).number, "3");
-  assert.ok(calls[1].endsWith("--body Local task 9"));
+  assert.equal((await openPullRequest(exec, pr)).number, "3");
 });
 
 test("openPullRequest: a failed push is a Push branch failure, a refused pull request is Fix merge", async () => {
