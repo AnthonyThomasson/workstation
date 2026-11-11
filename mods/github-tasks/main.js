@@ -6,7 +6,7 @@
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
 // workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket, in a popup (props.popup)
 // opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow or refactor type (props.kind) in the center (workflow-editor.js); "run", a started
-// workflow's agents, beside its orchestrator (run-page.js); "investigation", a New Task session's Done button, beside its agent (investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js).
+// workflow's agents, beside its orchestrator (run-page.js); "investigation", a New Task session's Done button, beside its agent (investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js); "agent-bar", the bar over a peeked agent's terminal in its popup (agent-bar.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, notify, shared, setShared, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
@@ -27,6 +27,7 @@ import { WorkflowEditor } from "./workflow-editor.js";
 import { editorOverlay } from "./popup.js";
 import { RunPage } from "./run-page.js";
 import { PromptPage } from "./prompts-page.js";
+import { AgentBar } from "./agent-bar.js";
 import { WorkflowList } from "./workflow-list.js";
 import { REFACTOR } from "./kinds.js";
 import { loadWorkflows } from "./workflow-env.js";
@@ -98,6 +99,7 @@ export default class GitHubTasks extends View {
     if (this.role === "refactor") { this.refactorPage = new RefactorPage(blockProps(), cx); return; }
     if (this.role === "start") { this.startPage = new StartPage(blockProps(), cx); return; }
     if (this.role === "prompt") { this.promptPage = new PromptPage(blockProps()); return; }
+    if (this.role === "agent-bar") { this.agentBar = new AgentBar(blockProps(), cx); return; }
     if (this.role === "settings") {
       this.settingsKey = null;
       this.page = null;
@@ -276,6 +278,7 @@ export default class GitHubTasks extends View {
     if (this.role === "refactor") return this.refactorPage.render(cx);
     if (this.role === "start") return this.startPage.render(cx);
     if (this.role === "prompt") return this.promptPage.render(cx);
+    if (this.role === "agent-bar") return this.agentBar.render(cx);
     if (this.role === "settings") return this.renderSettings(cx);
     const t = theme();
 

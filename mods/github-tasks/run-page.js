@@ -7,6 +7,7 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, notify, panes, run, setShared, shared, spaces, terminals, readTextFile, theme, writeTextFile } from "herdr";
 import { endRun, findHost, findTicketSpace, hostKey, mergeOutcome, peekSpace, restartOrchestrator, runTabParts, slotFromPage, slotKey } from "./bgrun.js";
+import { openAgentPopup } from "./agent-bar.js";
 import { S, app, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
 import { agentsFor, liveOrchestratorFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
@@ -434,12 +435,12 @@ export class RunPage {
 
   ticketSpace() { return findTicketSpace({ spaces: spaces(), panes: panes(), folder: this.folder, repoRoot: this.repoRoot }); }
 
-  // Looks in on a worker, reviewer or investigator. From the ticket's space first, so that keeping its terminal as a tab puts it there and
-  // not in whichever space (the repo's) the person last looked at.
+  // Looks in on a worker, reviewer or investigator: the ticket's space is selected first (so the popup opens over the ticket and not over
+  // whichever space the person last looked at), then our own popup (agent-popup.js) opens over its live terminal. Esc closes it.
   peek(address) {
     const space = peekSpace({ slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes(), folder: this.folder, repoRoot: this.repoRoot });
     if (space) run("space.select", { id: space });
-    run("terminal.peek", { terminal: address });
+    openAgentPopup(address);
   }
 
   // Ends the run: its orchestrator, workers, reviewers and investigators are killed on purpose (a background run ends no other way), then
