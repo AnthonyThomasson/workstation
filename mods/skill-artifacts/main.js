@@ -1,16 +1,15 @@
-// The HTML and Markdown reports agents write, in one list: the project's Claude Code scratchpads, the top level of
-// $TMPDIR, /tmp, and the project's Herdr workflow runs. Newest first, last seven days.
+// The HTML reports agents write, in one list: the project's Claude Code scratchpads, the top level of $TMPDIR and
+// /tmp. Newest first, last seven days.
 // Roles (props.role): the panel (default); "toggle", the tab-bar button that opens or closes the layout's shared
-// side panel on this panel; dialogs: "reader" (a Markdown report) and "delete" (the confirmation).
+// side panel on this panel; dialog: "delete" (the confirmation).
 import { View, div, svg } from "gpui-kit";
-import { v_flex, h_flex, InputState, Input, TextView } from "gpui-base";
-import { exec, run, spaces, agents, focused, shared, setShared, theme, settings, layout, openOverlay, closeOverlay, readTextFile, props as blockProps } from "herdr";
-import { TABS, scan, scanFolders, filterRows, age, size } from "./model.js";
+import { v_flex, h_flex, InputState, Input } from "gpui-base";
+import { exec, run, spaces, agents, focused, shared, setShared, theme, settings, layout, openOverlay, closeOverlay, props as blockProps } from "herdr";
+import { scan, scanFolders, filterRows, age, size } from "./model.js";
 
 // The side panel is the layout's shared "panel" column, whose "panel-body" stack holds Files, Changes and this
 // panel (child "skill-artifacts"). It is open only while the column is shown on it.
 const PANEL = "panel", STACK = "panel-body", SHOWN = "skill-artifacts";
-const TAB_KEY = "skill-artifacts.tab.v1"; // the selected tab
 const REFRESH_KEY = "skill-artifacts.refresh.v1"; // a dialog bumps it after a delete, so the panel rescans
 const POLL = 20000, NOTICE_MS = 4000;
 const PATHS = 'PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"; export PATH';
@@ -43,17 +42,6 @@ function secondary(id, label, t, onClick, opts = {}) {
     .border_1().border_color(t.border).text_size(S().label).text_color(color).cursor_pointer().hover((s) => s.bg(t.hover))
     .on_mouse_down("left", stop).on_click(onClick)
     .when(Boolean(opts.icon), (el) => el.child(icon(opts.icon, 13, color))).child(label);
-}
-
-function segmented(id, options, value, t, onPick) {
-  return h_flex().id(id).w_full().p(2).gap(2).rounded(8).bg(t.chrome).border_1().border_color(t.border).children(options.map(([key, label, count]) => {
-    const on = key === value;
-    return h_flex().id(`${id}-${key}`).flex_1().min_w(0).h(26).px(2).gap(4).justify_center().items_center().rounded(6)
-      .bg(on ? t.raised : t.chrome).text_size(S().label).text_color(on ? t.foreground : t.muted).when(on, (el) => el.font_semibold())
-      .cursor_pointer().hover((s) => s.text_color(t.foreground)).on_mouse_down("left", stop).on_click((_e, cx) => onPick(key, cx))
-      .child(div().truncate().child(label))
-      .when(count != null, (el) => el.child(div().flex_none().text_color(t.muted).child(String(count))));
-  }));
 }
 
 // ---- The tab-bar button ----
@@ -104,10 +92,10 @@ export default class SkillArtifacts extends View {
     this.handle = cx.focus_handle();
     if (this.role !== "panel") { this.handle.focus(); return this.initDialog(cx); }
 
-    this.data = {}; // tab -> { rows, error }
+    this.data = null; // { rows, error } of the last scan
     this.query = ""; this.open = null; this.ctx = null; this.ctxKey = null; this.token = 0; this.loading = false; this.pending = false;
     this.lastAgent = null; this.notice = null; this.seenRefresh = shared(REFRESH_KEY) ?? 0; this.wasHidden = true;
-    this.filter = InputState.new({ placeholder: "Filter by name or where" });
+    this.filter = InputState.new({ placeholder: "Filter by title, name or where" });
     this.filter.on("change", (_e, cx) => { this.query = this.filter.value(); cx.notify(); });
     // No scans while the panel is hidden; showing it again rescans (see render). $TMPDIR is only ever read at its top level.
     cx.timer.every(POLL, (cx) => { if (shownHere()) this.refresh(cx); });
@@ -136,11 +124,8 @@ export default class SkillArtifacts extends View {
       read: async (path, on) => { const r = await sh('head -c 8192 -- "$1"', [path], on); return r.code === 0 ? r.stdout : null; } };
     cx.spawn(async (cx) => {
       try {
-        await Promise.all(TABS.map(async ([tab]) => {
-          const res = await scan(io, tab, { on: ctx.on, folders: ctx.folders }).catch((e) => ({ rows: [], error: String(e?.message ?? e) }));
-          if (token !== this.token) return;
-          this.data[tab] = res; cx.notify();
-        }));
+        const res = await scan(io, { on: ctx.on, folders: ctx.folders }).catch((e) => ({ rows: [], error: String(e?.message ?? e) }));
+        if (token === this.token) { this.data = res; cx.notify(); }
       } finally {
         if (token === this.token) { this.loading = false; if (this.pending) this.refresh(cx); }
       }
@@ -156,17 +141,7 @@ export default class SkillArtifacts extends View {
   // ---- Actions on a row ----
 
   openFile(row, cx) {
-    const on = this.ctx?.on ?? null;
-    if (row.kind === "md") {
-      cx.spawn(async () => {
-        const text = await readTextFile(row.path, on ? { on } : {}).catch(() => null);
-        openOverlay({ mod: "skill-artifacts", kind: "dialog", width: 760, height: 620,
-          props: { role: "reader", title: row.base ?? row.name, path: row.path, on, text,
-            error: `Could not read ${row.path} (a file over 1 MiB is only opened externally)` } });
-      });
-      return;
-    }
-    this.local(cx, on, "Open an HTML report on this computer", async () => exec("open", [row.path]));
+    this.local(cx, this.ctx?.on ?? null, "Open an HTML report on this computer", async () => exec("open", [row.path]));
   }
 
   // Runs fn for a file on this computer; a remote space's files can't be opened or revealed here.
@@ -222,7 +197,7 @@ export default class SkillArtifacts extends View {
     const shownNow = shownHere();
     const ctx = this.context(), key = ctx ? `${ctx.on}|${ctx.folders.join("|")}` : null;
     if (key !== this.ctxKey) {
-      this.ctxKey = key; this.ctx = ctx; this.token++; this.loading = false; this.pending = false; this.data = {}; this.open = null;
+      this.ctxKey = key; this.ctx = ctx; this.token++; this.loading = false; this.pending = false; this.data = null; this.open = null;
       if (ctx && shownNow) later(cx, (cx) => this.refresh(cx)); // a hidden panel never scans; showing it does
     }
     const bumped = shared(REFRESH_KEY) ?? 0;
@@ -231,10 +206,8 @@ export default class SkillArtifacts extends View {
     if (shownNow && this.wasHidden && ctx) later(cx, (cx) => this.refresh(cx));
     this.wasHidden = !shownNow;
 
-    const tabKey = TABS.some(([k]) => k === shared(TAB_KEY)) ? shared(TAB_KEY) : TABS[0][0];
     const node = find(layout(), PANEL);
-    const options = TABS.map(([k, label]) => [k, label, this.data[k] ? this.data[k].rows.length : null]);
-    const body = !ctx ? v_flex().flex_1().p(16).child(note(t, "Open a space to see its reports.")) : this.renderList(t, tabKey);
+    const body = !ctx ? v_flex().flex_1().p(16).child(note(t, "Open a space to see its reports.")) : this.renderList(t);
     const n = this.fresh();
     return v_flex().id("skill-artifacts").track_focus(this.handle).size_full().min_h(0).rounded(10).overflow_hidden()
       .bg(t.background).border_1().border_color(t.border).text_color(t.foreground).text_size(S().body)
@@ -242,8 +215,7 @@ export default class SkillArtifacts extends View {
         .child(div().flex_1().text_size(S().title).font_semibold().child("Skill Artifacts"))
         .when(Boolean(node), (el) => el.child(h_flex().id("close").size(24).justify_center().items_center().rounded(6).cursor_pointer().hover((s) => s.bg(t.hover))
           .on_mouse_down("left", stop).on_click(() => run("layout.hide", { id: PANEL })).child(icon("close", 14, t.muted)))))
-      .child(v_flex().flex_none().px(14).py(10).gap(8).border_b(1).border_color(t.border)
-        .child(segmented("tab", options, tabKey, t, (k, cx) => { setShared(TAB_KEY, k); this.open = null; cx.notify(); }))
+      .child(v_flex().flex_none().px(14).py(10).border_b(1).border_color(t.border)
         .child(h_flex().h(30).px(10).gap(8).items_center().rounded(6).border_1().border_color(t.border).bg(t.chrome)
           .child(icon("search", 14, t.muted))
           .child(Input.new(this.filter).flex_1().min_w(0).h_full().text_size(S().secondary).text_color(t.foreground))))
@@ -255,8 +227,8 @@ export default class SkillArtifacts extends View {
       });
   }
 
-  renderList(t, tabKey) {
-    const d = this.data[tabKey];
+  renderList(t) {
+    const d = this.data;
     if (!d) return v_flex().flex_1().p(16).gap(10).children([0, 1, 2, 3].map((i) => div().h(40).rounded(8).bg(t.chrome).opacity(1 - i * 0.2)));
     const rows = filterRows(d.rows, this.query), now = Date.now();
     let list;
@@ -264,9 +236,11 @@ export default class SkillArtifacts extends View {
       list = v_flex().p(16).gap(8).child(h_flex().gap(7).items_center().text_color(t.ansi1).child(icon("alert", 14, t.ansi1)).child("Could not read this place"))
         .child(note(t, d.error));
     } else if (!rows.length) {
-      list = div().p(16).child(note(t, this.query ? "Nothing matches the filter." : EMPTY[tabKey]));
+      list = div().p(16).child(note(t, this.query ? "Nothing matches the filter." : EMPTY));
     } else {
-      list = v_flex().pt(4).pb(16).children(rows.map((r) => this.row(t, r, now)));
+      list = v_flex().pt(4).pb(16)
+        .when(Boolean(d.error), (el) => el.child(div().mx(10).mb(6).child(note(t, `Some places could not be read. ${d.error}`, t.blocked))))
+        .children(rows.map((r) => this.row(t, r, now)));
     }
     return div().id("list").flex_1().min_h(0).overflow_y_scrollbar().child(list);
   }
@@ -276,10 +250,9 @@ export default class SkillArtifacts extends View {
     const head = h_flex().id(`row-${r.path}`).min_h(48).px(10).py(6).gap(10).items_center().rounded(8).cursor_pointer()
       .when(!open, (el) => el.hover((s) => s.bg(t.hover)))
       .on_mouse_down("left", stop).on_click((_e, cx) => { this.open = open ? null : r.path; cx.notify(); })
-      .child(div().flex_none().w(34).text_size(S().label).font_semibold().text_color(r.kind === "html" ? t.accent : t.muted).child(r.kind === "html" ? "HTML" : "MD"))
+      .child(div().flex_none().w(34).text_size(S().label).font_semibold().text_color(t.accent).child("HTML"))
       .child(v_flex().flex_1().min_w(0)
-        .child(div().truncate().text_size(S().body).font_medium().child(r.name))
-        .when(Boolean(r.subtitle), (el) => el.child(div().truncate().text_size(S().secondary).text_color(t.foreground).child(r.subtitle)))
+        .child(div().truncate().text_size(S().body).font_medium().child(r.title || r.name))
         .child(div().truncate().text_size(S().secondary).text_color(t.muted).child(r.context)))
       .child(div().flex_none().text_size(S().label).text_color(t.muted).child(age(r.mtime, now)))
       .child(icon(open ? "chevron-down" : "chevron-right", 14, t.muted));
@@ -303,13 +276,6 @@ export default class SkillArtifacts extends View {
   renderDialog(cx) {
     const t = theme(), p = this.p ?? {};
     const close = () => closeOverlay(blockProps()?.overlay);
-    if (p.role === "reader") {
-      const body = p.text != null ? TextView.markdown("report-md", p.text).selectable(true) : note(t, p.error ?? "Could not read this file.", t.ansi1);
-      const external = () => { if (!p.on) exec("open", [p.path]).catch(() => null); };
-      return dialogFrame(t, "reader", this.handle, p.title ?? "Report",
-        [div().id("report-body").flex_1().min_h(0).overflow_y_scrollbar().px(14).py(12).child(body)],
-        [!p.on && dialogButton("external", "Open externally", t, external), dialogButton("close", "Close", t, close, "primary")], close);
-    }
     if (p.role === "delete") {
       const go = (_e, cx) => {
         if (this.busy) return;
@@ -328,9 +294,4 @@ export default class SkillArtifacts extends View {
   }
 }
 
-const EMPTY = {
-  scratch: "No reports in this project's scratchpads in the last 7 days.",
-  tmpdir: "No reports at the top of $TMPDIR in the last 7 days.",
-  tmp: "No reports in /tmp in the last 7 days.",
-  runs: "No reports in this project's workflow runs in the last 7 days.",
-};
+const EMPTY = "No HTML reports in this project's scratchpads, $TMPDIR or /tmp in the last 7 days.";

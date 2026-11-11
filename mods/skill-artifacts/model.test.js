@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  kindOf, parseStat, sortRows, recent, filterRows, age, size, htmlTitle, encodeProject, worktreeRepo,
-  matchProject, runMatches, splitHome, parseRuns, parseScratchPath, scan, scanFolders,
-  TMPDIR_FILES, SCRATCH_FILES, TMP_FILES, RUN_LIST,
+  isHtml, parseStat, sortRows, recent, filterRows, age, size, htmlTitle, encodeProject, worktreeRepo,
+  matchProject, splitHome, parseScratchPath, parseMarkers, skipReport, NOISE_DIR, scan, scanFolders,
+  TMPDIR_FILES, SCRATCH_FILES, TMP_FILES,
 } from "./model.js";
 
 const HOME = "/Users/a";
@@ -11,20 +11,20 @@ const NOW = 1_800_000_000_000;
 const sec = (msAgo) => Math.floor((NOW - msAgo) / 1000);
 const H = 3600 * 1000, D = 24 * H;
 
-test("only HTML, HTM and Markdown files are reports", () => {
-  assert.equal(kindOf("a.html"), "html");
-  assert.equal(kindOf("A.HTM"), "html");
-  assert.equal(kindOf("notes.md"), "md");
-  assert.equal(kindOf("notes.md.bak"), null);
-  assert.equal(kindOf("a.txt"), null);
+test("only HTML and HTM files are reports; Markdown is not", () => {
+  assert.equal(isHtml("a.html"), true);
+  assert.equal(isHtml("A.HTM"), true);
+  assert.equal(isHtml("notes.md"), false);
+  assert.equal(isHtml("a.html.bak"), false);
+  assert.equal(isHtml("a.txt"), false);
 });
 
-test("stat lines: mtime, size and the rest as the path (spaces allowed); junk and repeats are dropped", () => {
-  const out = parseStat("100 5 /tmp/a b.md\n200 7 /tmp/x.html\nnot a line\n300 1 /tmp/x.txt\n200 7 /tmp/x.html\n10 2 /tmp//y.md\n");
-  assert.deepEqual(out.map((r) => [r.path, r.name, r.kind, r.mtime, r.size]), [
-    ["/tmp/a b.md", "a b.md", "md", 100000, 5],
-    ["/tmp/x.html", "x.html", "html", 200000, 7],
-    ["/tmp/y.md", "y.md", "md", 10000, 2],
+test("stat lines: mtime, size and the rest as the path (spaces allowed); junk, Markdown and repeats are dropped", () => {
+  const out = parseStat("100 5 /tmp/a b.html\n200 7 /tmp/x.htm\nnot a line\n300 1 /tmp/x.txt\n150 1 /tmp/notes.md\n200 7 /tmp/x.htm\n10 2 /tmp//y.html\nM /tmp/a/.git\n");
+  assert.deepEqual(out.map((r) => [r.path, r.name, r.mtime, r.size]), [
+    ["/tmp/a b.html", "a b.html", 100000, 5],
+    ["/tmp/x.htm", "x.htm", 200000, 7],
+    ["/tmp/y.html", "y.html", 10000, 2],
   ]);
   assert.deepEqual(parseStat(null), []);
 });
@@ -40,12 +40,13 @@ test("only the last seven days are kept", () => {
   assert.deepEqual(recent(rows, NOW).map((r) => r.name), ["new"]);
 });
 
-test("the filter needs every word in the name or where the file came from, in any case", () => {
-  const rows = [{ name: "report.md", context: "workstation · 4aafae90" }, { name: "plan.md", context: "$TMPDIR" }];
+test("the filter needs every word in the title, the name or where the file came from, in any case", () => {
+  const rows = [{ name: "report.html", title: "Architecture review", context: "workstation · 4aafae90" }, { name: "plan.html", context: "$TMPDIR" }];
   assert.equal(filterRows(rows, "").length, 2);
-  assert.deepEqual(filterRows(rows, "REPORT").map((r) => r.name), ["report.md"]);
-  assert.deepEqual(filterRows(rows, "workstation 4aaf").map((r) => r.name), ["report.md"]);
-  assert.deepEqual(filterRows(rows, "tmpdir plan").map((r) => r.name), ["plan.md"]);
+  assert.deepEqual(filterRows(rows, "REPORT").map((r) => r.name), ["report.html"]);
+  assert.deepEqual(filterRows(rows, "architecture").map((r) => r.name), ["report.html"]);
+  assert.deepEqual(filterRows(rows, "workstation 4aaf").map((r) => r.name), ["report.html"]);
+  assert.deepEqual(filterRows(rows, "tmpdir plan").map((r) => r.name), ["plan.html"]);
   assert.deepEqual(filterRows(rows, "report tmpdir"), []);
 });
 
@@ -101,29 +102,34 @@ test("project folders: the folder, what is inside it, its worktrees and the proj
   assert.equal(matchProject(dir(main), ["", "ws"], HOME), null);
 });
 
-test("a run belongs to the project of its worktree, its repo or a sibling worktree", () => {
-  const run = { folder: `${HOME}/.herdr/worktrees/ws/wf-80`, repoRoot: `${HOME}/code/ws` };
-  assert.equal(runMatches(run, [`${HOME}/code/ws`], HOME), true); // the main checkout
-  assert.equal(runMatches(run, [`${HOME}/code/ws/src/lib`], HOME), true); // inside it
-  assert.equal(runMatches(run, [`${HOME}/.herdr/worktrees/ws/wf-80`], HOME), true); // the run's worktree
-  assert.equal(runMatches(run, [`${HOME}/.herdr/worktrees/ws/wf-80--job`], HOME), true); // a sibling worktree
-  assert.equal(runMatches(run, [`${HOME}/.herdr/worktrees/ws/wf-80/mods`], HOME), true);
-  assert.equal(runMatches(run, [`${HOME}/code/other`], HOME), false);
-  assert.equal(runMatches(run, [`${HOME}/.herdr/worktrees/other/x`], HOME), false);
-  assert.equal(runMatches(run, [], HOME), false);
-  assert.equal(runMatches({}, [`${HOME}/code/ws`], HOME), false);
-  assert.equal(runMatches(null, [`${HOME}/code/ws`], HOME), false);
-  assert.equal(runMatches({ folder: 3 }, [`${HOME}/code/ws`], HOME), false);
-});
-
-test("script output: the home line, run lines, scratchpad paths", () => {
+test("script output: the home line, scratchpad paths, marker lines", () => {
   assert.deepEqual(splitHome("/Users/a\np1\np2\n"), { home: "/Users/a", lines: ["p1", "p2"] });
   assert.deepEqual(splitHome(""), { home: "", lines: [] });
-  const runs = parseRuns(['/r/1-x\t{"folder":"/f","repoRoot":"/g","title":"T"}', "/r/2-y\tnot json", "no tab", '/r/3-z\t[1]']);
-  assert.deepEqual(runs, [{ dir: "/r/1-x", id: "1-x", folder: "/f", repoRoot: "/g", title: "T" }]);
   assert.deepEqual(parseScratchPath("/private/tmp/claude-501/-Users-a-ws/abcd1234-9/scratchpad/gallery/g.html"),
     { project: "-Users-a-ws", session: "abcd1234-9", rel: "gallery/g.html" });
-  assert.equal(parseScratchPath("/private/tmp/other/x.md"), null);
+  assert.equal(parseScratchPath("/private/tmp/other/x.html"), null);
+  assert.deepEqual([...parseMarkers("1 2 /x.html\nM /private/tmp/repo/.git\nM /private/tmp/app/package.json\nM /private/tmp/app/node_modules\nM rel\n")].sort(),
+    ["/private/tmp/app", "/private/tmp/repo"]);
+});
+
+test("HTML in a cloned repo or in test output is skipped; the top of a source never is", () => {
+  const markers = new Set(["/private/tmp/clone", "/private/tmp/app"]);
+  const skip = (path, rel) => skipReport(path, rel, markers);
+  // a folder with .git, package.json or node_modules beside it
+  assert.equal(skip("/private/tmp/clone/docs/a.html", "clone/docs/a.html"), true);
+  assert.equal(skip("/private/tmp/clone/index.html", "clone/index.html"), true);
+  assert.equal(skip("/private/tmp/app/x.html", "app/x.html"), true);
+  // test and build output by name (GdUnit's report_<n>, test-report, coverage ...)
+  for (const d of ["report_1", "report_12", "test-report", "test_results", "test-results", "coverage", "htmlcov", "playwright-report", "allure-report", "lcov-report", "build", "dist", "target", "node_modules", ".git", ".cache", "Report_3"]) {
+    assert.equal(skip(`/private/tmp/${d}/index.html`, `${d}/index.html`), true, d);
+  }
+  // an ordinary folder of reports is listed, and so is a file at the top
+  for (const d of ["architecture", "fe-perf-findings", "security-report", "reports", "reporting", "my-coverage-notes", "distance"]) {
+    assert.equal(skip(`/private/tmp/${d}/index.html`, `${d}/index.html`), false, d);
+  }
+  assert.equal(skip("/private/tmp/clone.html", "clone.html"), false);
+  assert.equal(skip("/private/tmp/report_1.html", "report_1.html"), false);
+  assert.equal(NOISE_DIR.test("report"), false);
 });
 
 test("the scripts never walk or glob $TMPDIR, and prune what is noise", () => {
@@ -133,8 +139,12 @@ test("the scripts never walk or glob $TMPDIR, and prune what is noise", () => {
   assert.match(SCRATCH_FILES, /node_modules.*\.git|\.git.*node_modules/);
   assert.match(TMP_FILES, /-maxdepth 2/);
   assert.match(TMP_FILES, /claude-\$u/);
-  assert.match(RUN_LIST, /workflow-runs/);
-  for (const s of [TMPDIR_FILES, SCRATCH_FILES, TMP_FILES]) assert.match(s, /-mtime -7/);
+  for (const s of [TMPDIR_FILES, SCRATCH_FILES, TMP_FILES]) {
+    assert.match(s, /-mtime -7/);
+    assert.match(s, /-iname '\*\.html' -o -iname '\*\.htm'/);
+    assert.doesNotMatch(s, /\.md/); // HTML only
+  }
+  for (const s of [SCRATCH_FILES, TMP_FILES]) assert.match(s, /-mindepth 2 -maxdepth 2/); // marker finds stay shallow
 });
 
 test("the folders a scan is matched against", () => {
@@ -150,8 +160,7 @@ function fakeIO({ files = {}, texts = {}, fail = {} } = {}) {
   return {
     calls,
     sh: async (script, args) => {
-      const key = script === TMPDIR_FILES ? "tmpdir" : script === TMP_FILES ? "tmp" : script === SCRATCH_FILES ? "scratch-files"
-        : script.startsWith("printf '%s\\n' \"$HOME\"; u=") ? "scratch-projects" : script === RUN_LIST ? "run-list" : "run-files";
+      const key = script === TMPDIR_FILES ? "tmpdir" : script === TMP_FILES ? "tmp" : script === SCRATCH_FILES ? "scratch-files" : "scratch-projects";
       calls.push([key, args]);
       if (fail[key]) return { code: 1, stdout: "", stderr: "boom\nbad thing" };
       return { code: 0, stdout: files[key] ?? "", stderr: "" };
@@ -160,95 +169,107 @@ function fakeIO({ files = {}, texts = {}, fail = {} } = {}) {
   };
 }
 
-test("scratchpads: only the active project's, labelled by project and session, with HTML titles", async () => {
-  const ws = encodeProject(`${HOME}/code/ws`), other = encodeProject(`${HOME}/code/other`);
+const WS = encodeProject(`${HOME}/code/ws`), OTHER = encodeProject(`${HOME}/code/other`);
+const SP = (project, session = "sess0001-aaaa") => `/private/tmp/claude-501/${project}/${session}/scratchpad`;
+
+test("one list merges scratchpads, $TMPDIR and /tmp newest first, with titles, contexts and no Markdown", async () => {
   const io = fakeIO({
     files: {
-      "scratch-projects": `${HOME}\n${ws}\n${other}\n`,
+      "scratch-projects": `${HOME}\n${WS}\n${OTHER}\n`,
       "scratch-files": [
-        `${sec(H)} 10 /private/tmp/claude-501/${ws}/sess0001-aaaa/scratchpad/report.md`,
-        `${sec(2 * H)} 20 /private/tmp/claude-501/${ws}/sess0001-aaaa/scratchpad/gallery/g.html`,
-        `${sec(9 * D)} 20 /private/tmp/claude-501/${ws}/sess0001-aaaa/scratchpad/old.md`,
-        `${sec(H)} 5 /private/tmp/claude-501/${other}/sess0002-bbbb/scratchpad/leak.md`,
+        `${sec(5 * H)} 10 ${SP(WS)}/report.html`,
+        `${sec(2 * H)} 20 ${SP(WS)}/gallery/g.html`,
+        `${sec(2 * H)} 20 ${SP(WS)}/notes.md`,
+        `${sec(9 * D)} 20 ${SP(WS)}/old.html`,
+        `${sec(H)} 5 ${SP(OTHER, "sess0002-bbbb")}/leak.html`,
+      ].join("\n"),
+      tmpdir: `${sec(3 * H)} 10 /var/T/plain.html\n${sec(H / 2)} 10 /var/T/architecture-review-1.html\n${sec(D * 8)} 1 /var/T/ancient.html`,
+      tmp: `${sec(4 * H)} 1 /private/tmp/a.html\n${sec(6 * H)} 1 /private/tmp/fe/b.html`,
+    },
+    texts: {
+      [`${SP(WS)}/gallery/g.html`]: "<title>Gallery</title>",
+      "/var/T/architecture-review-1.html": "<title>Architecture review for workstation</title>",
+    },
+  });
+  const { rows, error } = await scan(io, { folders: [`${HOME}/code/ws`], now: NOW });
+  assert.equal(error, null);
+  assert.deepEqual(rows.map((r) => [r.title, r.name, r.context]), [
+    ["Architecture review for workstation", "architecture-review-1.html", "$TMPDIR"],
+    ["Gallery", "gallery/g.html", "ws · sess0001"],
+    ["", "plain.html", "$TMPDIR"],
+    ["", "a.html", "/tmp"],
+    ["", "report.html", "ws · sess0001"],
+    ["", "b.html", "/tmp/fe"],
+  ]);
+  assert.deepEqual(io.calls.find((c) => c[0] === "scratch-files"), ["scratch-files", [WS]]); // only the matching project is searched
+});
+
+test("the same file seen as /tmp and /private/tmp is listed once", async () => {
+  const io = fakeIO({ files: { tmpdir: `${sec(H)} 1 /tmp/x.html`, tmp: `${sec(H)} 1 /private/tmp/x.html` } });
+  assert.equal((await scan(io, { now: NOW })).rows.length, 1);
+});
+
+test("scratchpads: cloned sources and test output are skipped, plain folders are kept", async () => {
+  const io = fakeIO({
+    files: {
+      "scratch-projects": `${HOME}\n${WS}\n`,
+      "scratch-files": [
+        `${sec(H)} 1 ${SP(WS)}/top.html`,
+        `${sec(H)} 1 ${SP(WS)}/gallery/g.html`,
+        `${sec(H)} 1 ${SP(WS)}/clone/docs.html`,
+        `${sec(H)} 1 ${SP(WS)}/report_3/index.html`,
+        `M ${SP(WS)}/clone/.git`,
       ].join("\n"),
     },
-    texts: { [`/private/tmp/claude-501/${ws}/sess0001-aaaa/scratchpad/gallery/g.html`]: "<title>Gallery</title>" },
   });
-  const { rows, error } = await scan(io, "scratch", { folders: [`${HOME}/code/ws`], now: NOW });
-  assert.equal(error, null);
-  assert.deepEqual(rows.map((r) => [r.name, r.kind, r.context, r.subtitle ?? null]), [
-    ["report.md", "md", "ws · sess0001", null],
-    ["gallery/g.html", "html", "ws · sess0001", "Gallery"],
-  ]);
-  assert.deepEqual(io.calls[1], ["scratch-files", [ws]]); // only the matching project is searched
+  const { rows } = await scan(io, { folders: [`${HOME}/code/ws`], now: NOW });
+  assert.deepEqual(rows.map((r) => r.name).sort(), ["gallery/g.html", "top.html"]);
+});
+
+test("/tmp: the folder a file sits in is its context; checkouts and test output are skipped", async () => {
+  const io = fakeIO({ files: { tmp: [
+    `${sec(H)} 1 /private/tmp/a.html`, `${sec(H)} 1 /private/tmp/fe/b.html`, `${sec(H)} 1 /private/tmp/repo/c.html`, "M /private/tmp/repo/.git",
+    `${sec(H)} 1 /private/tmp/gdunit/d.html`, `${sec(H)} 1 /private/tmp/test-report/index.html`, "M /private/tmp/gdunit/package.json",
+  ].join("\n") } });
+  const { rows } = await scan(io, { now: NOW });
+  assert.deepEqual(rows.map((r) => [r.name, r.context]).sort(), [["a.html", "/tmp"], ["b.html", "/tmp/fe"]]);
+});
+
+test("a failing source reports an error and the others still list", async () => {
+  const io = fakeIO({ files: { tmp: `${sec(H)} 1 /private/tmp/a.html` }, fail: { tmpdir: true, "scratch-projects": true } });
+  const a = await scan(io, { folders: ["/a"], now: NOW });
+  assert.deepEqual(a.rows.map((r) => r.name), ["a.html"]);
+  assert.equal(a.error, "Listing scratchpads failed: bad thing; Reading $TMPDIR failed: bad thing");
+  const b = await scan(fakeIO({ fail: { tmpdir: true } }), { now: NOW });
+  assert.deepEqual(b.rows, []);
+  assert.equal(b.error, "Reading $TMPDIR failed: bad thing");
 });
 
 test("scratchpads: nothing to search when no project folder matches, or no folder is known", async () => {
-  const io = fakeIO({ files: { "scratch-projects": `${HOME}\n${encodeProject(`${HOME}/code/other`)}\n` } });
-  assert.deepEqual(await scan(io, "scratch", { folders: [`${HOME}/code/ws`], now: NOW }), { rows: [], error: null });
-  assert.equal(io.calls.length, 1);
-  assert.deepEqual(await scan(io, "scratch", { folders: [], now: NOW }), { rows: [], error: null });
-});
-
-test("$TMPDIR: its top-level files, newest first, with HTML titles", async () => {
-  const io = fakeIO({
-    files: { tmpdir: `${sec(3 * H)} 10 /var/T/old.md\n${sec(H)} 10 /var/T/architecture-review-1.html\n${sec(D * 8)} 1 /var/T/ancient.md` },
-    texts: { "/var/T/architecture-review-1.html": "<title>Architecture review for workstation</title>" },
-  });
-  const { rows } = await scan(io, "tmpdir", { now: NOW });
-  assert.deepEqual(rows.map((r) => [r.name, r.context, r.subtitle ?? null]), [
-    ["architecture-review-1.html", "$TMPDIR", "Architecture review for workstation"],
-    ["old.md", "$TMPDIR", null],
-  ]);
-});
-
-test("/tmp: the folder a file sits in is its context", async () => {
-  const io = fakeIO({ files: { tmp: `${sec(H)} 1 /private/tmp/a.md\n${sec(H)} 1 /private/tmp/fe/b.md` } });
-  const { rows } = await scan(io, "tmp", { now: NOW });
-  assert.deepEqual(rows.map((r) => [r.name, r.context]).sort(), [["a.md", "/tmp"], ["b.md", "/tmp/fe"]]);
-});
-
-test("runs: the matching runs' reports, not the briefs Herdr writes for its agents", async () => {
-  const mine = `${HOME}/.herdr/workflow-runs/80-x`, theirs = `${HOME}/.herdr/workflow-runs/12-y`;
-  const io = fakeIO({
-    files: {
-      "run-list": `${HOME}\n${mine}\t{"folder":"${HOME}/.herdr/worktrees/ws/wf-80","repoRoot":"${HOME}/code/ws","title":"#80 Skill Artifacts"}\n${theirs}\t{"folder":"${HOME}/.herdr/worktrees/zz/q","repoRoot":"${HOME}/code/zz"}\n`,
-      "run-files": `${sec(H)} 9 ${mine}/plan.md\n${sec(H)} 9 ${mine}/worker.md\n${sec(2 * H)} 9 ${mine}/ticket.md`,
-    },
-  });
-  const { rows } = await scan(io, "runs", { folders: [`${HOME}/code/ws`], now: NOW });
-  assert.deepEqual(rows.map((r) => [r.name, r.context]), [["plan.md", "#80 Skill Artifacts"], ["ticket.md", "#80 Skill Artifacts"]]);
-  assert.deepEqual(io.calls[1], ["run-files", [mine]]);
-});
-
-test("a failing script reports an error and keeps going with no rows", async () => {
-  const io = fakeIO({ fail: { tmpdir: true, "scratch-projects": true } });
-  const a = await scan(io, "tmpdir", { now: NOW });
-  assert.deepEqual(a.rows, []);
-  assert.equal(a.error, "Reading $TMPDIR failed: bad thing");
-  const b = await scan(io, "scratch", { folders: ["/a"], now: NOW });
-  assert.match(b.error, /^Listing scratchpads failed/);
-  assert.deepEqual(await scan(io, "nope", { now: NOW }), { rows: [], error: null });
+  const io = fakeIO({ files: { "scratch-projects": `${HOME}\n${OTHER}\n` } });
+  assert.deepEqual(await scan(io, { folders: [`${HOME}/code/ws`], now: NOW }), { rows: [], error: null });
+  assert.equal(io.calls.filter((c) => c[0] === "scratch-files").length, 0);
+  assert.deepEqual(await scan(io, { folders: [], now: NOW }), { rows: [], error: null });
 });
 
 test("an HTML title is read once per file version, and again when the file changes", async () => {
   const reads = [];
   const line = (m) => `${sec(m)} 10 /var/T/cache-test.html`;
   const io = (stdout) => ({ sh: async () => ({ code: 0, stdout, stderr: "" }), read: async (p) => { reads.push(p); return "<title>T</title>"; } });
-  await scan(io(line(H)), "tmpdir", { now: NOW });
-  await scan(io(line(H)), "tmpdir", { now: NOW });
+  await scan(io(line(H)), { now: NOW });
+  await scan(io(line(H)), { now: NOW });
   assert.equal(reads.length, 1);
-  const { rows } = await scan(io(line(H)), "tmpdir", { now: NOW });
-  assert.equal(rows[0].subtitle, "T");
-  await scan(io(line(2 * H)), "tmpdir", { now: NOW }); // a different mtime
+  const { rows } = await scan(io(line(H)), { now: NOW });
+  assert.equal(rows[0].title, "T");
+  await scan(io(line(2 * H)), { now: NOW }); // a different mtime
   assert.equal(reads.length, 2);
 });
 
 test("an unreadable HTML file gets no title and is tried again next scan", async () => {
   let n = 0;
   const io = { sh: async () => ({ code: 0, stdout: `${sec(H)} 10 /var/T/unreadable.html`, stderr: "" }), read: async () => { n++; return null; } };
-  assert.equal((await scan(io, "tmpdir", { now: NOW })).rows[0].subtitle, "");
-  await scan(io, "tmpdir", { now: NOW });
+  assert.equal((await scan(io, { now: NOW })).rows[0].title, "");
+  await scan(io, { now: NOW });
   assert.equal(n, 2);
 });
 
