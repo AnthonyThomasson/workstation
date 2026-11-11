@@ -1,5 +1,5 @@
 // Tasks: the tickets on the GitHub Project linked to the selected space's repo, in the left menu under
-// Spaces: Investigations, Up Next, In Progress, In Review and Backlog (collapsed). Clicking a ticket
+// Spaces: Investigations, Up Next, Backlog (collapsed), In Progress and In Review. Up Next and Backlog rows drag to reorder and to move between the two (drop() writes it to the project). Clicking a ticket
 // opens it in a large popup to edit (editor/editor.js, lib/popup.js), and saving pushes the change to GitHub. Each row links
 // out to GitHub and has Start, which becomes View while its workflow runs.
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
@@ -9,8 +9,8 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, notify, shared, setShared, terminals, playSound, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
-import { BACK_AFTER, Shakes, bellFirst, bellTip, bellToast, waitingAgents, INVESTIGATION_LABEL, RUN_LABEL, normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload, CHANGED, AGENT_KEY, DOCTOR_KEY } from "./lib/index.js";
-import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, setupProject, setupNote } from "./github/index.js";
+import { BACK_AFTER, Shakes, bellFirst, bellTip, bellToast, waitingAgents, INVESTIGATION_LABEL, RUN_LABEL, normalizeItems, groupTickets, groupByStage, projectOrdered, planMove, applyMove, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload, CHANGED, AGENT_KEY, DOCTOR_KEY } from "./lib/index.js";
+import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField, moveTicket, setupProject, setupNote } from "./github/index.js";
 import { installedAgents, investigationsHere, reconnectInvestigations, viewInvestigation, InvestigationPage, NewTaskPage, RefactorPage } from "./investigations-ui/index.js";
 import { S, icon, stop, note, iconButton, action, gh, later, openAgentPopup, AgentBar, AgentBackdrop } from "./widgets/index.js";
 import { Auth, REFRESH, LOGIN } from "./github-ui/index.js";
@@ -26,6 +26,7 @@ import { startDoctor, doctorFor } from "./doctor/index.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
+const IDLE = "#00000000"; // a drop target's edge when nothing is landing there: transparent, so the sidebar shows through
 const REDRAW = 3000; // how often the list is drawn again: a run starting or ending turns a row's Start into View and back
 const COLUMN = "sidebar"; // the layout column the list lives in: its width says how much of a name fits
 function find(node, id) {
@@ -93,6 +94,9 @@ export default class GitHubTasks extends View {
     this.reset(null);
     this.open = initialOpen(); // which sections are expanded
     this.starting = new Set(); // the tickets whose Start is working
+    this.writing = 0; // moves still being written to GitHub: the list isn't reloaded until the last one is done
+    this.drag = null; // the key of the Up Next / Backlog row being dragged, from its press until a release (a drop, or nothing)
+    this.statusField = null; // { projectId, field }: the project's Status field, loaded by the first move between Up Next and Backlog
     this.cx = cx;
     this.shakes = new Shakes(); // which rows have just started needing the person (lib/bell.js)
     this.releasing = new Set(); // the rows whose release frame is waiting on a timer
@@ -137,7 +141,7 @@ export default class GitHubTasks extends View {
   // so the place's repo is looked for again too.
   refresh(cx, { quiet = false, fresh = false } = {}) {
     const ctx = this.ctx;
-    if (!ctx || (this.loading && !(this.quiet && !quiet))) return;
+    if (!ctx || this.writing || (this.loading && !(this.quiet && !quiet))) return; // a load now could read GitHub before a write lands
     if (this.loading) this.token++; // a person's refresh replaces a quiet one still going
     if (fresh) this.placeCache = null;
     this.loading = true;
@@ -248,6 +252,7 @@ export default class GitHubTasks extends View {
     const problems = doctorFor(shared(DOCTOR_KEY), shared(PLACE))?.issues?.length ?? 0; // only an answer for the place shown
     return v_flex().id("github-tasks").track_focus(this.handle).size_full().min_h(0).border_t(1).border_color(t.border)
       .text_color(t.foreground).text_size(S().body)
+      .on_mouse_up("left", (_e, cx) => this.endDrag(cx)) // a release on anything that isn't a drop target drops nothing
       .child(h_flex().h(36).flex_none().pl(14).pr(8).gap(2).items_center()
         .child(div().flex_1().text_size(S().label).font_semibold().text_color(t.muted).child("Tasks"))
         .when(Boolean(ctx), (el) => el.child(this.newTaskButton(t)).child(this.refactorButton(t)))
@@ -334,7 +339,8 @@ export default class GitHubTasks extends View {
       rows.push(this.sectionTitle(t, section));
       if (!section.open) continue;
       if (section.id === "investigations") rows.push(...section.items.map((entry) => this.investigationRowView(t, entry)));
-      else rows.push(...section.items.map((ticket) => this.row(t, ticket, ticket.draft ? t.muted : colors[section.id])));
+      else rows.push(...section.items.map((ticket) => this.row(t, ticket, ticket.draft ? t.muted : colors[section.id], section.id)));
+      if (projectOrdered(section.id)) rows.push(this.endZone(t, section.id));
       if (section.empty) rows.push(div().px(14).py(2).child(note(t, section.empty)));
     }
     return rows;
@@ -364,7 +370,8 @@ export default class GitHubTasks extends View {
       const { sound, ...toastNote } = toast;
       later(this.cx, () => { try { notify(toastNote); playSound(sound); } catch { /* a toast that can't be shown must not break the list */ } });
     }
-    return Object.fromEntries(Object.entries(lists).map(([section, items]) => [section, bellFirst(items, (item) => waiting.get(this.rowId(section, item)).length > 0)]));
+    // Up Next and Backlog keep the project's order (a dragged row stays where it was dropped): their bell shows on the row, but doesn't move it.
+    return Object.fromEntries(Object.entries(lists).map(([section, items]) => [section, projectOrdered(section) ? items : bellFirst(items, (item) => waiting.get(this.rowId(section, item)).length > 0)]));
   }
 
   // What a row that needs the person gets: the bell, which opens the waiting agent's popup (the rest of the row keeps its click), and
@@ -485,9 +492,12 @@ export default class GitHubTasks extends View {
 
   // A section's header: pressing it expands or collapses the tickets under it.
   sectionTitle(t, { id, title, open }) {
+    const target = projectOrdered(id); // Up Next and Backlog take a drop on their header: first in the section, collapsed or not
     return h_flex().id(`section-${id}`).flex_none().min_h(26).mx(8).px(6).pt(6).pb(2).gap(4).items_center().cursor_pointer()
-      .text_size(S().label).font_semibold().text_color(t.muted).hover((s) => s.text_color(t.foreground))
+      .text_size(S().label).font_semibold().text_color(t.muted)
+      .hover((s) => (target && this.drag ? s.bg(t.selected).text_color(t.foreground) : s.text_color(t.foreground)))
       .on_mouse_down("left", stop).on_click((_e, cx) => { this.open[id] = !this.open[id]; cx.notify(); })
+      .when(target, (el) => el.on_mouse_up("left", (_e, cx) => this.drop({ kind: "header", section: id }, cx)))
       .child(icon(open ? "chevron-down" : "chevron-right", 12, t.muted))
       .child(div().flex_1().child(title));
   }
@@ -532,16 +542,72 @@ export default class GitHubTasks extends View {
     });
   }
 
+  // The thin drop zone under the last row of Up Next and of an expanded Backlog: last in the section. It is always in the layout at its
+  // fixed height (a press must not move any row), and only while dragging does its top edge show the accent line when hovered.
+  endZone(t, section) {
+    return div().id(`end-${section}`).flex_none().mx(8).h(8).border_t(2).border_color(IDLE).hover((s) => (this.drag !== null ? s.border_color(t.accent) : s))
+      .on_mouse_up("left", (_e, cx) => this.drop({ kind: "end", section }, cx));
+  }
+
+  endDrag(cx) {
+    if (this.drag === null) return;
+    this.drag = null;
+    cx.notify();
+  }
+
+  // A release over a drop target (lib/reorder.js's targets) ends the drag. On the row that was pressed it is only a click (its on_click
+  // opens the editor); anywhere that means nothing, nothing happens. Otherwise the row moves at once, and GitHub is told: the Status
+  // first when the section changes, then the position. If that fails the error shows as a failed Start's does and the list is reloaded,
+  // so the ticket goes back to where GitHub has it.
+  drop(target, cx) {
+    const key = this.drag, ctx = this.ctx, project = this.project;
+    this.drag = null;
+    cx.notify();
+    if (key === null || (target.kind === "row" && target.key === key) || !ctx || !project) return;
+    const plan = planMove(this.groups.open, key, target, this.statusField?.projectId === project.id ? this.statusField.field?.options : undefined);
+    if (!plan) return;
+    this.groups = { ...this.groups, open: applyMove(this.groups.open, key, plan.afterId, plan.status) };
+    this.token++; // a load already running would draw the order from before the move
+    this.loading = false;
+    this.startError = null;
+    this.writing++;
+    const where = { cwd: ctx.folder, on: ctx.on };
+    cx.spawn(async (cx) => {
+      try {
+        let field = this.statusField?.projectId === project.id ? this.statusField.field : null;
+        if (plan.status && this.statusField?.projectId !== project.id) {
+          field = await loadStatusField(gh, project.id, where);
+          this.statusField = { projectId: project.id, field };
+        }
+        await moveTicket(gh, { projectId: project.id, itemId: key, afterId: plan.afterId, status: plan.status, statusField: plan.status ? field : null }, where);
+      } catch (e) {
+        this.startError = String(e?.message ?? e);
+      } finally {
+        // The last write done: whatever load was running may have read GitHub before it landed, so it is dropped and the list reloads.
+        if (--this.writing === 0) { this.token++; this.loading = false; this.refresh(cx, { quiet: true }); }
+        cx.notify();
+      }
+    });
+  }
+
   // One ticket on one line: a dot for its stage, its name with the middle cut out to fit, a link to GitHub, and
   // Start (View while its workflow runs).
-  row(t, ticket, color) {
+  row(t, ticket, color, section) {
     const running = liveRunFor(this.repo, ticket), busy = this.starting.has(ticket.key), bell = this.bellFor(t, this.rowId("ticket", ticket));
     const width = find(layout(), COLUMN)?.size?.px ?? 268;
     const room = width - 16 - 12 - 8 - 16 - (ticket.url ? 28 : 0) - 28 - (bell ? 28 : 0); // what the name has left, in px
     const max = Math.max(12, Math.floor(room / (S().body * 0.55)));
+    const draggable = projectOrdered(section), landing = this.drag !== null && draggable && this.drag !== ticket.key; // not the dragged row itself
     return h_flex().id(`ticket-${ticket.key}`).flex_none().mx(8).mb(1).px(6).h(28).gap(8).items_center().rounded(6)
-      .cursor_pointer().hover((s) => s.bg(t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => this.openTicket(ticket, cx))
+      .cursor_pointer().hover((s) => (landing ? s.bg(t.hover).border_color(t.accent) : s.bg(t.hover)))
+      .on_click((_e, cx) => this.openTicket(ticket, cx))
       .tooltip(ticket.title)
+      // A press on an Up Next / Backlog row starts a drag; releasing on the same row is still a click (opens the editor), on another
+      // Up Next / Backlog row drops above it. While dragging the row under the pointer shows its landing edge (an accent line on top).
+      .on_mouse_down("left", draggable ? (_e, cx) => { cx.stop_propagation(); this.drag = ticket.key; cx.notify(); } : stop)
+      .when(draggable, (el) => el.on_mouse_up("left", (_e, cx) => this.drop({ kind: "row", key: ticket.key }, cx)))
+      .when(draggable, (el) => el.border_t(2).border_color(IDLE)) // always there, so a press never moves a row
+      .when(this.drag === ticket.key, (el) => el.opacity(0.4))
       .when(Boolean(bell), (el) => bell.shake(el))
       .child(div().w(8).h(8).flex_none().rounded_full().when(ticket.draft, (el) => el.border(1.5).border_color(color)).when(!ticket.draft, (el) => el.bg(color)))
       .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(ticket.title, max)))

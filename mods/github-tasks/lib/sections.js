@@ -4,9 +4,9 @@
 export const SECTIONS = [ // open: whether each starts expanded
   { id: "investigations", label: "Investigations", open: true },
   { id: "next", label: "Up Next", open: true },
+  { id: "backlog", label: "Backlog", open: false },
   { id: "progress", label: "In Progress", open: true },
   { id: "review", label: "In Review", open: true },
-  { id: "backlog", label: "Backlog", open: false },
 ];
 
 // A section's header: "Investigations · 2".

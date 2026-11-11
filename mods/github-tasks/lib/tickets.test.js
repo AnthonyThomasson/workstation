@@ -37,9 +37,9 @@ test("carries the project status and the close reason", () => {
   assert.equal(t.reason, "NOT_PLANNED");
 });
 
-test("orders open tickets newest first", () => {
+test("keeps open tickets in the project's own order, whatever their age", () => {
   const { open } = groupTickets([ticket("old", "2026-01-01T00:00:00Z"), ticket("new", "2026-03-01T00:00:00Z"), ticket("mid", "2026-02-01T00:00:00Z")]);
-  assert.deepEqual(open.map((t) => t.key), ["new", "mid", "old"]);
+  assert.deepEqual(open.map((t) => t.key), ["old", "new", "mid"]);
 });
 
 test("a reopened issue and a draft are open", () => {
@@ -64,8 +64,9 @@ test("splits closed tickets by reason, in a fixed order, newest first, without e
 });
 
 test("a ticket with no readable date sorts last", () => {
-  const { open } = groupTickets([ticket("bad", "nope"), ticket("good", "2026-01-01T00:00:00Z")]);
-  assert.deepEqual(open.map((t) => t.key), ["good", "bad"]);
+  const done = (key, createdAt) => ticket(key, createdAt, { state: "CLOSED", reason: "COMPLETED" });
+  const { closed } = groupTickets([done("bad", "nope"), done("good", "2026-01-01T00:00:00Z")]);
+  assert.deepEqual(closed[0].tickets.map((t) => t.key), ["good", "bad"]);
 });
 
 test("chooses the saved project, else the first", () => {

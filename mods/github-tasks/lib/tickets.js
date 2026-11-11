@@ -30,13 +30,14 @@ const created = (ticket) => {
   const at = Date.parse(ticket.createdAt);
   return Number.isNaN(at) ? -Infinity : at;
 };
-// Newest first, then the higher number first; statuses.js groupByStage sorts by it too.
+// Newest first, then the higher number first; statuses.js groupByStage sorts In Progress and In Review by it too.
 export const newestFirst = (a, b) => created(b) - created(a) || (b.number ?? 0) - (a.number ?? 0);
 
-// { open, closed: [{ key, label, tickets }] }, newest first. A reopened issue is open again, whatever
-// its reason says. Closed sections with nothing in them are left out.
+// { open, closed: [{ key, label, tickets }] }. The open tickets stay in the order they came in, the project's own item order (Up Next
+// and Backlog show it as it is); the closed ones are newest first. A reopened issue is open again, whatever its reason says. Closed
+// sections with nothing in them are left out.
 export function groupTickets(tickets) {
-  const open = tickets.filter((t) => t.state !== "CLOSED").sort(newestFirst);
+  const open = tickets.filter((t) => t.state !== "CLOSED");
   const known = new Set(CLOSED.map(([key]) => key));
   const closed = tickets.filter((t) => t.state === "CLOSED");
   const sections = CLOSED.map(([key, label]) => ({
