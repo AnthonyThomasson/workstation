@@ -1,6 +1,6 @@
 # Tony
 
-Tony is a full Herdr window layout with a 268px navigation sidebar, icon-rich draggable tabs, framed terminal panes, a shared right-hand tool panel and a compact status bar. It combines Herdr's built-in workspace mods with Usage, Sync, Skills, GitHub Tasks (which includes workflow and refactor type editing and run pages), Status Bar and Tabs Icons, each kept in its own folder under `mods/`.
+Tony is a full Herdr window layout with a 268px navigation sidebar, icon-rich draggable tabs, framed terminal panes, a shared right-hand tool panel and a compact status bar. It combines Herdr's built-in workspace mods with Usage, Sync, Skills, GitHub Tasks (which includes workflow and refactor type editing and run pages), Status Bar, Tabs Icons and a Menu with Open in VS Code, each kept in its own folder under `mods/`.
 
 ![Tony](preview.png)
 
@@ -342,11 +342,11 @@ Copy `layouts/Tony.json` and the mod code and assets from every folder under `mo
 }
 ```
 
-The built-in mods Tony uses are **`spaces`, `agents`, `changes`, `files`, `artifacts`, `pane`, and `workspace-chrome`**. `artifacts` is not copied into `mods/`; it is only mounted. It also invokes built-in `menu` and `new-menu` from the tab bar.
+The built-in mods Tony uses are **`spaces`, `agents`, `changes`, `files`, `artifacts`, `pane`, and `workspace-chrome`**. `artifacts` is not copied into `mods/`; it is only mounted. The tab bar also opens `menu` (this repo ships its own copy, [`mods/menu`](mods/menu/RECIPE.md), which adds Open in VS Code) and the built-in `new-menu`.
 
 ### Custom mods
 
-All six custom mods have their own recipes and previews in the same folders that hold their code. Tony only lists their placement and props in the layout above.
+All custom mods (including `menu`) have their own recipes and previews in the same folders that hold their code. Tony only lists their placement and props in the layout above.
 
 - [`mods/usage/RECIPE.md`](mods/usage/RECIPE.md) fills the 100px sidebar Usage block.
 - [`mods/status-bar/RECIPE.md`](mods/status-bar/RECIPE.md) fills the 28px bottom status block.
