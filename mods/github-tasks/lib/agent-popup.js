@@ -17,11 +17,11 @@ const backdropBlock = (weight) => ({ type: "block", size: { weight }, content: {
 
 // The overlay for `terminal` (an address): the whole window (width and height 1, no frame of Herdr's), one fixed key (a second
 // click replaces the open one), no `keep` (it must not come back on the next start) and no `at`. Backdrop blocks around the
-// panel: column [backdrop, row [backdrop, panel, backdrop], backdrop]. The panel draws its own border, corners and shadow.
+// panel: column [backdrop, row [backdrop, panel, backdrop], backdrop]. The panel draws its own border and corners. `resizable: false` on every row and column: the seams can't be dragged.
 export function agentPopupOverlay(terminal) {
   const panel = {
-    type: "column", size: { weight: PANEL_WEIGHT },
-    border: { width: 1, color: "border" }, radius: PANEL_RADIUS, shadow: "lg",
+    type: "column", size: { weight: PANEL_WEIGHT }, resizable: false,
+    border: { width: 1, color: "border" }, radius: PANEL_RADIUS,
     children: [
       { type: "block", size: { px: BAR_HEIGHT }, content: { mod: "github-tasks", props: { role: "agent-bar", terminal } } },
       { type: "block", content: { terminal } },
@@ -30,10 +30,10 @@ export function agentPopupOverlay(terminal) {
   return {
     kind: "window", key: AGENT_POPUP_KEY, width: 1, height: 1, frame: "none",
     layout: {
-      type: "column",
+      type: "column", resizable: false,
       children: [
         backdropBlock(EDGE_WEIGHT),
-        { type: "row", size: { weight: PANEL_WEIGHT }, children: [backdropBlock(EDGE_WEIGHT), panel, backdropBlock(EDGE_WEIGHT)] },
+        { type: "row", size: { weight: PANEL_WEIGHT }, resizable: false, children: [backdropBlock(EDGE_WEIGHT), panel, backdropBlock(EDGE_WEIGHT)] },
         backdropBlock(EDGE_WEIGHT),
       ],
     },

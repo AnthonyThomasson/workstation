@@ -2,7 +2,7 @@
 // spinner, program icon, name, status word, who it is from, a muted "Esc" hint and a ✕. It looks like Herdr's own peek bar
 // (mods/peek) without "keep" and "go to". It takes the keyboard when the popup opens and closes it on Esc, stopping the key,
 // so Esc never reaches the agent; a click into the terminal gives the agent the keyboard (and its Esc) until the bar is
-// clicked or the popup reopened. Not a View of its own: main.js builds one in init and draws it from render.
+// clicked or the popup reopened. A press on the bar is stopped (the window is not draggable). Not a View of its own: main.js builds one in init and draws it from render.
 import { div, image, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { agents, closeOverlay, openOverlay, props as blockProps, terminals, theme } from "herdr";
@@ -42,10 +42,14 @@ export class AgentBar {
     const pic = programIcon(k?.program, 14, t.foreground);
     const from = parentLabel(k?.parent ? terminals().find((p) => p.address === k.parent) : null);
     const glyph = st === "working" ? SPIN[0] : st === "idle" ? "○" : st ? "●" : "·";
-    const close = PRESS_BUTTONS.reduce((el, b) => el.on_mouse_down(b, stop), // a press on the ✕ must not drag the window
+    const close = PRESS_BUTTONS.reduce((el, b) => el.on_mouse_down(b, stop),
       div().id("agent-bar-close").px(8).py(2).rounded(5).text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)))
       .on_click(() => this.close()).child("✕");
-    return h_flex().id("agent-bar").track_focus(this.handle).size_full().px(12).gap(8).items_center().bg(t.surface).border_b(1).border_color(t.border).text_size(S().label)
+    // A press anywhere on the bar must not drag the window (it drags on any press its mod doesn't stop), and gives the bar the keyboard
+    // itself, as stopping the press may stop the focus that follows it: that is what keeps Esc working after a click on the bar.
+    const bar = PRESS_BUTTONS.reduce((el, b) => el.on_mouse_down(b, (_e, cx) => { this.handle.focus(); cx.stop_propagation(); }),
+      h_flex().id("agent-bar"));
+    return bar.track_focus(this.handle).size_full().px(12).gap(8).items_center().bg(t.surface).border_b(1).border_color(t.border).text_size(S().label)
       .on_key_down((e, cx) => { if (isEscape(e)) { this.close(); cx.stop_propagation(); } })
       .child(div().w(12).flex_none().text_color(t[st] ?? t.dim).when(st === "working", (el) => el.frames(SPIN, 90)).child(glyph))
       .when(Boolean(pic), (el) => el.child(pic))

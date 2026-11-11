@@ -51,11 +51,18 @@ test("the weights give the panel 80% of the window each way", () => {
   assert.equal(share(layout.children[1].children, 2), 0.1);
 });
 
-test("the panel draws its own border, rounding and shadow, as it has no frame of Herdr's", () => {
+test("the panel draws its own border and rounding, as it has no frame of Herdr's", () => {
   const p = panelOf(agentPopupOverlay("t7"));
   assert.deepEqual(p.border, { width: 1, color: "border" });
   assert.equal(p.radius, PANEL_RADIUS);
-  assert.equal(p.shadow, "lg");
+});
+
+test("no seam can be dragged to resize: every row and column is resizable:false", () => {
+  const { layout } = agentPopupOverlay("t7");
+  const containers = (n) => (n.children ? [n, ...n.children.flatMap(containers)] : []);
+  const all = containers(layout);
+  assert.equal(all.length, 3);
+  for (const n of all) assert.equal(n.resizable, false, n.type);
 });
 
 test("it is centered: no `at`", () => {
