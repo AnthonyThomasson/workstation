@@ -1,11 +1,11 @@
-// The ticket window's Won't Do button, as pure decisions (which footer buttons are on, the confirm question and what the sign-in retries), which editor/editor.js and editor/local-editor.js draw from.
+// The ticket window's Won't Do button, as pure decisions (which footer buttons are on, the confirm question and what the sign-in retries), which editor/editor.js draws from.
 import { wontDoDisabledReason } from "./model.js";
 
 // What the footer shows. confirm: the inline strip replaces the button row. Each button is { disabled }, and wontDo
 // also has the tooltip (the reason it is off). busy: the Won't Do call is running, so every button is inert and the
 // strip stays up whatever else changes; otherwise the strip goes away if the button stops being available (an edit).
-export function wontDoFooter({ draft = false, saving = false, dirty = false, local = false, statusOptions, startable = false, confirming = false, busy = false } = {}) {
-  const reason = wontDoDisabledReason({ draft, saving, dirty, local, statusOptions });
+export function wontDoFooter({ draft = false, saving = false, dirty = false, statusOptions, startable = false, confirming = false, busy = false } = {}) {
+  const reason = wontDoDisabledReason({ draft, saving, dirty, statusOptions });
   const off = (disabled) => ({ disabled: Boolean(disabled) });
   return {
     confirm: confirming && (busy || !reason),
@@ -20,8 +20,7 @@ export function wontDoFooter({ draft = false, saving = false, dirty = false, loc
 }
 
 // The question the confirm strip asks.
-export const wontDoPrompt = ({ number, local = false }) =>
-  (local ? `Move #${number} to Won't Do?` : `Close #${number} as not planned and set it to Won't Do?`);
+export const wontDoPrompt = ({ number }) => `Close #${number} as not planned and set it to Won't Do?`;
 
 // What the sign-in's "done" re-runs: the Won't Do that failed, else a save. Won't Do is not re-run when the button has
 // become unavailable meanwhile (edits typed during sign-in): a success closes the window and would drop them. Then "none".

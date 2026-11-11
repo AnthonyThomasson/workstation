@@ -1,12 +1,12 @@
 // The New task dialog, in the overlay the + in the Tasks header opens (props.role "new-task"; new-task-dialog.js has the state and
 // says what the buttons do). Not a View of its own: main.js builds one in init and draws it from render. Continue starts the task
-// (startTask) as the sidebar did before there was a dialog: GitHub mode or local mode, from the place the sidebar was looking at.
+// (startTask) as the sidebar did before there was a dialog, from the place the sidebar was looking at.
 import { div } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea } from "gpui-base";
 import { shared, theme, closeOverlay } from "herdr";
 import { GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, STATUSES, normalizeGroomer, normalizeSubAgent, spelled, PRESS_BUTTONS } from "../lib/index.js";
 import { loadStatusField } from "../github/index.js";
-import { installedAgents, startNewTask, startLocalNewTask } from "./groom.js";
+import { installedAgents, startNewTask } from "./groom.js";
 import { AGENT_KEY, NewTaskDialog, PROMPT, newTaskDialogTITLE as TITLE, chooseAgent, boxRows, newTaskDialogEnterStep as enterStep, newTaskDialogPanelWidth as panelWidth } from "../investigations/index.js";
 import { S, stop, action, gh } from "../widgets/index.js";
 
@@ -21,7 +21,6 @@ export async function startTask(props, description, cx, refactor = null) {
   const where = { cwd: props.where?.cwd, on: props.where?.on };
   const groomer = normalizeGroomer(shared(GROOMER_KEY));
   const subAgents = { investigator: normalizeSubAgent(shared(INVESTIGATOR_KEY)), worker: normalizeSubAgent(shared(WORKER_KEY)) }; // saved apart from the New Task Orchestrator's
-  if (props.local) return startLocalNewTask({ agent, description, mainRoot: props.local.mainRoot, groomer, subAgents, where, refactor }, cx);
   if (!props.project) throw new Error("This repo has no project to put the ticket on.");
   // The prompt names the statuses as the project spells them ("Todo", not the fixed "To Do").
   const options = (await loadStatusField(gh, props.project.id, where).catch(() => null))?.options ?? [];

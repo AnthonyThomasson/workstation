@@ -20,11 +20,8 @@ export function resetList(view, ctx) {
   view.loading = false;
   view.restored = null;
   forgetRepo(view);
-  view.place = null; // readPlace's answer: { folder, on, mainRoot, remote, source }
+  view.place = null; // readPlace's answer: { folder, on, mainRoot, remote }
   view.placeCache = null;
-  view.source = "github"; // which source the list shows: "local" or "github"
-  view.localStages = null; // local mode's sections, null until loaded
-  view.localError = null;
   view.error = null;
   view.setupError = null;
   view.startError = null;
@@ -48,38 +45,28 @@ export function clearTickets(view) {
 export const isCurrent = (view, token) => token === view.token;
 
 // What is on screen, if there is a list to keep; null when only placeholders, an error or "no project" show.
-// A list counts only while it was found for the folder the space is in now (the GitHub repo's folder, the local
-// place's folder): after a cd the old repo's tickets stay up until the new folder is known, and they must not be
-// kept as this space's.
+// A list counts only while it was found for the folder the space is in now (the GitHub repo's folder): after a cd the old
+// repo's tickets stay up until the new folder is known, and they must not be kept as this space's.
 // Errors are never kept.
 export function snapshotOf(view) {
-  if (view.source === "local") {
-    if (!view.localStages || view.place?.folder !== view.ctx?.folder) return null; // after a cd the old repo's sections stay up until the place is read again
-    return { source: "local", place: view.place, localStages: view.localStages };
-  }
   if (!view.loaded || !view.project || !view.repo || view.repoFolder !== view.ctx?.folder) return null;
   return {
-    source: "github", place: view.place, repo: view.repo, repoFolder: view.repoFolder,
+    place: view.place, repo: view.repo, repoFolder: view.repoFolder,
     projects: view.projects.slice(), project: view.project, groups: view.groups, truncated: view.truncated,
   };
 }
 
 // Puts a saved list on screen, on a view that was just reset, and marks it as unchecked until its reload finishes.
 export function restoreList(view, snap) {
-  view.source = snap.source;
   view.place = snap.place;
-  if (snap.source === "local") {
-    view.localStages = snap.localStages;
-  } else {
-    view.repo = snap.repo;
-    view.repoFolder = snap.repoFolder;
-    view.projects = snap.projects.slice();
-    view.project = snap.project;
-    view.groups = snap.groups;
-    view.truncated = snap.truncated;
-    view.loaded = true;
-  }
-  view.restored = { source: snap.source, mainRoot: snap.place?.mainRoot, projectId: snap.project?.id };
+  view.repo = snap.repo;
+  view.repoFolder = snap.repoFolder;
+  view.projects = snap.projects.slice();
+  view.project = snap.project;
+  view.groups = snap.groups;
+  view.truncated = snap.truncated;
+  view.loaded = true;
+  view.restored = { projectId: snap.project?.id };
 }
 
 // Each space's last list, by spaceKey.
@@ -109,19 +96,10 @@ export class SpaceLists {
 // The reload's checks of a restored list. Each drops the list when the fresh answer is not the one it was for,
 // so the placeholders show until the new list loads. All of them do nothing once the list was loaded here.
 
-// The place's source is known: a change of source (or of local repo) starts the list over. True when it changed.
+// The place is known (where the main checkout is, which the Investigations rows are listed by).
 export function applyPlace(view, place) {
-  const changed = place.source !== view.source || (place.source === "local" && place.mainRoot !== view.place?.mainRoot);
   view.place = place;
   view.placeCache = place.cache;
-  view.source = place.source;
-  if (changed) {
-    forgetRepo(view);
-    view.error = null;
-    view.localStages = null;
-    view.localError = null;
-  }
-  return changed;
 }
 
 // The repo was found: another repo than the list's drops it. True when it changed.
@@ -142,7 +120,6 @@ export function applyProject(view) {
 export function failReload(view) {
   if (!view.restored) return false;
   forgetRepo(view);
-  view.localStages = null;
   view.restored = null;
   return true;
 }

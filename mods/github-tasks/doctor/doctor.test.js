@@ -288,56 +288,27 @@ test("the prompt works without a repo or project, and is empty with no issues", 
   assert.doesNotMatch(prompt, /null|undefined/);
 });
 
-// ---- Local tasks -----------------------------------------------------------------------------------
+// ---- Always the GitHub checks ---------------------------------------------------------------------
 
 const brokenGithub = { project: null, statuses: undefined, auth: { installed: true, signedIn: true, scopes: ["repo"] } };
 
-test("local tasks skip the project, status and scope checks", () => {
-  assert.deepEqual(kinds(diagnose(healthy({ ...brokenGithub, source: "local", githubRemote: true }))), [], "no project, no project scope: fine");
-  const statuses = [{ name: "To Do" }, { name: "in progress" }];
-  assert.deepEqual(diagnose(healthy({ source: "local", statuses, carried: [{ kind: "no-project" }] })), []);
-  assert.deepEqual(kinds(diagnose(healthy({ ...brokenGithub, source: "github" }))), ["gh-scope", "no-project"], "github mode is unchanged");
-  assert.deepEqual(kinds(diagnose(healthy({ ...brokenGithub }))), ["gh-scope", "no-project"], "no source is github");
-});
-
-test("local tasks skip the trigger-label check: their labels are typed freely", () => {
+test("the project, scope, label and agent checks always run", () => {
+  assert.deepEqual(kinds(diagnose(healthy({ ...brokenGithub }))), ["gh-scope", "no-project"]);
   const workflows = { items: [workflow("Story", {}, ["bug"])], errors: [] };
-  assert.deepEqual(diagnose(healthy({ source: "local", workflows, labels: [] })), []);
-  assert.deepEqual(kinds(diagnose(healthy({ workflows, labels: [{ name: "easy" }] }))), ["label-missing"], "github mode still checks");
+  assert.deepEqual(kinds(diagnose(healthy({ workflows, labels: [{ name: "easy" }] }))), ["label-missing"]);
+  assert.deepEqual(kinds(diagnose(healthy({ auth: { installed: true, signedIn: false, scopes: null } }))), ["gh-auth"]);
 });
 
-test("local tasks check gh-auth only when the origin is on GitHub", () => {
-  const signedOut = { installed: true, signedIn: false, scopes: null };
-  assert.deepEqual(kinds(diagnose(healthy({ source: "local", githubRemote: true, auth: signedOut }))), ["gh-auth"]);
-  assert.deepEqual(kinds(diagnose(healthy({ source: "local", githubRemote: true, auth: { installed: false } }))), ["gh-auth"]);
-  assert.deepEqual(diagnose(healthy({ source: "local", githubRemote: false, auth: signedOut })), []);
-  assert.deepEqual(diagnose(healthy({ source: "local", auth: signedOut })), [], "an unknown remote is not accused");
-});
-
-test("local tasks still check agents and workflow files", () => {
-  const issues = diagnose(healthy({
-    source: "local", groomerAgent: "gemini", workflows: { items: [], errors: ["bug.yaml: Line 2: bad"] },
-  }));
-  assert.deepEqual(kinds(issues), ["agent-missing", "workflow-invalid"]);
-});
-
-test("the signature includes the task source", () => {
+test("the signature ignores a source", () => {
   const base = { place: { cwd: "/a", root: "/a" }, workflowsChanged: 1, groomer: { agent: "claude" } };
-  const sig = doctorSignature(base);
-  assert.equal(doctorSignature({ ...base, source: "github" }), sig, "no source is github");
-  assert.notEqual(doctorSignature({ ...base, source: "local" }), sig);
+  assert.equal(doctorSignature({ ...base, source: "local" }), doctorSignature(base));
 });
 
-test("the prompt for local tasks says the repo uses local tasks and names no project", () => {
-  const issues = diagnose(healthy({
-    source: "local", githubRemote: true, groomerAgent: "gemini", auth: { installed: true, signedIn: false, scopes: null },
-  }));
-  const prompt = fixPrompt(issues, { repo: "me/app", project: PROJECT, source: "local" });
-  assert.match(prompt, /local tasks/);
-  assert.doesNotMatch(prompt, /GitHub Project|projects\/3|"app"|Statuses:|gh project/);
-  assert.match(prompt, /gh auth login|gh isn't signed in/);
-  assert.match(prompt, /Agent: /);
-  assert.match(fixPrompt(diagnose(healthy({ groomerAgent: "gemini" })), context), /GitHub Project "app"/, "github mode names the project");
+test("the prompt always names the project, and ignores a source in its context", () => {
+  const issues = diagnose(healthy({ groomerAgent: "gemini" }));
+  assert.match(fixPrompt(issues, context), /GitHub Project "app"/);
+  assert.equal(fixPrompt(issues, { ...context, source: "local" }), fixPrompt(issues, context));
+  assert.doesNotMatch(fixPrompt(issues, context), /local tasks/);
 });
 
 // ---- Trigger labels -----------------------------------------------------------------------------------

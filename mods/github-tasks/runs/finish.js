@@ -49,7 +49,7 @@ export const branchArgs = (repoRoot, branch) => ["-C", repoRoot, "rev-parse", "-
 //   tree-status   the ticket worktree has no uncommitted changes (nothing is committed for the person any more)
 //   fetch, ahead  the local ticket branch has no commits origin's copy lacks, so the squash can't leave work behind
 //   pr-merge      gh pr merge <n> --squash (no --admin, no --auto). If GitHub refuses, its message is shown and nothing after it runs
-//   status        the ticket Done (a local task: its file moves to done/)    remove-worktree / prune-worktrees    delete-branch (-D: a squash leaves the branch looking unmerged)    remove-run-files
+//   status        the ticket Done    remove-worktree / prune-worktrees    delete-branch (-D: a squash leaves the branch looking unmerged)    remove-run-files
 // number: the pull request's number. prMerged: the caller has just asked gh and the pull request is already MERGED, so the
 // merge step is skipped, and so are fetch and ahead (GitHub may have deleted the remote branch). headOid: the commit the PR was
 // merged from (headRefOid); then fetch-pr-head gets that commit from GitHub (refs/pull/<number>/head), and not-in-pr stops if the local branch has commits beyond it, which the PR never took in.
@@ -63,9 +63,8 @@ const safeRunDir = (runDir) => {
   return Boolean(id && id !== "." && !id.includes(".."));
 };
 
-// The step that sets the ticket Done. status: { args } (a gh call), { move } (local tasks: an async function that moves the task's file), or { warn }.
+// The step that sets the ticket Done. status: { args } (a gh call), or { warn }.
 export const statusStep = (status) => status.warn ? { name: "status", warn: status.warn }
-  : status.move ? { name: "status", run: status.move, fail: "Couldn't move the task to done/.", done: "moved the task to done/" }
   : { name: "status", cmd: "gh", args: status.args, fail: "Couldn't set the ticket's status.", done: "set the ticket's status" };
 
 // What Merge ends with whichever way the work got in: remove the worktree (or forget a folder already gone), delete the
@@ -117,10 +116,10 @@ export const shouldAutoPr = ({ ready, pr, tried, busy }) => Boolean(ready) && !p
 // before Merge, only the clean-up to finish, which pressing Merge again does.
 const CLEANUP = new Set(["status", "remove-worktree", "prune-worktrees", "delete-branch", "remove-run-files"]);
 
-// Runs steps with exec(cmd, args, opts) -> { code, stdout, stderr }. Besides commands, a step may be { run(exec) } (what it returns, if a string, is what it did) or { check(stdout) }. Resolves { done, warnings } with what happened and
+// Runs steps with exec(cmd, args, opts) -> { code, stdout, stderr }. Besides commands, a step may be { check(stdout) }. Resolves { done, warnings } with what happened and
 // what was said on the way; throws an Error at the first step that fails, saying which earlier steps already happened.
 // The error says where it stopped, for mergeFailure: step (the step's name), found (the step ran and found a problem: leftover
-// changes, commits origin lacks; not set when it couldn't run), conflict (a run step's error said so) and phase "cleanup" (the
+// changes, commits origin lacks; not set when it couldn't run) and phase "cleanup" (the
 // work was merged already).
 export async function runSteps(steps, exec) {
   const done = [], warnings = [];
@@ -129,8 +128,6 @@ export async function runSteps(steps, exec) {
   const go = async (list) => {
     for (const st of list) {
       if (st.warn) { warnings.push(st.warn); continue; }
-      // run: a step that is code, not a command (it gets exec, and throws a message the person can read). Local Merge uses these.
-      if (st.run) { let said; try { said = await st.run(exec); } catch (e) { stop(String(e?.message ?? e), st, e?.conflict ? { conflict: true } : {}); } const d = typeof said === "string" ? said : st.done; if (d) done.push(d); continue; }
       const r = await exec(st.cmd, st.args, st.cwd ? { cwd: st.cwd } : undefined);
       if (st.check) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim(), st); const bad = st.check(String(r.stdout ?? "")); if (bad) stop(bad, st, { found: true }); continue; } // check: stdout -> what to stop with, or null
       if (st.dirty) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim(), st); if (String(r.stdout ?? "").trim()) stop(st.dirty, st, { found: true }); continue; }
@@ -169,37 +166,31 @@ export function parsePrState(text) {
 
 // The failure runSteps (or the page's own checks before it) threw, as { kind, label, error }, or null when it is a plain error
 // (the clean-up failed: the work is merged). prState: parsePrState, asked by the page only when `gh pr merge` failed; null when
-// it couldn't be asked. error.step / found / conflict / phase: see runSteps.
+// it couldn't be asked. error.step / found / phase: see runSteps.
 export function mergeFailure({ error, prState } = {}) {
   if (!error || error.phase === "cleanup") return null;
   const message = String(error.message ?? error);
   const kind = error.step === "tree-status" && error.found ? "commit"
     : error.step === "ahead" && error.found ? "push"
     : error.step === "push-branch" ? "push" // the push that opens the pull request failed
-    : error.conflict ? "conflicts"
     : error.step === "pr-merge" && prState?.conflicting ? "conflicts"
     : error.step === "pr-merge" && prState?.failingChecks ? "checks"
     : "merge";
   return { kind, label: LABELS[kind], error: message };
 }
 
-// What the orchestrator is asked to do about a failure (a sentence for each kind). noRemote: a local run, which pushes nothing.
-function fixSteps({ kind, branch, workDir, noRemote }) {
+// What the orchestrator is asked to do about a failure (a sentence for each kind).
+function fixSteps({ kind, branch, workDir }) {
   const commit = `commit what is left in ${workDir} (have a reviewer check it first if it is new work)`;
   const push = `push the ticket branch with \`git -C ${workDir} push origin ${branch}\``;
-  if (noRemote && kind === "push") kind = "merge"; // a local run has no remote to push to
   const fix = {
-    commit: noRemote ? commit : `${commit}, then ${push}`, // the suffix below asks for the report
+    commit: `${commit}, then ${push}`, // the suffix below asks for the report
     push,
-    conflicts: noRemote
-      ? `bring the default branch into the ticket branch: rebase it onto the default branch in ${workDir} and resolve the conflicts, through a worker and a reviewer`
-      : `bring the default branch into the ticket branch: fetch origin and rebase it onto origin's default branch in ${workDir}, resolving the conflicts through a worker and a reviewer, then ${push.replace("push origin", "push --force-with-lease origin")}`,
-    checks: noRemote ? `fix what fails, through a worker and a reviewer` : `fix the failing checks through a worker and a reviewer, then ${push}`,
-    merge: noRemote
-      ? `fix it if you can (through a worker and a reviewer for any code change), and if it needs the person, such as the main checkout, say that you can't fix it`
-      : `fix it if you can (through a worker and a reviewer for any code change, and ${push} if the branch changed, with --force-with-lease after a rebase), and if it needs the person, such as signing in to gh or approving a review, say that you can't fix it`,
+    conflicts: `bring the default branch into the ticket branch: fetch origin and rebase it onto origin's default branch in ${workDir}, resolving the conflicts through a worker and a reviewer, then ${push.replace("push origin", "push --force-with-lease origin")}`,
+    checks: `fix the failing checks through a worker and a reviewer, then ${push}`,
+    merge: `fix it if you can (through a worker and a reviewer for any code change, and ${push} if the branch changed, with --force-with-lease after a rebase), and if it needs the person, such as signing in to gh or approving a review, say that you can't fix it`,
   };
-  return `${fix[kind] ?? fix.merge}. Report back when it is done. Never commit to or push the default branch${noRemote ? " (this repo has no remote: push nothing at all)" : ""}, and do not merge: the person presses Merge again`;
+  return `${fix[kind] ?? fix.merge}. Report back when it is done. Never commit to or push the default branch, and do not merge: the person presses Merge again`;
 }
 
 // A line with no double quotes (it is one argument of `hc send`).
@@ -210,14 +201,14 @@ const failureLine = ({ failure, branch, workDir }) =>
 
 // What the run page sends the live orchestrator when the red button is pressed: one line, no double quotes.
 // failure: mergeFailure.
-export function fixMessage({ failure, branch, workDir, noRemote }) {
-  return `${failureLine({ failure, branch, workDir })} Please ${fixSteps({ kind: failure.kind, branch, workDir, noRemote })}.`;
+export function fixMessage({ failure, branch, workDir }) {
+  return `${failureLine({ failure, branch, workDir })} Please ${fixSteps({ kind: failure.kind, branch, workDir })}.`;
 }
 
 // The first task of a new orchestrator, started because the one that ran the ticket has ended: the same fix as fixMessage,
 // with the rules to read first and without the planning, as the ticket is built and merged into the ticket branch already.
-export function restartTask({ runDir, failure, branch, workDir, noRemote }) {
-  return `Read ${runDir}/orchestrator.md and follow its rules, but skip the planning and the questions: the ticket is already built and merged into the ticket branch ${branch}. ${failureLine({ failure, branch, workDir })} Fix only this: ${fixSteps({ kind: failure.kind, branch, workDir, noRemote })}. Any change still goes through a worker and a reviewer; then report.`;
+export function restartTask({ runDir, failure, branch, workDir }) {
+  return `Read ${runDir}/orchestrator.md and follow its rules, but skip the planning and the questions: the ticket is already built and merged into the ticket branch ${branch}. ${failureLine({ failure, branch, workDir })} Fix only this: ${fixSteps({ kind: failure.kind, branch, workDir })}. Any change still goes through a worker and a reviewer; then report.`;
 }
 
 // The "orchestrator is fixing it" record, made when the fix message is sent: { label, error, seenWorking, turn, busy }. status: the
@@ -286,9 +277,9 @@ export function restoreFixing(saved) {
   return { label: saved.label, error: typeof saved.error === "string" ? saved.error : "", seenWorking: Boolean(saved.seenWorking), turn: Number.isFinite(saved.turn) ? saved.turn : null, busy: Boolean(saved.busy) };
 }
 
-// gh args for the pull request; the body links the ticket when it has a number. body: replaces that (a local task has no GitHub issue to close).
-export function prArgs({ branch, title, number, body }) {
-  return ["pr", "create", "--head", branch, "--title", number ? `#${number} ${title}` : title, "--body", body ?? (number ? `Closes #${number}` : "")];
+// gh args for the pull request; the body links the ticket when it has a number.
+export function prArgs({ branch, title, number }) {
+  return ["pr", "create", "--head", branch, "--title", number ? `#${number} ${title}` : title, "--body", number ? `Closes #${number}` : ""];
 }
 
 // The pull request's URL from what gh printed, or null.
@@ -298,11 +289,11 @@ export const prNumber = (url) => url?.match(/\/pull\/(\d+)/)?.[1] ?? null;
 // Opens the pull request, as the first part of Merge when the run has none yet (and for the automatic pull request): pushes the
 // branch with -u, then `gh pr create`. exec(cmd, args, opts) -> { code, stdout, stderr }. Resolves { url, state: "OPEN", number }.
 // Throws an Error saying why, with step "push-branch" or "open-pr" for mergeFailure (Push branch / Fix merge).
-export async function openPullRequest(exec, { folder, branch, title, number, body }) {
+export async function openPullRequest(exec, { folder, branch, title, number }) {
   const said = (r) => String(r.stderr || r.stdout || "").trim();
   const push = await exec("git", ["-C", folder, "push", "-u", "origin", branch]);
   if (push.code !== 0) throw Object.assign(new Error(`The push failed: ${said(push)}`), { step: "push-branch" });
-  const made = await exec("gh", prArgs({ branch, title, number, body }), { cwd: folder });
+  const made = await exec("gh", prArgs({ branch, title, number }), { cwd: folder });
   const url = parsePrUrl(made.stdout) ?? parsePrUrl(made.stderr); // gh says "already exists" with the URL on stderr
   if (!url) throw Object.assign(new Error(`gh didn't open a pull request: ${said(made)}`), { step: "open-pr" });
   return { url, state: "OPEN", number: prNumber(url) };

@@ -4,7 +4,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { baseFor, mainCheckout, prepareWorktree } from "./worktree.js";
+import { baseFor, mainCheckout, placeInfo, NOT_A_REPO_MS, prepareWorktree } from "./worktree.js";
 import { worktreePath } from "./run.js";
 
 // The same shape as the host's exec: { code, stdout, stderr }.
@@ -131,4 +131,55 @@ test("a second Start for the same branch reuses its worktree under Herdr's folde
   const target = worktreePath(repo, "workflow/10-p", home);
   await prepareWorktree(git, repo, "workflow/10-p", target);
   assert.equal(await prepareWorktree(git, repo, "workflow/10-p", target), target);
+});
+
+// ---- which place ----
+const fakeGit = (roots) => {
+  const calls = [];
+  const git = (on) => async (cwd, ...args) => {
+    calls.push([on, cwd, ...args]);
+    const root = roots[cwd];
+    if (args[0] === "worktree") return root ? { code: 0, stdout: `worktree ${root}\nHEAD abc\nbranch refs/heads/main\n\n`, stderr: "" } : { code: 128, stdout: "", stderr: "not a git repository" };
+    return { code: 128, stdout: "", stderr: "not a git repository" };
+  };
+  return { git, calls, lookups: () => calls.filter((c) => c[2] === "worktree").length };
+};
+
+test("a folder in a repo is that repo's main checkout", async () => {
+  const { git } = fakeGit({ "/r/wt": "/r" });
+  const info = await placeInfo({ folder: "/r/wt" }, null, { git });
+  assert.deepEqual([info.mainRoot, info.remote, info.folder], ["/r", false, "/r/wt"]);
+});
+
+test("a folder outside any repo has no main checkout", async () => {
+  const { git } = fakeGit({});
+  const info = await placeInfo({ folder: "/home/me" }, null, { git });
+  assert.equal(info.mainRoot, null);
+  assert.equal((await placeInfo({}, null, { git })).mainRoot, null); // no folder at all
+});
+
+test("a space on another machine is asked there, and is marked remote", async () => {
+  const { git, calls } = fakeGit({ "/srv/app": "/srv/app" });
+  const info = await placeInfo({ folder: "/srv/app", on: "box" }, null, { git });
+  assert.deepEqual([info.mainRoot, info.remote, info.on], ["/srv/app", true, "box"]);
+  assert.equal(calls[0][0], "box");
+});
+
+test("the main checkout is not asked for again in the same folder", async () => {
+  const { git, lookups } = fakeGit({ "/r": "/r" });
+  const first = await placeInfo({ folder: "/r" }, null, { git });
+  const second = await placeInfo({ folder: "/r" }, first.cache, { git });
+  assert.equal(second.mainRoot, "/r");
+  assert.equal(lookups(), 1);
+  await placeInfo({ folder: "/r/other" }, second.cache, { git }); // another folder: asked again
+  assert.equal(lookups(), 2);
+});
+
+test("a folder that was not a repo is looked at again after a while", async () => {
+  const { git, lookups } = fakeGit({});
+  const first = await placeInfo({ folder: "/x" }, null, { git }, 1000);
+  await placeInfo({ folder: "/x" }, first.cache, { git }, 1000 + NOT_A_REPO_MS - 1);
+  assert.equal(lookups(), 1);
+  await placeInfo({ folder: "/x" }, first.cache, { git }, 1000 + NOT_A_REPO_MS);
+  assert.equal(lookups(), 2);
 });

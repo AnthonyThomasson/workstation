@@ -1,6 +1,6 @@
 // Pure state and prompt selection for the Task settings sections and their read-only prompt tabs.
 import { newTaskPrompt, refactorPrompt, spelled, STATUSES } from "../lib/index.js";
-import { localNewTaskPrompt, localRefactorPrompt, orchestratorPrompt, workerPrompt, reviewerPrompt, investigatorPrompt } from "../runs/index.js";
+import { orchestratorPrompt, workerPrompt, reviewerPrompt, investigatorPrompt } from "../runs/index.js";
 import { newTaskInvestigatorPrompt, newTaskWorkerPrompt } from "../investigations/index.js";
 
 // The agent sections of Task settings, grouped by who starts them. Entries don't repeat their group's word, so the Task
@@ -40,14 +40,11 @@ export function promptTitle(role) {
   return entry ? `${entry.title} prompt` : SUB_TITLES[role] ? `${SUB_TITLES[role]} prompt` : "Prompt";
 }
 
-// local: { mainRoot, todoDir, upNextDir } when the repo's tasks are local files; the id is a placeholder, as a run's are.
 // "newTask" is the New Task Orchestrator's; "refactor" is the Refactor Orchestrator's, for a sample refactor type; "newTaskInvestigator" and "newTaskWorker" are what its investigators and prototype workers read.
-export function promptForRole(role, { repo = "", project = null, options = [], local = null } = {}) {
-  if (role === "newTask" && local) return localNewTaskPrompt({ ...local, nextId: "<next id>", agentsDir: SESSION_FOLDER });
+export function promptForRole(role, { repo = "", project = null, options = [] } = {}) {
   if (role === "newTask") {
     return newTaskPrompt({ repo, project, backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed), agentsDir: SESSION_FOLDER });
   }
-  if (role === "refactor" && local) return localRefactorPrompt({ ...local, nextId: "<next id>", type: SAMPLE_REFACTOR, agentsDir: SESSION_FOLDER });
   if (role === "refactor") {
     return refactorPrompt({ repo, project, backlog: spelled(options, STATUSES.backlog), groomed: spelled(options, STATUSES.groomed), type: SAMPLE_REFACTOR, agentsDir: SESSION_FOLDER });
   }

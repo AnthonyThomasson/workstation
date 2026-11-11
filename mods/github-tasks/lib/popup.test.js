@@ -103,12 +103,6 @@ test("the editor opens as a full-window overlay the mod draws itself, with the t
   });
 });
 
-test("the overlay's props keep the local extra", () => {
-  const o = editorOverlay({ role: "editor", local: { mainRoot: "/r" } });
-  assert.deepEqual(o.props.local, { mainRoot: "/r" });
-  assert.equal(o.props.popup, true);
-});
-
 test("the panel first shows when the window is first measured, and not again on a resize", () => {
   assert.equal(panelAppeared(null, { width: 1200, height: 800 }), true);
   assert.equal(panelAppeared({ width: 1200, height: 800 }, { width: 1000, height: 700 }), false);

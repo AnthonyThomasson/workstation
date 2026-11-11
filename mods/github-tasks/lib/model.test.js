@@ -179,7 +179,7 @@ test("wontDoOption finds the project's Won't Do option, exact spelling first", (
 });
 
 test("the Won't Do button's disabled reason, or null", () => {
-  const github = { local: false, statusOptions: [{ id: "a", name: "Done" }, { id: "b", name: "Won't Do" }] };
+  const github = { statusOptions: [{ id: "a", name: "Done" }, { id: "b", name: "Won't Do" }] };
   assert.equal(wontDoDisabledReason(github), null);
   assert.equal(wontDoDisabledReason({ ...github, draft: true }), "Create the ticket first");
   assert.equal(wontDoDisabledReason({ ...github, saving: true }), "Saving…");
@@ -191,13 +191,6 @@ test("the Won't Do button's disabled reason, or null", () => {
   assert.equal(wontDoDisabledReason({ ...github, draft: true, saving: true, dirty: true, statusOptions: [] }), "Create the ticket first");
   assert.equal(wontDoDisabledReason({ ...github, saving: true, dirty: true, statusOptions: [] }), "Saving…");
   assert.equal(wontDoDisabledReason({ ...github, dirty: true, statusOptions: [] }), "Save or revert first");
-});
-
-test("a local task never needs the project option", () => {
-  assert.equal(wontDoDisabledReason({ local: true, statusOptions: [] }), null);
-  assert.equal(wontDoDisabledReason({ local: true }), null);
-  assert.equal(wontDoDisabledReason({ local: true, saving: true }), "Saving…");
-  assert.equal(wontDoDisabledReason({ local: true, dirty: true }), "Save or revert first");
 });
 
 test("spelled gives a status as the project spells it, else the fixed name", () => {

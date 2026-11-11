@@ -12,8 +12,8 @@ import { EMPTY_TEXT, FOCUS_HEIGHT, FOCUS_LABEL, FOCUS_PLACEHOLDER, RefactorDialo
 
 const baseName = (path) => String(path ?? "").split("/").filter(Boolean).pop() ?? "";
 
-// The repo the pick is remembered for: the main checkout in local mode, the GitHub repo otherwise.
-const repoKeyOf = (props) => (props.local ? props.local.mainRoot : props.repo) ?? "";
+// The repo the pick is remembered for: the GitHub repo.
+const repoKeyOf = (props) => props.repo ?? "";
 
 // The refactor types the place can see, as the Refactors list in Task settings loads them: the repo's own (a repo on this computer) and
 // the global ones. Resolves with the rows (refactor-dialog.js typeRows).

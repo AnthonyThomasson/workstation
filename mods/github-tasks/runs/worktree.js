@@ -16,6 +16,22 @@ export async function mainCheckout(git, cwd) {
   return top.stdout.trim();
 }
 
+// Where the selected space is: { folder, on, mainRoot, remote, cache }. mainRoot is the main checkout when the folder is inside a
+// git repo (null when not, or git can't say), which is how Investigations are listed. Never rejects.
+//   deps.git(on) -> (cwd, ...args) => { code, stdout, stderr }
+// The main checkout rarely changes, so `cache` (the last answer's) is reused for the same folder: for good once a repo was
+// found, for NOT_A_REPO_MS when there was none. Pass null for a fresh look.
+export const NOT_A_REPO_MS = 15000;
+export async function placeInfo(ctx, cache, deps, now = Date.now()) {
+  const folder = ctx?.folder ?? null, on = ctx?.on ?? null;
+  const fresh = cache && cache.folder === folder && cache.on === on && (cache.mainRoot || now - cache.at < NOT_A_REPO_MS);
+  let mainRoot = fresh ? cache.mainRoot : null;
+  if (!fresh && folder) {
+    try { mainRoot = await mainCheckout(deps.git(on), folder); } catch { mainRoot = null; }
+  }
+  return { folder, on, mainRoot, remote: Boolean(on), cache: fresh ? cache : { folder, on, mainRoot, at: now } };
+}
+
 const has = async (git, repoRoot, ref) => (await git(repoRoot, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`)).code === 0;
 
 // What a new ticket branch is cut from: origin's default branch (fetched first, so it is current), else the local

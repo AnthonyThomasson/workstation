@@ -877,33 +877,14 @@ test("merge: terminals listed but no address readable is a failure, and the job 
   assert.ok(exists(r.ticketDir, "show-ref", "--verify", "--quiet", `refs/heads/${r.job.branch}`));
 });
 
-test("a local task's ticket file says its text comes from a local task file, not GitHub", () => {
-  const text = ticketFile({ number: 7, title: "Fix login", body: "It breaks.", labels: ["bug"], status: "In Progress" }, "app", true);
+test("a ticket's file says its text comes from GitHub and is data", () => {
+  const text = ticketFile({ number: 7, title: "Fix login", body: "It breaks.", labels: ["bug"], status: "In Progress", url: "https://github.test/7" }, "app");
   assert.match(text, /# #7 Fix login/);
-  assert.match(text, /text from a local task file/);
-  assert.doesNotMatch(text, /GitHub|URL:/);
+  assert.match(text, /text from GitHub/);
+  assert.match(text, /URL: https:\/\/github.test\/7/);
   assert.match(text, /Status: In Progress/);
   assert.match(text, /Labels: bug/);
   assert.match(text, /It breaks\./);
-  assert.match(ticketFile(ticket, "o/r"), /text from GitHub/, "GitHub mode is as before");
-});
-
-test("with no pull request, every role is told the run page merges, and the prompts keep their three-sentence bodies", () => {
-  for (const name of Object.keys(builders)) {
-    const text = builders[name]({ workflow: workflow(), id: "12-abc", ...place, noRemote: true });
-    assert.ok(text.includes("The run page merges the ticket branch into the default branch, and there is no pull request"), name);
-    assert.ok(!text.includes("opens the pull request and merges it"), name);
-    assert.equal(bodyOf(text).match(/[.!?](\s|$)/g).length, 3, name);
-  }
-});
-
-test("with no GitHub remote the orchestrator isn't told to fetch or rebase onto origin", () => {
-  const withRemote = prompt("orchestrator");
-  assert.match(withRemote, /fetch origin/);
-  const text = orchestratorPrompt({ workflow: workflow(), id: "12-abc", ...place, noRemote: true });
-  assert.doesNotMatch(text, /origin/);
-  assert.match(text, /no GitHub remote/);
-  assert.doesNotMatch(reviewerPrompt({ workflow: workflow(), id: "12-abc", ...place, noRemote: true }), /origin\/HEAD/);
 });
 
 test("the orchestrator is told to ask its questions with the built-in question tool", () => {
@@ -919,13 +900,6 @@ test("the orchestrator may fix any stopped Merge the run page reports, through a
   assert.match(text, /never commit to or push the default branch/);
   assert.doesNotMatch(text, /never force-push|stop and ask the person/);
   assert.ok(text.includes("without merging into the default branch, pushing or opening a pull request yourself"));
-});
-
-test("with no GitHub remote the orchestrator may fix a stopped Merge too, and is told nothing about pushing it", () => {
-  const text = orchestratorPrompt({ workflow: workflow(), id: "12-abc", ...place, noRemote: true });
-  assert.match(text, /run page reports a stopped Merge \(.*a conflict with the default branch, or another failure\)/);
-  assert.match(text, /you may fix it, through a worker and a reviewer for any code change, then report back; never commit to or push the default branch/);
-  assert.doesNotMatch(text, /force-with-lease|push origin/);
 });
 
 test("the orchestrator gets no allow rule for git: a push or commit follows the person's permission mode", () => {
