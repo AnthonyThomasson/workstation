@@ -7,7 +7,7 @@ import { div, image, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { agents, closeOverlay, openOverlay, props as blockProps, terminals, theme } from "herdr";
 import { PRESS_BUTTONS, WORDS, agentPopupOverlay, barTitle, isEscape, parentLabel } from "../lib/index.js";
-import { S, stop } from "./ui.js";
+import { S, stop } from "./widgets.js";
 
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 

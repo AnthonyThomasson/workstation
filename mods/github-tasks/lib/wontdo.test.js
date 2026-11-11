@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { wontDoFooter, wontDoPrompt, retryAfterSignIn } from "./wontdo.js";
-import { WONT_DO_NEEDS_OPTION } from "./model.js";
+import { WONT_DO_NEEDS_OPTION } from "./statuses.js";
 
 const OPTIONS = [{ name: "To Do" }, { name: "Won't Do" }];
 const idle = { draft: false, saving: false, dirty: false, statusOptions: OPTIONS, startable: true, confirming: false, busy: false };

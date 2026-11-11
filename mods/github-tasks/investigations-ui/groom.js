@@ -1,5 +1,5 @@
 // New Task: an Investigation (investigate.js): an agent working in a worktree and a space of its own, told what to do (the
-// prompts are in model.js). These are the two entry points the sidebar calls; the rest is investigate.js.
+// prompts are in lib/orchestrator-prompts.js). These are the two entry points the sidebar calls; the rest is investigate.js.
 import { knownAgents } from "herdr";
 import { startInvestigation } from "./investigate.js";
 

@@ -1,5 +1,5 @@
 // The ticket window's Won't Do button, as pure decisions (which footer buttons are on, the confirm question and what the sign-in retries), which editor/editor.js draws from.
-import { wontDoDisabledReason } from "./model.js";
+import { wontDoDisabledReason } from "./statuses.js";
 
 // What the footer shows. confirm: the inline strip replaces the button row. Each button is { disabled }, and wontDo
 // also has the tooltip (the reason it is off). busy: the Won't Do call is running, so every button is inert and the

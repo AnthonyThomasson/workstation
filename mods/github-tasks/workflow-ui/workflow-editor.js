@@ -21,7 +21,7 @@ export class WorkflowEditor {
     const M = this.kind.model; // parse / normalize / blank / ROLES ... of this kind
     this.id = props?.id ?? null;
     this.where = props?.where ?? {}; // the selected space's folder and machine, to find its repo's labels
-    this.scope = props?.scope ?? "global"; // where the file is kept (model.js SCOPES)
+    this.scope = props?.scope ?? "global"; // where the file is kept (workflow-model.js SCOPES)
     this.baseScope = this.scope;
     this.repoRoot = props?.repoRoot ?? null; // the repo of the space this was opened from: where "Repo" is
     this.nameInput = InputState.new({ value: "", placeholder: this.kind.labels.namePlaceholder });

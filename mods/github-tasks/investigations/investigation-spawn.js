@@ -20,7 +20,7 @@ export function subAgentArgv(role, settings, known, dir) {
   return role === "investigator" ? readOnlyArgv(own, base, dir) : agentArgv("worker", own, base, dir);
 }
 
-// The New Task Orchestrator's command: the one New Task always opened (model.js groomArgv) and, when it is Claude and has a session folder,
+// The New Task Orchestrator's command: the one New Task always opened (lib/agent-settings.js groomArgv) and, when it is Claude and has a session folder,
 // the right to run that folder's spawn script and hc. Nothing else is restricted.
 export function newTaskAgentArgv(agent, groomer, dir) {
   const argv = groomArgv(agent.key, agent.run, groomer ?? {});

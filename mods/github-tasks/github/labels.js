@@ -1,5 +1,5 @@
 // The GitHub labels of the repo the selected space is in, to complete a workflow's trigger from. Pure:
-// gh comes in as gh(args, { cwd, on }) -> { code, stdout, stderr } (ui.js has the real one), so
+// gh comes in as gh(args, { cwd, on }) -> { code, stdout, stderr } (widgets/commands.js has the real one), so
 // node --test runs it. GitHub Projects have no labels of their own; a project's tickets use the repo's.
 // The repo itself is found by loader.js findRepo.
 
