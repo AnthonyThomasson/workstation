@@ -156,6 +156,19 @@
               "size": {
                 "px": 42
               }
+            },
+            {
+              "id": "skill-artifacts-toggle",
+              "type": "block",
+              "content": {
+                "mod": "skill-artifacts",
+                "props": {
+                  "role": "toggle"
+                }
+              },
+              "size": {
+                "px": 42
+              }
             }
           ]
         },
@@ -228,6 +241,13 @@
                       "type": "block",
                       "content": {
                         "mod": "skills"
+                      }
+                    },
+                    {
+                      "id": "skill-artifacts",
+                      "type": "block",
+                      "content": {
+                        "mod": "skill-artifacts"
                       }
                     },
                     {
