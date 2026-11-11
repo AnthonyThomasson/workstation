@@ -230,3 +230,28 @@ test("a failing script reports an error and keeps going with no rows", async () 
   assert.match(b.error, /^Listing scratchpads failed/);
   assert.deepEqual(await scan(io, "nope", { now: NOW }), { rows: [], error: null });
 });
+
+test("an HTML title is read once per file version, and again when the file changes", async () => {
+  const reads = [];
+  const line = (m) => `${sec(m)} 10 /var/T/cache-test.html`;
+  const io = (stdout) => ({ sh: async () => ({ code: 0, stdout, stderr: "" }), read: async (p) => { reads.push(p); return "<title>T</title>"; } });
+  await scan(io(line(H)), "tmpdir", { now: NOW });
+  await scan(io(line(H)), "tmpdir", { now: NOW });
+  assert.equal(reads.length, 1);
+  const { rows } = await scan(io(line(H)), "tmpdir", { now: NOW });
+  assert.equal(rows[0].subtitle, "T");
+  await scan(io(line(2 * H)), "tmpdir", { now: NOW }); // a different mtime
+  assert.equal(reads.length, 2);
+});
+
+test("an unreadable HTML file gets no title and is tried again next scan", async () => {
+  let n = 0;
+  const io = { sh: async () => ({ code: 0, stdout: `${sec(H)} 10 /var/T/unreadable.html`, stderr: "" }), read: async () => { n++; return null; } };
+  assert.equal((await scan(io, "tmpdir", { now: NOW })).rows[0].subtitle, "");
+  await scan(io, "tmpdir", { now: NOW });
+  assert.equal(n, 2);
+});
+
+test("stat tries GNU's format first, then BSD's", () => {
+  assert.ok(TMPDIR_FILES.indexOf("stat -c") < TMPDIR_FILES.indexOf("stat -f"));
+});

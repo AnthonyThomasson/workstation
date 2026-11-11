@@ -2,7 +2,7 @@
 // agents write are looked for, how a scan's output turns into rows, and how rows are matched to a project,
 // sorted, filtered and aged. main.js decides when to scan; the tests pass a fake machine.
 //   io.sh(script, args, on) -> { code, stdout, stderr }: one exec of a shell script on the space's machine;
-//   io.read(path, on) -> text or null: a small text file (used for an HTML report's <title>).
+//   io.read(path, on) -> text or null: the top of a text file (used for an HTML report's <title>).
 
 export const WINDOW_DAYS = 7;
 export const MAX_ROWS = 200; // per tab, newest first
@@ -152,7 +152,7 @@ export function runMatches(run, folders, home) {
 // ---- Scans: the scripts, and what they print ----
 
 const KINDS_FIND = "\\( -iname '*.md' -o -iname '*.html' -o -iname '*.htm' \\)";
-const STAT = `-exec sh -c 'stat -f "%m %z %N" "$@" 2>/dev/null || stat -c "%Y %s %n" "$@"' sh {} +`;
+const STAT = `-exec sh -c 'stat -c "%Y %s %n" "$@" 2>/dev/null || stat -f "%m %z %N" "$@"' sh {} +`;
 const WINDOW = `-mtime -${WINDOW_DAYS}`;
 const CLAUDE_BASE = 'u=$(id -u); b="/private/tmp/claude-$u"; [ -d "$b" ] || b="/tmp/claude-$u"';
 
@@ -202,10 +202,21 @@ export function parseScratchPath(path) {
 
 const ran = (r, what) => (r && r.code === 0 ? null : `${what} failed${r?.stderr ? `: ${String(r.stderr).trim().split("\n").pop()}` : ""}`);
 
+// Titles by machine|path|mtime|size: a scan every 20 seconds reads a file again only when it changed.
+const titles = new Map();
+const TITLE_CACHE = 1000;
 async function withTitles(io, on, rows) {
   const html = rows.filter((r) => r.kind === "html").slice(0, TITLE_READS);
   await Promise.all(html.map(async (r) => {
-    try { r.subtitle = htmlTitle(await io.read(r.path, on)); } catch { r.subtitle = ""; }
+    const key = `${on ?? ""}|${r.path}|${r.mtime}|${r.size}`;
+    if (!titles.has(key)) {
+      let text = null;
+      try { text = await io.read(r.path, on); } catch { /* unreadable: no title, and try again next scan */ }
+      if (text == null) { r.subtitle = ""; return; }
+      if (titles.size >= TITLE_CACHE) titles.clear();
+      titles.set(key, htmlTitle(text));
+    }
+    r.subtitle = titles.get(key);
   }));
   return rows;
 }

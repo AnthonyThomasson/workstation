@@ -105,7 +105,7 @@ export default class SkillArtifacts extends View {
     if (this.role !== "panel") { this.handle.focus(); return this.initDialog(cx); }
 
     this.data = {}; // tab -> { rows, error }
-    this.query = ""; this.open = null; this.ctx = null; this.ctxKey = null; this.token = 0; this.loading = false;
+    this.query = ""; this.open = null; this.ctx = null; this.ctxKey = null; this.token = 0; this.loading = false; this.pending = false;
     this.lastAgent = null; this.notice = null; this.seenRefresh = shared(REFRESH_KEY) ?? 0; this.wasHidden = true;
     this.filter = InputState.new({ placeholder: "Filter by name or where" });
     this.filter.on("change", (_e, cx) => { this.query = this.filter.value(); cx.notify(); });
@@ -128,10 +128,12 @@ export default class SkillArtifacts extends View {
 
   refresh(cx) {
     const ctx = this.ctx;
-    if (!ctx || this.loading) return;
-    this.loading = true;
+    if (!ctx) return;
+    if (this.loading) { this.pending = true; return; } // rescan when this scan ends
+    this.loading = true; this.pending = false;
     const token = this.token;
-    const io = { sh: (script, args, on) => sh(script, args, on), read: (path, on) => readTextFile(path, on ? { on } : {}) };
+    const io = { sh: (script, args, on) => sh(script, args, on), // only the top of a report is needed for its <title>
+      read: async (path, on) => { const r = await sh('head -c 8192 -- "$1"', [path], on); return r.code === 0 ? r.stdout : null; } };
     cx.spawn(async (cx) => {
       try {
         await Promise.all(TABS.map(async ([tab]) => {
@@ -139,7 +141,9 @@ export default class SkillArtifacts extends View {
           if (token !== this.token) return;
           this.data[tab] = res; cx.notify();
         }));
-      } finally { if (token === this.token) this.loading = false; }
+      } finally {
+        if (token === this.token) { this.loading = false; if (this.pending) this.refresh(cx); }
+      }
     });
   }
 
@@ -215,15 +219,15 @@ export default class SkillArtifacts extends View {
     const t = theme();
 
     // Follow the shown space; a new place starts over.
+    const shownNow = shownHere();
     const ctx = this.context(), key = ctx ? `${ctx.on}|${ctx.folders.join("|")}` : null;
     if (key !== this.ctxKey) {
-      this.ctxKey = key; this.ctx = ctx; this.token++; this.loading = false; this.data = {}; this.open = null;
-      if (ctx) later(cx, (cx) => this.refresh(cx));
+      this.ctxKey = key; this.ctx = ctx; this.token++; this.loading = false; this.pending = false; this.data = {}; this.open = null;
+      if (ctx && shownNow) later(cx, (cx) => this.refresh(cx)); // a hidden panel never scans; showing it does
     }
     const bumped = shared(REFRESH_KEY) ?? 0;
-    if (bumped !== this.seenRefresh) { this.seenRefresh = bumped; later(cx, (cx) => this.refresh(cx)); }
+    if (bumped !== this.seenRefresh) { this.seenRefresh = bumped; if (shownNow) later(cx, (cx) => this.refresh(cx)); }
     this.receiver();
-    const shownNow = shownHere();
     if (shownNow && this.wasHidden && ctx) later(cx, (cx) => this.refresh(cx));
     this.wasHidden = !shownNow;
 
