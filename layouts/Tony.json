@@ -197,6 +197,7 @@
             {
               "id": "panel",
               "type": "column",
+              "hidden": true,
               "size": {
                 "px": 368
               },
@@ -206,7 +207,7 @@
                 {
                   "id": "panel-body",
                   "type": "stack",
-                  "active": "artifacts",
+                  "active": "files",
                   "children": [
                     {
                       "id": "files",
@@ -248,50 +249,6 @@
                           "role": "details"
                         }
                       }
-                    },
-                    {
-                      "id": "artifacts",
-                      "type": "stack",
-                      "active": "artifacts-list",
-                      "children": [
-                        {
-                          "id": "artifacts-list",
-                          "type": "block",
-                          "content": {
-                            "mod": "artifacts"
-                          }
-                        },
-                        {
-                          "id": "artifacts-view",
-                          "type": "column",
-                          "resizable": false,
-                          "children": [
-                            {
-                              "id": "artifacts-view-head",
-                              "type": "block",
-                              "size": {
-                                "px": 42
-                              },
-                              "content": {
-                                "mod": "artifacts",
-                                "props": {
-                                  "head": true
-                                }
-                              }
-                            },
-                            {
-                              "id": "artifacts-view-body",
-                              "type": "block",
-                              "content": {
-                                "mod": "artifacts",
-                                "props": {
-                                  "blank": true
-                                }
-                              }
-                            }
-                          ]
-                        }
-                      ]
                     }
                   ]
                 }
