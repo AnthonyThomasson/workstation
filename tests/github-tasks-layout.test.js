@@ -5,31 +5,25 @@
 // The fixtures test, tests/github-tasks-layout.fixtures.test.js, runs this check on small trees under tests/fixtures/github-tasks-layout/.
 // No npm install; the same code always gives the same result (sorted walk, sorted output). Exit 1 on any failure.
 //
-// The layout: the mod's top level holds only main.js and prompts-page.js (plus data folders: icons/ and starters/, which hold no
-// code). Everything else lives in a folder, and each folder's index.js is its public interface. Folders stack in tiers, and an
-// import may only point down the stack (a folder never imports a folder of its own tier, or a higher one):
-//
-//   tier 0   main.js, prompts-page.js
-//   tier 1   editor  settings  doctor
-//   tier 2   investigations
-//   tier 3   runs
-//   tier 4   workflow
-//   tier 5   github
-//   tier 6   lib
+// The layout is the LAYOUT constant below: the mod's top level holds only the top files (main.js, prompts-page.js) and data folders
+// (icons/, starters/: no code). Everything else lives in a folder, and each folder's index.js is its public interface. Folders stack
+// in tiers, and an import may only point down the stack (a folder never imports a folder of its own tier, or a higher one). The
+// rules below are generic over that table: to add, move or merge a folder, edit LAYOUT and nothing else.
 //
 // The rules (what counts as a failure):
 //   deep-import    an import from outside a folder into anything in it but its index.js (code and tests alike).
 //   self-index     a file inside a folder importing that folder's own index.js (siblings are imported directly).
-//   direction      a folder importing a folder of a higher tier, or a folder importing main.js / prompts-page.js.
+//   direction      a folder importing a folder of a higher tier, or a folder importing a top file.
 //   sibling        a folder importing another folder of its own tier (editor, settings and doctor may not import each other).
-//   imports-main   any file importing main.js (nothing does; main.js is the entry that wires everything).
+//   imports-main   any file importing the entry (main.js: nothing does; it wires everything).
 //   cycle          folders that import each other round in a circle, whatever the tiers say (reported once per cycle).
 //   no-index       a folder with no index.js.
 //   top-level-file a .js file at the top level other than main.js and prompts-page.js.
 //   unknown-folder a folder with .js files that is not in the table (and not a data folder).
+//   pure-import    a folder marked pure in the table importing herdr, gpui-kit or gpui-base (directly; tests in it too).
 //   dynamic-import an import() whose path is not a plain string, so the check can't follow it.
 //   parse          the file is not valid JavaScript.
-// Only relative imports are judged: "herdr", "gpui-kit", "node:fs" and the like are not part of the layout. Files and folders
+// Apart from pure-import, only relative imports are judged: "herdr", "gpui-kit", "node:fs" and the like are not part of the layout. Files and folders
 // that are symlinks are not followed. A folder that is in the table but absent is fine (a small tree needs not have them all).
 
 import { lstatSync, readdirSync, readFileSync, existsSync, statSync } from "node:fs";
@@ -37,28 +31,34 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as acorn from "./vendor/acorn/acorn.mjs";
 
-// Tier of each folder: lower tiers sit on top and may import the tiers below them.
-export const TIERS = [
-  ["editor", "settings", "doctor"],
-  ["investigations"],
-  ["runs"],
-  ["workflow"],
-  ["github"],
-  ["lib"],
-];
-// main.js and prompts-page.js are tier 0, above every folder.
-export const TOP_FILES = ["main.js", "prompts-page.js"];
-export const ENTRY = "main.js";
-// Folders that hold data, not code: their paths are Herdr-root based, so they stay at the top level.
-export const DATA_FOLDERS = ["icons", "starters"];
+// THE TABLE: edit here. Everything else is generic over it.
+//   top     .js files allowed at the top level; they sit above every folder.
+//   entry   the one top file nothing may import.
+//   data    folders that hold data, not code (their paths are Herdr-root based, so they stay at the top level): no index.js needed.
+//   tiers   folders, from the top of the stack to the bottom: a folder may import (through index.js) folders of later tiers only.
+//   pure    folders that may not import herdr, gpui-kit or gpui-base.
+export const LAYOUT = {
+  top: ["main.js", "prompts-page.js"],
+  entry: "main.js",
+  data: ["icons", "starters"],
+  tiers: [
+    ["editor", "settings", "doctor"],
+    ["investigations"],
+    ["runs"],
+    ["workflow"],
+    ["github"],
+    ["lib"],
+  ],
+  pure: [],
+};
+// What a pure folder may not import.
+const HOST_MODULES = ["herdr", "gpui-kit", "gpui-base"];
 
 const SKIP_DIRS = new Set(["node_modules", ".git"]);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.dirname(HERE);
 const posix = (p) => p.split(path.sep).join("/");
 
-const TIER_OF = new Map();
-TIERS.forEach((names, i) => names.forEach((n) => TIER_OF.set(n, i + 1)));
 
 // Every .js file under dir (sorted, as posix paths relative to dir) and every folder (relative path); symlinks are not followed.
 function walk(root) {
@@ -111,8 +111,11 @@ function place(rel) {
 
 const TIER_NAME = (n) => (n === 0 ? "top level" : `tier ${n}`);
 
-export function checkLayout(root) {
+export function checkLayout(root, layout = LAYOUT) {
   root = path.resolve(root);
+  const { top: TOP_FILES, entry: ENTRY, data: DATA_FOLDERS, pure: PURE } = layout;
+  const TIER_OF = new Map();
+  layout.tiers.forEach((names, i) => names.forEach((n) => TIER_OF.set(n, i + 1)));
   const failures = [];
   const fail = (file, line, rule, message) => failures.push({ file, line, rule, message });
   const { files, dirs } = walk(root);
@@ -148,7 +151,11 @@ export function checkLayout(root) {
     const fromTier = from.folder === "" ? 0 : TIER_OF.get(from.folder); // undefined for an unknown folder: judged by the other rules
     for (const { spec, line } of importsOf(ast)) {
       if (spec === null) { fail(f, line, "dynamic-import", "import() with a path that is not a plain string can't be followed"); continue; }
-      if (!spec.startsWith(".")) continue; // herdr, gpui-kit, node:*: not part of the layout
+      if (!spec.startsWith(".")) {
+        // herdr, gpui-kit, node:*: not part of the layout, except that a pure folder may not reach the host
+        if (PURE.includes(from.folder) && HOST_MODULES.includes(spec)) fail(f, line, "pure-import", `${spec}: ${from.folder}/ is pure and may not import ${HOST_MODULES.join(", ")}`);
+        continue;
+      }
       let target = path.resolve(root, path.dirname(f), spec);
       const rel = posix(path.relative(root, target));
       if (rel === "" || rel.startsWith("..")) continue; // leaves the mod: mod-isolation's business

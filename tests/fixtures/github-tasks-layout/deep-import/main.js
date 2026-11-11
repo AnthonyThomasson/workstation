@@ -1,2 +1,2 @@
-import { a } from "./lib/model.js";
+import { a } from "./core/model.js";
 export default a;
