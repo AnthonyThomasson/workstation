@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { parseProjectButtons, projectButtonArgv } from "./project-buttons.js";
 
 test("a missing config or no buttons is empty, not an error", () => {
@@ -32,9 +33,27 @@ test("bad YAML becomes a short error instead of breaking the run page", () => {
 
 test("a project command runs in the user's login shell, which stays open when it ends", () => {
   assert.deepEqual(projectButtonArgv("printf '%s\\n' \"$HOME\"; false", "/bin/zsh"), [
-    "/bin/zsh", "-lc", "printf '%s\\n' \"$HOME\"; false; exec '/bin/zsh' -l",
+    "/bin/zsh", "-lc", "eval 'printf '\\''%s\\n'\\'' \"$HOME\"; false'; exec '/bin/zsh' -l",
   ]);
   assert.deepEqual(projectButtonArgv("npm test", "/tmp/user's shell"), [
-    "/tmp/user's shell", "-lc", "npm test; exec '/tmp/user'\\''s shell' -l",
+    "/tmp/user's shell", "-lc", "eval 'npm test'; exec '/tmp/user'\\''s shell' -l",
   ]);
+});
+
+test("a YAML block command with a trailing newline finishes, then runs the fresh shell", () => {
+  const { buttons, errors } = parseProjectButtons("buttons:\n  - name: Multiline\n    command: |\n      printf 'command-ran\\n'\n");
+  assert.deepEqual(errors, []);
+  const argv = projectButtonArgv(buttons[0].command, "/bin/sh");
+  const r = spawnSync(argv[0], argv.slice(1), { input: "printf 'shell-ran\\n'\n", encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /command-ran/);
+  assert.match(r.stdout, /shell-ran/);
+});
+
+test("a trailing shell comment cannot swallow the fresh shell", () => {
+  const argv = projectButtonArgv("printf 'command-ran\\n' # comment", "/bin/sh");
+  const r = spawnSync(argv[0], argv.slice(1), { input: "printf 'shell-ran\\n'\n", encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /command-ran/);
+  assert.match(r.stdout, /shell-ran/);
 });

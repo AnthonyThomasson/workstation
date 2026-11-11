@@ -2,8 +2,8 @@
 import { parse } from "../lib/index.js";
 import { shQuote } from "./run.js";
 
-// A configured command runs verbatim, then replaces itself with a fresh login shell even when it fails.
-export const projectButtonArgv = (command, shell) => [shell, "-lc", `${command}; exec ${shQuote(shell)} -l`];
+// Evaluate the configured command as its own quoted script, so its newlines and comments cannot consume the shell reopening.
+export const projectButtonArgv = (command, shell) => [shell, "-lc", `eval ${shQuote(command)}; exec ${shQuote(shell)} -l`];
 
 export function parseProjectButtons(source) {
   if (source == null) return { buttons: [], errors: [] };
