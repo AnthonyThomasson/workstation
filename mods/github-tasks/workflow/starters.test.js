@@ -70,11 +70,12 @@ for (const [file, name] of Object.entries(REFACTOR_STARTERS)) {
   });
 }
 
-test("the Architecture and Isolation starters run /improve-codebase-architecture, Architecture with no HTML report", () => {
+test("the Isolation starter runs /improve-codebase-architecture; Architecture runs /codebase-design and writes an HTML report", () => {
   const { prompt } = refactor.parse(readFileSync(new URL("architecture.yaml", dir), "utf8")).orchestrator;
-  assert.match(prompt, /`\/improve-codebase-architecture`/);
+  assert.match(prompt, /`\/codebase-design`/);
+  assert.doesNotMatch(prompt, /`\/improve-codebase-architecture`/);
+  assert.match(prompt, /HTML file in the temp directory, never in the repo/);
   assert.match(refactor.parse(readFileSync(new URL("isolation.yaml", dir), "utf8")).orchestrator.prompt, /`\/improve-codebase-architecture`/);
-  assert.match(prompt, /do not write an html report/i);
 });
 
 test("each kind's starter display names match the starters' names, in order", () => {

@@ -8,9 +8,9 @@ orchestrator:
   model: opus
   effort: high
   prompt: |-
-    Run `/improve-codebase-architecture` on this repo to find deepening opportunities. Use its steps and vocabulary, and give each investigator one hot spot from `git log` to study.
+    Find deepening opportunities in this repo: refactors that turn shallow modules into deep ones. Run `/codebase-design` first and use its vocabulary (module, interface, depth, seam, adapter, leverage, locality) and its deletion test. Read the repo's glossary and ADRs, so no candidate reopens a recorded decision without saying why. Give each investigator one hot spot from `git log` to study.
 
-    List the candidates in the terminal, best first, with the files involved. Do not write an HTML report, and make no changes: once the person picks the candidates to keep, each becomes a ticket.
+    List the candidates in the terminal, best first, with the files involved, each rated Strong, Worth exploring or Speculative. Then write the same candidates up as a visual report, the way the improve-codebase-architecture skill does: one self-contained HTML file in the temp directory, never in the repo, with a card per candidate giving its files, the problem, the solution in plain words, the benefits in locality, leverage and tests, a before / after diagram (Mermaid or hand-drawn SVG), and its rating as a badge, ending with a top recommendation and why. Open it and give the person its path. Make no changes: once the person picks the candidates to keep, each becomes a ticket.
 
 investigator:
   agent: claude
