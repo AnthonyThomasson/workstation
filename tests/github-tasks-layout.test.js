@@ -42,7 +42,8 @@ export const LAYOUT = {
   entry: "main.js",
   data: ["icons", "starters"],
   tiers: [
-    ["editor", "settings", "doctor"],
+    ["settings"],
+    ["editor", "doctor"],
     ["investigations"],
     ["runs"],
     ["workflow"],
