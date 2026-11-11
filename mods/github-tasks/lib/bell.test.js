@@ -154,13 +154,13 @@ test("each shaking row says how long until it is let go, on its own clock", () =
   assert.equal(s.releaseIn("b", 2100 + BACK_AFTER), null);
 });
 
-test("rows of one repo's list and another's never mix when their keys carry the repo", () => {
+test("a row that first appears already waiting (another list's, after a space switch) is new, not one that started waiting", () => {
   const s = new Shakes();
-  s.observe(new Map([["ticket-/repo/a-local:1", false]]), 1000);
-  s.observe(new Map([["ticket-/repo/b-local:1", true]]), 2000); // the other repo's list, whose task has the same id
-  assert.equal(s.phase("ticket-/repo/b-local:1", 2000), null, "a row of another list is new, not one that started waiting");
-  s.observe(new Map([["ticket-/repo/a-local:1", true]]), 3000);
-  assert.equal(s.phase("ticket-/repo/a-local:1", 3000), null, "coming back to the first list starts over");
+  s.observe(new Map([["ticket-PVTI_a", false]]), 1000);
+  s.observe(new Map([["ticket-PVTI_b", true]]), 2000); // the other repo's list
+  assert.equal(s.phase("ticket-PVTI_b", 2000), null, "a row of another list is new, not one that started waiting");
+  s.observe(new Map([["ticket-PVTI_a", true]]), 3000);
+  assert.equal(s.phase("ticket-PVTI_a", 3000), null, "coming back to the first list starts over");
 });
 
 test("observe answers the rows that just started needing the person, once", () => {
