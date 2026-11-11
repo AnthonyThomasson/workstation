@@ -116,10 +116,10 @@ export const shouldAutoPr = ({ ready, pr, tried, busy }) => Boolean(ready) && !p
 // before Merge, only the clean-up to finish, which pressing Merge again does.
 const CLEANUP = new Set(["status", "remove-worktree", "prune-worktrees", "delete-branch", "remove-run-files"]);
 
-// Runs steps with exec(cmd, args, opts) -> { code, stdout, stderr }. Besides commands, a step may be { run(exec) } (what it returns, if a string, is what it did) or { check(stdout) }. Resolves { done, warnings } with what happened and
+// Runs steps with exec(cmd, args, opts) -> { code, stdout, stderr }. Besides commands, a step may be { check(stdout) }. Resolves { done, warnings } with what happened and
 // what was said on the way; throws an Error at the first step that fails, saying which earlier steps already happened.
 // The error says where it stopped, for mergeFailure: step (the step's name), found (the step ran and found a problem: leftover
-// changes, commits origin lacks; not set when it couldn't run), conflict (a run step's error said so) and phase "cleanup" (the
+// changes, commits origin lacks; not set when it couldn't run) and phase "cleanup" (the
 // work was merged already).
 export async function runSteps(steps, exec) {
   const done = [], warnings = [];
@@ -128,8 +128,6 @@ export async function runSteps(steps, exec) {
   const go = async (list) => {
     for (const st of list) {
       if (st.warn) { warnings.push(st.warn); continue; }
-      // run: a step that is code, not a command (it gets exec, and throws a message the person can read). Nothing in a GitHub run uses these now.
-      if (st.run) { let said; try { said = await st.run(exec); } catch (e) { stop(String(e?.message ?? e), st, e?.conflict ? { conflict: true } : {}); } const d = typeof said === "string" ? said : st.done; if (d) done.push(d); continue; }
       const r = await exec(st.cmd, st.args, st.cwd ? { cwd: st.cwd } : undefined);
       if (st.check) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim(), st); const bad = st.check(String(r.stdout ?? "")); if (bad) stop(bad, st, { found: true }); continue; } // check: stdout -> what to stop with, or null
       if (st.dirty) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim(), st); if (String(r.stdout ?? "").trim()) stop(st.dirty, st, { found: true }); continue; }
@@ -168,14 +166,13 @@ export function parsePrState(text) {
 
 // The failure runSteps (or the page's own checks before it) threw, as { kind, label, error }, or null when it is a plain error
 // (the clean-up failed: the work is merged). prState: parsePrState, asked by the page only when `gh pr merge` failed; null when
-// it couldn't be asked. error.step / found / conflict / phase: see runSteps.
+// it couldn't be asked. error.step / found / phase: see runSteps.
 export function mergeFailure({ error, prState } = {}) {
   if (!error || error.phase === "cleanup") return null;
   const message = String(error.message ?? error);
   const kind = error.step === "tree-status" && error.found ? "commit"
     : error.step === "ahead" && error.found ? "push"
     : error.step === "push-branch" ? "push" // the push that opens the pull request failed
-    : error.conflict ? "conflicts"
     : error.step === "pr-merge" && prState?.conflicting ? "conflicts"
     : error.step === "pr-merge" && prState?.failingChecks ? "checks"
     : "merge";

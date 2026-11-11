@@ -459,12 +459,7 @@ test("merge steps, run for real: a retry after the PR merged but the cleanup sto
   assert.ok(!existsSync(w.workDir) && !existsSync(w.runDir));
 });
 
-test("runSteps: a step can be code (run) and a check can read the output (check)", async () => {
-  const { exec } = fake();
-  const ran = [];
-  await runSteps([{ name: "a", run: async (e) => { ran.push(typeof e); } }], exec);
-  assert.deepEqual(ran, ["function"]);
-  await assert.rejects(runSteps([{ name: "ok", cmd: "x", args: [], done: "did x" }, { name: "b", run: async () => { throw new Error("nope"); } }], exec), /^Error: nope Already done: did x\.$/);
+test("runSteps: a check can read the output", async () => {
   const check = { name: "c", cmd: "x", args: [], fail: "Couldn't.", check: (s) => (s.trim() === "main" ? null : `on ${s.trim()}`) };
   await runSteps([check], fake({ x: { stdout: "main\n" } }).exec);
   await assert.rejects(runSteps([check], fake({ x: { stdout: "dev\n" } }).exec), /^Error: on dev$/);
