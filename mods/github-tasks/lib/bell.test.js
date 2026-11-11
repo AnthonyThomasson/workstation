@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BACK_AFTER, SHAKE_FOR, Shakes, bellFirst, bellTip, waitingAgents } from "./bell.js";
+import { BACK_AFTER, SHAKE_FOR, Shakes, bellFirst, bellTip, bellToast, waitingAgents } from "./bell.js";
 
 const RUN = "herdr.workflow.run";
 const term = (address, status, over = {}) => ({ address, name: `r1-${address}`, state: "live", status, labels: { [RUN]: "r1" }, created_ms: 1, ...over });
@@ -161,4 +161,32 @@ test("rows of one repo's list and another's never mix when their keys carry the 
   assert.equal(s.phase("ticket-/repo/b-local:1", 2000), null, "a row of another list is new, not one that started waiting");
   s.observe(new Map([["ticket-/repo/a-local:1", true]]), 3000);
   assert.equal(s.phase("ticket-/repo/a-local:1", 3000), null, "coming back to the first list starts over");
+});
+
+test("observe answers the rows that just started needing the person, once", () => {
+  const s = new Shakes();
+  assert.deepEqual(s.observe(new Map([["a", false], ["b", true], ["c", false]]), 1000), [], "the first look starts nothing");
+  assert.deepEqual(s.observe(new Map([["a", true], ["b", true], ["c", true]]), 2000), ["a", "c"], "b was already waiting");
+  assert.deepEqual(s.observe(new Map([["a", true], ["b", true], ["c", true]]), 2100), [], "looking again starts nothing");
+  assert.deepEqual(s.observe(new Map([["a", false], ["b", true], ["c", true]]), 3000), []);
+  assert.deepEqual(s.observe(new Map([["a", true], ["b", true], ["c", true]]), 4000), ["a"], "needing the person again is a new start");
+});
+
+test("a row that appears already waiting, or comes back, or changes space starts nothing", () => {
+  const s = new Shakes();
+  s.observe(new Map([["a", false]]), 1000);
+  assert.deepEqual(s.observe(new Map([["a", false], ["b", true]]), 2000), []);
+  assert.deepEqual(s.observe(new Map(), 3000), []);
+  assert.deepEqual(s.observe(new Map([["a", true], ["b", true]]), 4000), [], "both are new again");
+});
+
+test("the toast says which row needs the person, which agent and why, and peeks that agent", () => {
+  const blocked = { address: "t12", name: "worker-2", status: "blocked" }, error = { address: "t13", name: "reviewer", status: "error" };
+  assert.deepEqual(bellToast("#81", [blocked, error]), {
+    title: "#81 needs you", body: "worker-2 is blocked", level: "warning",
+    action: { name: "terminal.peek", args: { terminal: "t12" } }, sound: "blocked",
+  });
+  assert.equal(bellToast("Fix the login redirect", [error]).title, "Fix the login redirect needs you");
+  assert.equal(bellToast("#81", [error]).body, "reviewer has an error");
+  assert.equal(bellToast("#81", []), null, "nobody waits: no toast");
 });

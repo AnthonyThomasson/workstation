@@ -34,6 +34,21 @@ export function bellTip(agents) {
   return `${first.name} ${first.status === "error" ? "hit an error" : "needs you"}${more.length ? ` (and ${more.length} more)` : ""}. Click to answer.`;
 }
 
+// The toast for a row that has just started needing the person: `title` is what the row is called (a ticket's "#81", an investigation's
+// label), `agents` is waitingAgents' answer. The action is Herdr's own command, as a toast takes it (it can't carry our popup, which
+// needs this mod's props); null when nobody waits.
+export function bellToast(title, agents) {
+  const [first] = agents ?? [];
+  if (!first) return null;
+  return {
+    title: `${title} needs you`,
+    body: `${first.name} ${first.status === "error" ? "has an error" : "is blocked"}`,
+    level: "warning",
+    action: { name: "terminal.peek", args: { terminal: first.address } },
+    sound: "blocked",
+  };
+}
+
 export const BACK_AFTER = 140; // ms the row stays pushed out before it is let go
 export const SHAKE_FOR = 1500; // ms after which the shake is over
 
@@ -47,13 +62,16 @@ export class Shakes {
     this.since = new Map(); // key -> when its shake began
   }
 
+  // Answers the keys that just started needing the person (the ones to toast, as well as shake), each once.
   observe(waiting, now) {
+    const started = [];
     for (const [key, needs] of waiting) {
-      if (this.waiting.get(key) === false && needs) this.since.set(key, now);
+      if (this.waiting.get(key) === false && needs) { this.since.set(key, now); started.push(key); }
       if (!needs) this.since.delete(key);
     }
     for (const key of [...this.since.keys()]) if (!waiting.has(key)) this.since.delete(key);
     this.waiting = new Map(waiting);
+    return started;
   }
 
   // How many ms until a row that is pushed out is let go (the frame main.js must draw), or null when it isn't pushed out. Each row has its own.

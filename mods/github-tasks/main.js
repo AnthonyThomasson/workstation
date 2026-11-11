@@ -8,8 +8,8 @@
 // workflow's agents, beside its orchestrator (runs-ui/run-page.js); "investigation", a New Task session's Done button, beside its agent (investigations-ui/investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (investigations-ui/new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (runs-ui/start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js); "agent-bar", the bar over a peeked agent's terminal in its popup (widgets/agent-bar.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, spaces, focused, notify, shared, setShared, terminals, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
-import { BACK_AFTER, Shakes, bellFirst, bellTip, waitingAgents, INVESTIGATION_LABEL, RUN_LABEL, normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload, CHANGED, AGENT_KEY, DOCTOR_KEY } from "./lib/index.js";
+import { run, spaces, focused, notify, shared, setShared, terminals, playSound, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
+import { BACK_AFTER, Shakes, bellFirst, bellTip, bellToast, waitingAgents, INVESTIGATION_LABEL, RUN_LABEL, normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload, CHANGED, AGENT_KEY, DOCTOR_KEY } from "./lib/index.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, setupProject, setupNote } from "./github/index.js";
 import { installedAgents, investigationsHere, reconnectInvestigations, viewInvestigation, InvestigationPage, NewTaskPage, RefactorPage } from "./investigations-ui/index.js";
 import { S, icon, stop, note, iconButton, action, gh, later, openAgentPopup, AgentBar } from "./widgets/index.js";
@@ -345,15 +345,23 @@ export default class GitHubTasks extends View {
   // by its live orchestrator) or session (an investigation's) that are blocked or in error, into this.waiting. The shakes are told, so a
   // row that has just started needing the person shakes once. Answers the lists with the rows that need the person first.
   watch(lists) {
-    const all = terminals(), waiting = new Map();
+    const all = terminals(), waiting = new Map(), titles = new Map();
     for (const [section, items] of Object.entries(lists)) {
       for (const item of items) {
         const id = section === "investigations" ? item.id : liveRunFor(this.repo, item)?.labels?.[RUN_LABEL];
-        waiting.set(this.rowId(section, item), waitingAgents(all, section === "investigations" ? INVESTIGATION_LABEL : RUN_LABEL, id));
+        const key = this.rowId(section, item);
+        waiting.set(key, waitingAgents(all, section === "investigations" ? INVESTIGATION_LABEL : RUN_LABEL, id));
+        titles.set(key, section === "investigations" ? investigationRow(item).text : item.number ? `#${item.number}` : item.title);
       }
     }
     this.waiting = waiting; // only the rows listed now
-    this.shakes.observe(new Map([...waiting].map(([key, agents]) => [key, agents.length > 0])), Date.now());
+    // A row that has just started needing the person gets a toast and the attention sound, once (the same moment it shakes).
+    for (const key of this.shakes.observe(new Map([...waiting].map(([k, agents]) => [k, agents.length > 0])), Date.now())) {
+      const toast = bellToast(titles.get(key), waiting.get(key));
+      if (!toast) continue;
+      const { sound, ...note } = toast;
+      later(this.cx, () => { notify(note); playSound(sound); });
+    }
     return Object.fromEntries(Object.entries(lists).map(([section, items]) => [section, bellFirst(items, (item) => waiting.get(this.rowId(section, item)).length > 0)]));
   }
 
