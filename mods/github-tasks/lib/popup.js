@@ -57,3 +57,6 @@ export const panelAppeared = (before, after) => !panelSize(before) && Boolean(pa
 
 // The buttons whose presses the popup stops: a window drags on any press its mod doesn't stop, and remembers where it was dropped.
 export const PRESS_BUTTONS = ["left", "right", "middle"];
+
+// The dim behind a popup's panel (the editor's and the agent popup's).
+export const BACKDROP = "#000000a6";

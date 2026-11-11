@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BAR_HEIGHT, WORDS, agentPopupOverlay, popupSize, isEscape, barTitle, parentLabel } from "./agent-popup.js";
-import { MIN_WIDTH, MIN_HEIGHT, MARGIN } from "./popup.js";
+import { BAR_HEIGHT, PANEL_RADIUS, WORDS, agentPopupOverlay, isEscape, barTitle, parentLabel } from "./agent-popup.js";
 import { AGENT_POPUP_KEY } from "./keys.js";
 
 test("the popup is one window with a fixed key, so a second click replaces the open one", () => {
@@ -15,37 +14,59 @@ test("it never asks Herdr to bring the window back on the next start", () => {
   assert.equal("keep" in agentPopupOverlay("t7"), false);
 });
 
-test("its layout is our bar (28px, role agent-bar, the terminal as prop) over the live terminal", () => {
-  const { layout } = agentPopupOverlay("t7");
-  assert.deepEqual(layout, {
-    type: "column",
-    children: [
-      { type: "block", size: { px: BAR_HEIGHT }, content: { mod: "github-tasks", props: { role: "agent-bar", terminal: "t7" } } },
-      { type: "block", content: { terminal: "t7" } },
-    ],
-  });
+const panelOf = (o) => o.layout.children[1].children[1];
+
+test("it is the whole window, with no frame of Herdr's (the backdrop and panel are ours)", () => {
+  const o = agentPopupOverlay("t7");
+  assert.deepEqual([o.width, o.height, o.frame], [1, 1, "none"]);
+});
+
+test("the panel is our bar (28px, role agent-bar, the terminal as prop) over the live terminal", () => {
+  assert.deepEqual(panelOf(agentPopupOverlay("t7")).children, [
+    { type: "block", size: { px: BAR_HEIGHT }, content: { mod: "github-tasks", props: { role: "agent-bar", terminal: "t7" } } },
+    { type: "block", content: { terminal: "t7" } },
+  ]);
   assert.equal(BAR_HEIGHT, 28);
+});
+
+test("backdrop blocks (role agent-backdrop) surround the panel on all four sides", () => {
+  const { layout } = agentPopupOverlay("t7");
+  const isBackdrop = (n) => n.type === "block" && n.content.mod === "github-tasks" && n.content.props.role === "agent-backdrop";
+  assert.equal(layout.type, "column");
+  assert.equal(isBackdrop(layout.children[0]), true);
+  assert.equal(isBackdrop(layout.children[2]), true);
+  const row = layout.children[1];
+  assert.equal(row.type, "row");
+  assert.equal(isBackdrop(row.children[0]), true);
+  assert.equal(isBackdrop(row.children[2]), true);
+  assert.equal(row.children[1].type, "column");
+});
+
+test("the weights give the panel 80% of the window each way", () => {
+  const { layout } = agentPopupOverlay("t7");
+  const share = (nodes, i) => nodes[i].size.weight / nodes.reduce((n, c) => n + c.size.weight, 0);
+  assert.equal(share(layout.children, 1), 0.8);
+  assert.equal(share(layout.children[1].children, 1), 0.8);
+  assert.equal(share(layout.children, 0), 0.1);
+  assert.equal(share(layout.children[1].children, 2), 0.1);
+});
+
+test("the panel draws its own border and rounding, as it has no frame of Herdr's", () => {
+  const p = panelOf(agentPopupOverlay("t7"));
+  assert.deepEqual(p.border, { width: 1, color: "border" });
+  assert.equal(p.radius, PANEL_RADIUS);
+});
+
+test("no seam can be dragged to resize: every row and column is resizable:false", () => {
+  const { layout } = agentPopupOverlay("t7");
+  const containers = (n) => (n.children ? [n, ...n.children.flatMap(containers)] : []);
+  const all = containers(layout);
+  assert.equal(all.length, 3);
+  for (const n of all) assert.equal(n.resizable, false, n.type);
 });
 
 test("it is centered: no `at`", () => {
   assert.equal("at" in agentPopupOverlay("t7"), false);
-});
-
-test("with no window size known it takes 80% of the window", () => {
-  assert.deepEqual(popupSize(null), { width: 0.8, height: 0.8 });
-  assert.deepEqual(popupSize({ width: 0, height: 0 }), { width: 0.8, height: 0.8 });
-});
-
-test("with the window measured it is 80% in px, never under 720x520, and never past the margin", () => {
-  assert.deepEqual(popupSize({ width: 2000, height: 1200 }), { width: 1600, height: 960 });
-  assert.deepEqual(popupSize({ width: 800, height: 600 }), { width: MIN_WIDTH, height: MIN_HEIGHT });
-  assert.deepEqual(popupSize({ width: 700, height: 500 }), { width: 700 - 2 * MARGIN, height: 500 - 2 * MARGIN });
-});
-
-test("the overlay carries the size", () => {
-  assert.deepEqual([agentPopupOverlay("t7").width, agentPopupOverlay("t7").height], [0.8, 0.8]);
-  const o = agentPopupOverlay("t7", { width: 2000, height: 1200 });
-  assert.deepEqual([o.width, o.height], [1600, 960]);
 });
 
 test("Esc is recognised by either of the key event's spellings", () => {
