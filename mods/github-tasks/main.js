@@ -2,11 +2,11 @@
 // Spaces: Investigations, Up Next, In Progress, In Review and Backlog (collapsed). Clicking a ticket
 // opens it in a large popup to edit (editor/editor.js, lib/popup.js), and saving pushes the change to GitHub. Each row links
 // out to GitHub and has Start, which becomes View while its workflow runs. With "taskSource": "local" in the repo's
-// .herdr/tasks/tasks.json the list is the YAML task files instead (local-tasks.js, local-ui.js), read again every 3 seconds.
+// .herdr/tasks/tasks.json the list is the YAML task files instead (runs/local-tasks.js, runs/local-ui.js), read again every 3 seconds.
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
 // workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket, in a popup (props.popup)
 // opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow or refactor type (props.kind) in the center (workflow-ui/workflow-editor.js); "run", a started
-// workflow's agents, beside its orchestrator (run-page.js); "investigation", a New Task session's Done button, beside its agent (investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js); "agent-bar", the bar over a peeked agent's terminal in its popup (agent-bar.js).
+// workflow's agents, beside its orchestrator (runs-ui/run-page.js); "investigation", a New Task session's Done button, beside its agent (investigations-ui/investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (investigations-ui/new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (runs-ui/start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js); "agent-bar", the bar over a peeked agent's terminal in its popup (widgets/agent-bar.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, notify, shared, setShared, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
@@ -491,7 +491,7 @@ export default class GitHubTasks extends View {
       .child(div().flex_1().child(title));
   }
 
-  // A click opens the ticket in a large popup over the app to edit (editor.js, popup.js). Its folder and machine go
+  // A click opens the ticket in a large popup over the app to edit (editor/editor.js, lib/popup.js). Its folder and machine go
   // along, so the editor asks GitHub from the same place the panel does.
   openTicket(ticket) {
     const ctx = this.ctx, project = this.project, local = Boolean(ticket.local);
