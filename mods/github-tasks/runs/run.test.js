@@ -5,7 +5,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { soloPrompt, agentArgv, branchName, investigatorPrompt, jobRoom, mergeScript, nameRoom, orchestratorPrompt, readOnlyArgv, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt } from "./run.js";
+import { soloPrompt, agentArgv, branchName, freshTicket, investigatorPrompt, jobRoom, mergeScript, nameRoom, orchestratorPrompt, readOnlyArgv, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt } from "./run.js";
+import { loadTask } from "../github/index.js";
 import { worktreePath } from "../workflow/index.js";
 
 const ticket = { number: 12, title: "Fix the login!", body: "It breaks.", labels: ["bug"], status: "Todo", url: "https://github.test/12" };
@@ -149,6 +150,29 @@ test("other agents get a model at most", () => {
 
 test("a custom agent runs its command", () => {
   assert.deepEqual(agentArgv("worker", role({ agent: "custom", command: "my-agent --x" }), [], "/r"), ["sh", "-c", "my-agent --x"]);
+});
+
+test("a started run's ticket file uses the fresh body loaded by loadTask, not the board's partial ticket", async () => {
+  const listed = { number: 12, title: "Old title", labels: ["old"], status: "Todo", url: "https://github.test/12" };
+  const gh = async (args) => ({
+    code: 0,
+    stdout: JSON.stringify({ title: "Fresh title", body: "The description only loadTask can see.", labels: [{ name: "bug" }], updatedAt: "now" }),
+    stderr: "",
+  });
+  const fresh = await freshTicket(listed, (ticket) => loadTask(gh, "o/r", ticket, { cwd: "/src/app" }));
+  const text = ticketFile(fresh, "o/r");
+  assert.match(text, /# #12 Fresh title/);
+  assert.match(text, /Labels: bug/);
+  assert.match(text, /Status: Todo/); // the project item still supplies the board's status and identity
+  assert.match(text, /The description only loadTask can see\./);
+  assert.doesNotMatch(text, /no description/);
+});
+
+test("a failed fresh ticket read rejects with GitHub's reason instead of preparing the run", async () => {
+  await assert.rejects(
+    freshTicket(ticket, async () => { throw new Error("GitHub is unavailable"); }),
+    /GitHub is unavailable/,
+  );
 });
 
 test("the ticket file marks its text as data", () => {

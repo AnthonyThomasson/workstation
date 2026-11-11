@@ -4,8 +4,9 @@
 // the run page (run-page.js), the list of its agents, on the right. Merge closes that space again. From there the
 // orchestrator runs the ticket itself (run.js says how).
 import { exec, focused, hc, home, knownAgents, notify, panes, readTextFile, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
-import { connectRun, guarded, launchRun, reapplyRuns, runTabParts, undoRunTab, viewConnect, viewQuick, viewTarget, mainCheckout, prepareWorktree, out, agentArgv, branchName, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, runId, spawnScript, ticketFile, ticketKey, ticketName, soloPrompt, workerPrompt } from "../runs/index.js";
-import { app } from "../widgets/index.js";
+import { connectRun, freshTicket, guarded, launchRun, reapplyRuns, runTabParts, undoRunTab, viewConnect, viewQuick, viewTarget, mainCheckout, prepareWorktree, out, agentArgv, branchName, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, runId, spawnScript, ticketFile, ticketKey, ticketName, soloPrompt, workerPrompt } from "../runs/index.js";
+import { loadTask } from "../github/index.js";
+import { app, gh } from "../widgets/index.js";
 import { blank, ROLES, isEasy, worktreePath, runDir as runDirFor, runPanePath } from "../workflow/index.js";
 import { slotKey, FOLDER_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL } from "../lib/index.js";
 
@@ -140,6 +141,9 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
     await viewRun(running, cx, { ticket, repo, project: board.project });
     return { resumed: true };
   }
+
+  // The board query has no body. Read the whole ticket before anything is prepared or written; a failure keeps its reason.
+  ticket = await freshTicket(ticket, (listed) => loadTask(gh, repo, listed, where));
 
   const repoRoot = await mainCheckout(git, where.cwd); // the main checkout, even when Start is used from one of its worktrees
 
