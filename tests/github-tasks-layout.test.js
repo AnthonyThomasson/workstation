@@ -14,7 +14,7 @@
 //   deep-import    an import from outside a folder into anything in it but its index.js (code and tests alike).
 //   self-index     a file inside a folder importing that folder's own index.js (siblings are imported directly).
 //   direction      a folder importing a folder of a higher tier, or a folder importing a top file.
-//   sibling        a folder importing another folder of its own tier (editor, settings and doctor may not import each other).
+//   sibling        a folder importing another folder of its own tier (editor and doctor may not import each other).
 //   imports-main   any file importing the entry (main.js: nothing does; it wires everything).
 //   cycle          folders that import each other round in a circle, whatever the tiers say (reported once per cycle).
 //   no-index       a folder with no index.js.
