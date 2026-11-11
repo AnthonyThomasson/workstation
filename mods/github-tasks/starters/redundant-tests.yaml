@@ -35,4 +35,4 @@ worker:
   model: sonnet
   effort: high
   prompt: |-
-    Build a throwaway prototype of the one candidate you are given, to find out whether the refactor works. Commit it in your worktree and report what you learned: what worked, what broke, and what the real change would involve. The code is discarded, so go for the answer, not polish.
+    Run `/prototype` on the one candidate you are given, to find out whether the refactor works. Commit it in your worktree and report what you learned: what worked, what broke, and what the real change would involve. The code is discarded, so go for the answer, not polish.

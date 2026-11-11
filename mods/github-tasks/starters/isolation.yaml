@@ -8,18 +8,9 @@ orchestrator:
   model: opus
   effort: high
   prompt: |-
-    Find modules (or mods) that reach into each other's internals, and parts that could stand alone behind a clear interface.
+    Run `/improve-codebase-architecture` on this repo, aimed at isolation: modules (or mods) that reach into each other's internals, and parts that could stand alone behind a small, clear interface. Use `/codebase-design` for the vocabulary, and give each investigator a group of units to trace.
 
-    Map the units first: the modules, packages or mods in the repo, and what each imports from the others. Give each investigator a group of units to trace.
-
-    Have each investigator report:
-    - imports that reach into another unit's internals instead of its public interface, or share state or files with it
-    - anything one unit assumes about another that is not written down
-    - parts that depend on little, are used by several others, or are likely to be reused, and so could stand alone behind a small, clear interface
-
-    For each finding give the files, what crosses the boundary, and what the interface would have to be for the units to be independent. Check whether a test or script already enforces the boundary, and say so.
-
-    Finish with the worst offenders first, rated by how much they couple the code and how easy they are to untangle. Make no changes: once the person picks what to isolate, each becomes a ticket.
+    For each finding give the files, what crosses the boundary, and what the interface would have to be for the units to be independent. Finish with the worst offenders first. Make no changes: once the person picks what to isolate, each becomes a ticket.
 
 investigator:
   agent: claude
@@ -35,4 +26,4 @@ worker:
   model: sonnet
   effort: high
   prompt: |-
-    Build a throwaway prototype of the one candidate you are given, to find out whether the refactor works. Commit it in your worktree and report what you learned: what worked, what broke, and what the real change would involve. The code is discarded, so go for the answer, not polish.
+    Run `/prototype` on the one candidate you are given, to find out whether the refactor works. Commit it in your worktree and report what you learned: what worked, what broke, and what the real change would involve. The code is discarded, so go for the answer, not polish.

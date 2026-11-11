@@ -13,19 +13,19 @@ orchestrator:
   model: opus
   effort: high
   prompt: ""
-  planning: "Have a worker reproduce the bug with a failing test, agree the fix with the user, then have the same worker fix it test-first."
-  retro: "Look back on what slowed the run and what to write down for next time, then propose follow-up tickets with the question tool and add the ones the person picks to To Do."
+  planning: "Have a worker run `/diagnosing-bugs` to reproduce the bug with a failing test, agree the fix with the user, then have the same worker fix it with `/tdd`."
+  retro: "Run `/retro` on this run, then propose follow-up tickets with the question tool and add the ones the person picks to To Do."
 
 worker:
   agent: claude
   command: ""
   model: sonnet
   effort: medium
-  prompt: "Work test-first, and when reproducing the bug paste the failing run's exact command and output in your report, because the read-only reviewer can't see the old code fail."
+  prompt: "Run `/diagnosing-bugs`, then fix it with `/tdd`. When reproducing the bug paste the failing run's exact command and output in your report, because the read-only reviewer can't see the old code fail."
 
 reviewer:
   agent: claude
   command: ""
-  model: haiku
-  effort: low
-  prompt: "Confirm from the reproduction commit and the worker's pasted red run that the test reproduces the bug, then run the tests to check the fix is the smallest right one and breaks nothing else."
+  model: sonnet
+  effort: medium
+  prompt: "Run `/code-review` against the ticket. Also confirm from the reproduction commit and the worker's pasted red run that the test reproduces the bug."

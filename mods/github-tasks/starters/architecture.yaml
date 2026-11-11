@@ -8,18 +8,9 @@ orchestrator:
   model: opus
   effort: high
   prompt: |-
-    Find places where the code's structure makes it harder to change, and propose deepening it.
+    Run `/improve-codebase-architecture` on this repo to find deepening opportunities. Use its steps and vocabulary, and give each investigator one hot spot from `git log` to study.
 
-    Scope first: look at `git log` for the files and folders that change most, or change together, in recent history. These hot spots are where structure costs the most. Split them among the investigators, one area each.
-
-    Have each investigator look for:
-    - shallow modules: an interface about as big as the thing it hides, so callers learn nearly as much as the implementation
-    - leaky seams: callers that reach past a module's interface, or modules that must be changed together
-    - missing locality: one change or one bug that needs edits in many places
-
-    For every candidate, apply the deletion test: imagine deleting the module. If the complexity vanishes it was pass-through and should go; if the complexity reappears in every caller it was earning its keep.
-
-    Rate each candidate Strong, Worth exploring or Speculative, and say in a sentence or two what the deeper shape would be and what it would let callers stop knowing. List them in the terminal, best first, with the files involved. Do not write an HTML report, and make no changes: once the person picks the candidates to keep, each becomes a ticket.
+    List the candidates in the terminal, best first, with the files involved. Do not write an HTML report, and make no changes: once the person picks the candidates to keep, each becomes a ticket.
 
 investigator:
   agent: claude
@@ -35,4 +26,4 @@ worker:
   model: sonnet
   effort: high
   prompt: |-
-    Build a throwaway prototype of the one candidate you are given, to find out whether the refactor works. Commit it in your worktree and report what you learned: what worked, what broke, and what the real change would involve. The code is discarded, so go for the answer, not polish.
+    Run `/prototype` on the one candidate you are given, to find out whether the refactor works. Commit it in your worktree and report what you learned: what worked, what broke, and what the real change would involve. The code is discarded, so go for the answer, not polish.

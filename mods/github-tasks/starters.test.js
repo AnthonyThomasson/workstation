@@ -24,12 +24,14 @@ for (const file of ["bug.yaml", "story.yaml"]) {
   });
 
   test(`${file} retro proposes follow-up tickets with the question tool and adds the picked ones to To Do`, () => {
-    assert.equal(load(file).orchestrator.retro, "Look back on what slowed the run and what to write down for next time, then propose follow-up tickets with the question tool and add the ones the person picks to To Do.");
+    assert.equal(load(file).orchestrator.retro, "Run `/retro` on this run, then propose follow-up tickets with the question tool and add the ones the person picks to To Do.");
   });
 
-  test(`${file} prompts do not mention a skill`, () => {
+  test(`${file} prompts drive the context with skills, not custom instructions`, () => {
     const data = load(file);
-    for (const [role, key] of PROMPTS) assert.doesNotMatch(data[role][key], /skill|mattpocock/i, `${file} ${role}.${key}`);
+    assert.match(data.orchestrator.retro, /`\/retro`/);
+    assert.match(data.worker.prompt, /`\/tdd`/);
+    assert.match(data.reviewer.prompt, /`\/code-review`/);
   });
 }
 
@@ -50,7 +52,7 @@ for (const [file, name] of Object.entries(REFACTOR_STARTERS)) {
     assert.deepEqual([orchestrator.agent, orchestrator.model, orchestrator.effort], ["claude", "opus", "high"]);
     assert.deepEqual([investigator.agent, investigator.model, investigator.effort], ["claude", "sonnet", "medium"]);
     assert.deepEqual([worker.agent, worker.model, worker.effort], ["claude", "sonnet", "high"]);
-    assert.match(worker.prompt, /throwaway prototype/);
+    assert.match(worker.prompt, /`\/prototype`/);
     assert.match(worker.prompt, /commit/i);
     assert.match(worker.prompt, /discarded/);
     assert.ok(orchestrator.prompt.trim());
@@ -68,9 +70,10 @@ for (const [file, name] of Object.entries(REFACTOR_STARTERS)) {
   });
 }
 
-test("the Architecture starter follows the improve-codebase-architecture approach, with no HTML report", () => {
+test("the Architecture and Isolation starters run /improve-codebase-architecture, Architecture with no HTML report", () => {
   const { prompt } = refactor.parse(readFileSync(new URL("architecture.yaml", dir), "utf8")).orchestrator;
-  for (const word of ["git log", "shallow", "seam", "locality", "deletion test", "Strong", "Worth exploring", "Speculative"]) assert.match(prompt, new RegExp(word, "i"));
+  assert.match(prompt, /`\/improve-codebase-architecture`/);
+  assert.match(refactor.parse(readFileSync(new URL("isolation.yaml", dir), "utf8")).orchestrator.prompt, /`\/improve-codebase-architecture`/);
   assert.match(prompt, /do not write an html report/i);
 });
 
@@ -104,8 +107,8 @@ test("the redundant-tests starter verifies in a scratch copy and never edits the
   assert.doesNotMatch(prompt, /delete or skip each proposed test/i);
 });
 
-test("no starter names the skill it was inspired by", () => {
-  for (const file of Object.keys(REFACTOR_STARTERS)) assert.doesNotMatch(readFileSync(new URL(file, dir), "utf8"), /mattpocock|improve-codebase/i, file);
+test("each refactor starter's worker runs /prototype", () => {
+  for (const file of Object.keys(REFACTOR_STARTERS)) assert.match(refactor.parse(readFileSync(new URL(file, dir), "utf8")).worker.prompt, /`\/prototype`/, file);
 });
 
 test("a workflow starter is not a valid refactor type: it has no refactor prompt", () => {

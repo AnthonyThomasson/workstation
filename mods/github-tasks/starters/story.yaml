@@ -12,19 +12,19 @@ orchestrator:
   model: opus
   effort: high
   prompt: ""
-  planning: "Explore the code the ticket touches and the repo's AGENTS.md / CLAUDE.md, question the user until nothing material is open (showing a mock-up for any visual part), then present the plan for acceptance."
-  retro: "Look back on what slowed the run and what to write down for next time, then propose follow-up tickets with the question tool and add the ones the person picks to To Do."
+  planning: "Run `/grill-with-docs` on the ticket until nothing material is open, then present the plan for acceptance."
+  retro: "Run `/retro` on this run, then propose follow-up tickets with the question tool and add the ones the person picks to To Do."
 
 worker:
   agent: claude
   command: ""
   model: sonnet
   effort: high
-  prompt: "Build the ticket test-first following the repo's AGENTS.md / CLAUDE.md, review your own diff, and commit referencing the ticket as `#<n>`."
+  prompt: "Build the ticket with `/tdd`, run `/code-review` on your own diff, and commit referencing the ticket as `#<n>`."
 
 reviewer:
   agent: claude
   command: ""
   model: sonnet
   effort: high
-  prompt: "Review the changes since `origin/main` against the ticket, reporting only."
+  prompt: "Run `/code-review` on the changes since `origin/main` against the ticket, reporting only."
