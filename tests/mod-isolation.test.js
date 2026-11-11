@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 import * as acorn from "./vendor/acorn/acorn.mjs";
 
 // ---- Allowlists: what Herdr itself provides. Nothing else may be named from mod code. ----
-const BUILTIN_MODS = ["pane", "files", "changes", "workspace-chrome", "menu", "new-menu"]; // Herdr's own mods (menu and new-menu: tabs-icons opens them as overlays)
+const BUILTIN_MODS = ["pane", "files", "changes", "workspace-chrome", "menu", "new-menu", "worktree"]; // Herdr's own mods (menu and new-menu: tabs-icons opens them as overlays; worktree: the shipped git-worktree dialog, which mods/menu opens as a dialog)
 const BUILTIN_KEYS = ["workspace.panels"]; // Herdr's own shared keys
 // Old shared keys a mod may still read to carry saved choices over to its new key. Keep this small; drop an entry
 // when its migration is removed.

@@ -156,6 +156,19 @@
               "size": {
                 "px": 42
               }
+            },
+            {
+              "id": "html-artifacts-toggle",
+              "type": "block",
+              "content": {
+                "mod": "html-artifacts",
+                "props": {
+                  "role": "toggle"
+                }
+              },
+              "size": {
+                "px": 42
+              }
             }
           ]
         },
@@ -228,6 +241,13 @@
                       "type": "block",
                       "content": {
                         "mod": "skills"
+                      }
+                    },
+                    {
+                      "id": "html-artifacts",
+                      "type": "block",
+                      "content": {
+                        "mod": "html-artifacts"
                       }
                     },
                     {
