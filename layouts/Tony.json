@@ -158,10 +158,10 @@
               }
             },
             {
-              "id": "skill-artifacts-toggle",
+              "id": "html-artifacts-toggle",
               "type": "block",
               "content": {
-                "mod": "skill-artifacts",
+                "mod": "html-artifacts",
                 "props": {
                   "role": "toggle"
                 }
@@ -244,10 +244,10 @@
                       }
                     },
                     {
-                      "id": "skill-artifacts",
+                      "id": "html-artifacts",
                       "type": "block",
                       "content": {
-                        "mod": "skill-artifacts"
+                        "mod": "html-artifacts"
                       }
                     },
                     {

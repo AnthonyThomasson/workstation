@@ -1,4 +1,4 @@
-// What the Skill Artifacts panel lists, with no Herdr import: where the HTML reports that agents write are
+// What the HTML Artifacts panel lists, with no Herdr import: where the HTML reports that agents write are
 // looked for, how a scan's output turns into rows (skipping HTML that sits in a cloned repo or test output), and
 // how scratchpads are matched to a project, sorted, filtered and aged. main.js decides when to scan; the tests pass a fake machine.
 //   io.sh(script, args, on) -> { code, stdout, stderr }: one exec of a shell script on the space's machine;
@@ -128,8 +128,6 @@ export function matchProject(dirName, folders, home) {
 // A folder name that is test or build output, or hidden: GdUnit's report_<n>, test-report, test-results, coverage,
 // htmlcov, playwright-report, allure-report, lcov-report, junit, build, dist, target, node_modules, ".git" and the like.
 export const NOISE_DIR = /^(report_\d+|test[-_ ]?(reports?|results?|output)|(playwright|allure|lcov|junit)[-_ ]?(reports?|results?)?|coverage|htmlcov|build|dist|target|node_modules|\..*)$/i;
-// Files whose presence in a folder says it is a checkout (or an installed project): a sibling of the HTML file.
-export const CHECKOUT_MARKERS = [".git", "package.json", "node_modules"];
 
 // "M <path of a marker>" lines the scans print for markers found one folder below a source's top. The folders they sit in.
 export function parseMarkers(stdout) {

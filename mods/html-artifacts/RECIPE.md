@@ -1,13 +1,13 @@
-# Skill Artifacts
+# HTML Artifacts
 
-A side-panel list of the HTML reports agents write: the active project's Claude Code scratchpads, the top level of `$TMPDIR`, and `/tmp`, in one newest-first list for the last seven days, with Open, Reveal, Copy path, Send to agent and Delete on each row. It is a mod of its own, named `skill-artifacts`; do not call it `artifacts`, because Herdr ships a built-in mod with that name and syncing would overwrite it.
+A side-panel list of the HTML reports agents write: the active project's Claude Code scratchpads, the top level of `$TMPDIR`, and `/tmp`, in one newest-first list for the last seven days, with Open, Reveal, Copy path, Send to agent and Delete on each row. It is a mod of its own, named `html-artifacts`; do not call it `artifacts`, because Herdr ships a built-in mod with that name and syncing would overwrite it.
 
-![Skill Artifacts](preview.png)
+![HTML Artifacts](preview.png)
 
 ## What you see
 
-- The `toggle` role is a right-aligned 34×30px, 6px-radius button in a `theme().chrome` tab-bar strip with a 16px document glyph, `theme().selected` while its panel is open and `theme().hover` on hover. Its tooltip is "Skill Artifacts".
-- The panel is a full-size `theme().background` card with 10px corners and a 1px `theme().border`. The 42px header reads **Skill Artifacts** and has Close. Type follows `settings().ui_font_size` (default 13px): title 14px, body 13.5px, secondary 12.5px, labels 12px.
+- The `toggle` role is a right-aligned 34×30px, 6px-radius button in a `theme().chrome` tab-bar strip with a 16px document glyph, `theme().selected` while its panel is open and `theme().hover` on hover. Its tooltip is "HTML Artifacts".
+- The panel is a full-size `theme().background` card with 10px corners and a 1px `theme().border`. The 42px header reads **HTML Artifacts** and has Close. Type follows `settings().ui_font_size` (default 13px): title 14px, body 13.5px, secondary 12.5px, labels 12px.
 - Below it, a filter box ("Filter by title, name or where"), then one list with no tabs.
 - Rows are at least 48px high: an `HTML` (accent) tag, the report's `<title>` as its name (the file name when it has none), the place it came from (second line), and its age (`now`, `5m`, `3h`, `2d`). While the first scan runs there are four fading placeholder bars; a failed scan shows its error (over the rows, when some places did list); an empty list or filter says so.
 - Clicking a row expands it on a `theme().raised` body with the full path, the size and the actions **Open**, **Reveal**, **Copy path**, **Send to agent** and **Delete** (red). A 34px footer shows a short notice for a few seconds after an action.
@@ -21,7 +21,7 @@ A side-panel list of the HTML reports agents write: the active project's Claude 
 - **/tmp** lists `/private/tmp` (else `/tmp`) down to two levels, without `claude-<uid>` (the scratchpads are listed on their own). The place is the folder, e.g. `/tmp/fe-perf-findings`. A file listed twice (`$TMPDIR` can be `/tmp`, which is `/private/tmp`) shows once.
 - **Cloned sources and test output are skipped.** An HTML file in a subfolder of a scratchpad or of `/tmp` is not listed when that subfolder, or a folder between it and the source's top, is a checkout or build or test output, which is when either:
   - the folder directly holds a `.git`, a `package.json` or a `node_modules` (the scans print an `M <path>` line for each of these found one folder below the top), or
-  - its name matches `NOISE_DIR` (case-insensitively) in `model.js`: `report_<digits>` (GdUnit4's `report_1`; `report_final` is kept), `test-report(s)`, `test-result(s)`, `test-output` (a dash, an underscore or a space in place of `-`), `playwright-report`, `allure-report`, `lcov-report`, `junit`, `coverage`, `htmlcov`, `build`, `dist`, `target`, `node_modules`, or any name starting with `.`.
+  - its name matches `NOISE_DIR` (case-insensitively) in `model.js`: `report_<digits>` (GdUnit4's `report_1`; `report_final` is kept); `test` followed by `report`, `reports`, `result`, `results` or `output`, with a dash, an underscore, a space or nothing between (`test-report`, `test_results`, `test output`, `testreport`); `playwright`, `allure`, `lcov` or `junit`, alone or followed by an optional dash, underscore or space and `report(s)` or `result(s)` (`playwright-report`, `junit-results`); `coverage`, `htmlcov`, `build`, `dist`, `target`, `node_modules`; or any name starting with `.`.
 
   HTML directly at the top of a source (a scratchpad, `$TMPDIR`, `/tmp`) is never skipped. Ordinary folder names such as `security-report`, `reports` or `architecture` are listed. The rule is `skipReport` and `NOISE_DIR` in `model.js`, tested without Herdr.
 - A report's `<title>` is read (`head -c 8192`) for the 60 newest rows and remembered per machine, path, time and size, so a file is read again only when it changes.
@@ -30,17 +30,17 @@ A side-panel list of the HTML reports agents write: the active project's Claude 
 
 ## Built from
 
-- Install the mod code and assets from `mods/skill-artifacts/`. This recipe and `preview.png` sit in that folder; an installing agent leaves both out of `~/.config/herdr-app`. `mod.json` is `{ "place": "none", "title": "skill-artifacts", "focusable": true }`; no key bindings ship.
-- The default role is `panel`; `toggle` is the tab-bar button; its one dialog role is `delete`, opened as a `skill-artifacts` overlay by the panel. The host layout needs column `panel` and stack `panel-body`, with this panel as child `skill-artifacts` and the toggle in the tab row (Tony: block `skill-artifacts-toggle`, 42px). The toggle calls `layout.select` and `layout.show`, or `layout.hide` when already shown.
-- `main.js` draws the toggle, panel and dialogs and runs the actions. `model.js` has no Herdr import: the scan scripts, parsing, project matching, sorting, filtering, ages and HTML titles; `model.test.js` runs under plain `node --test mods/skill-artifacts`.
+- Install the mod code and assets from `mods/html-artifacts/`. This recipe and `preview.png` sit in that folder; an installing agent leaves both out of `~/.config/herdr-app`. `mod.json` is `{ "place": "none", "title": "html-artifacts", "focusable": true }`; no key bindings ship.
+- The default role is `panel`; `toggle` is the tab-bar button; its one dialog role is `delete`, opened as a `html-artifacts` overlay by the panel. The host layout needs column `panel` and stack `panel-body`, with this panel as child `html-artifacts` and the toggle in the tab row (Tony: block `html-artifacts-toggle`, 42px). The toggle calls `layout.select` and `layout.show`, or `layout.hide` when already shown.
+- `main.js` draws the toggle, panel and dialogs and runs the actions. `model.js` has no Herdr import: the scan scripts, parsing, project matching, sorting, filtering, ages and HTML titles; `model.test.js` runs under plain `node --test mods/html-artifacts`.
 - Herdr APIs: `exec`, `run` (`layout.select|show|hide`, `agent.focus`, `terminal.paste`), `spaces`, `agents`, `focused`, `layout`, `theme`, `settings`, `props`, `shared`/`setShared`, `openOverlay`/`closeOverlay` and timers.
-- Shared state: every key starts with `skill-artifacts.`: `skill-artifacts.refresh.v1` (a delete dialog bumps it so the panel rescans). The old `skill-artifacts.tab.v1` is no longer used.
+- Shared state: every key starts with `html-artifacts.`: `html-artifacts.refresh.v1` (a delete dialog bumps it so the panel rescans).
 - Programs run: `sh`, `find`, `stat`, `ls`, `printf`, `head`, `id`, `open`, `pbcopy` and `rm` (single file). Reads: file names and times under the places above, and the first lines of HTML reports. No network.
-- Art is `icons/skill-artifacts.svg`, `alert`, `check`, `chevron-down`, `chevron-right`, `close`, `copy`, `folder`, `open`, `ring`, `search`, `send` and `trash`, 24×24 viewBox, tinted with theme colors, referenced as `mods/skill-artifacts/icons/<name>.svg`.
+- Art is `icons/html-artifacts.svg`, `alert`, `check`, `chevron-down`, `chevron-right`, `close`, `copy`, `folder`, `open`, `search`, `send` and `trash`, 24×24 viewBox, tinted with theme colors, referenced as `mods/html-artifacts/icons/<name>.svg`.
 
 ## Watch out
 
-- Do not name this mod or its layout child `artifacts`: Herdr ships a built-in mod by that name.
+- Do not name this mod or its layout child `artifacts`: Herdr ships a built-in mod by that name. Do not rename the folder to plain `artifacts` either: a folder of that name would overwrite Herdr's built-in mod.
 - `$TMPDIR` is huge. Keep it at `-maxdepth 1` and never glob it in a shell; the same goes for scratchpad trees, which hold cloned source repositories.
 - The scan reads `-mtime -7` in whole days; a file touched seven days ago can drop out an hour early.
 - Project matching is by name: a project folder whose name only starts like the active one (`/x/app` and `/x/app-two`) matches too, and a main checkout's scratchpads only appear when its folder is the focused or the space's folder.
@@ -49,6 +49,6 @@ A side-panel list of the HTML reports agents write: the active project's Claude 
 
 ## Done when
 
-- `herdr-app check mods/skill-artifacts` and `node --test mods/skill-artifacts` pass, as do `node tests/mod-isolation.test.js` and `sh tests/entries.test.sh`.
-- In Tony, the toggle shows and hides the panel on the **Skill Artifacts** card, and the one list shows the real HTML reports of the active project's scratchpads, `$TMPDIR` and `/tmp`, newest first, with their titles and no Markdown, cloned repositories or test output.
+- `herdr-app check mods/html-artifacts` and `node --test mods/html-artifacts` pass, as do `node tests/mod-isolation.test.js` and `sh tests/entries.test.sh`.
+- In Tony, the toggle shows and hides the panel on the **HTML Artifacts** card, and the one list shows the real HTML reports of the active project's scratchpads, `$TMPDIR` and `/tmp`, newest first, with their titles and no Markdown, cloned repositories or test output.
 - Open opens an HTML report in the browser; Reveal, Copy path and Send to agent work as described (Send refuses a blocked agent); Delete confirms and removes exactly one file and the list updates.
