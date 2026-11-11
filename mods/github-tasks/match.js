@@ -10,6 +10,10 @@ const triggers = (workflow, have) => {
   return match === "all" ? hits.every(Boolean) : hits.some(Boolean);
 };
 
+// A ticket with this label runs as one agent, in the ticket's worktree, with no jobs, reviewers or orchestrator (run.js soloPrompt).
+export const EASY_LABEL = "easy";
+export const isEasy = (ticket) => (ticket?.labels ?? []).some((l) => key(l) === EASY_LABEL);
+
 // The workflows a ticket with these labels starts. A workflow with no trigger labels is the fallback: it
 // starts only when no other workflow does.
 export function matchWorkflows(workflows, labels) {

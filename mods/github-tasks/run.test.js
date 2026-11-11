@@ -5,7 +5,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agentArgv, branchName, investigatorPrompt, jobRoom, mergeScript, nameRoom, orchestratorPrompt, readOnlyArgv, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt, worktreePath } from "./run.js";
+import { soloPrompt, agentArgv, branchName, investigatorPrompt, jobRoom, mergeScript, nameRoom, orchestratorPrompt, readOnlyArgv, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt, worktreePath } from "./run.js";
 
 const ticket = { number: 12, title: "Fix the login!", body: "It breaks.", labels: ["bug"], status: "Todo", url: "https://github.test/12" };
 const role = (extra = {}) => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium", ...extra });
@@ -931,4 +931,13 @@ test("with no GitHub remote the orchestrator may fix a stopped Merge too, and is
 test("the orchestrator gets no allow rule for git: a push or commit follows the person's permission mode", () => {
   const argv = agentArgv("orchestrator", { agent: "claude", permissions: "ask" }, ["claude"], "/runs/1");
   assert.ok(!argv.some((a) => /git (push|commit)/.test(a)));
+});
+
+test("an easy ticket's one agent does the whole ticket itself in the ticket worktree, with the worker's instructions and no helpers", () => {
+  const text = soloPrompt({ workflow: workflow({ worker: role({ prompt: "Use /tdd." }), orchestrator: role({ planning: "Grill first." }) }), ticket, repo: "o/r", runDir: "/run/1", workDir: "/w/t", repoRoot: "/r", branch: "workflow/12-fix" });
+  assert.match(text, /only agent/);
+  assert.match(text, /\/w\/t on workflow\/12-fix/);
+  assert.match(text, /Use \/tdd\./);
+  assert.match(text, /Grill first\./);
+  assert.doesNotMatch(text, /spawn|\/merge /);
 });

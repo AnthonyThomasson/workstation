@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { matchWorkflows } from "./match.js";
+import { isEasy, matchWorkflows } from "./match.js";
 import { parse } from "./workflow-model.js";
 
 const wf = (id, trigger) => ({ ...parse(JSON.stringify({ name: id, trigger })), id, scope: "global" });
@@ -31,4 +31,10 @@ test("the no-label workflow is the fallback, only when nothing else matches", ()
 
 test("no workflows, no matches", () => {
   assert.deepEqual(matchWorkflows([], ["bug"]), []);
+});
+
+test("a ticket is easy when it has the easy label, whatever its case, and not when it has none", () => {
+  assert.equal(isEasy({ labels: ["bug", "Easy"] }), true);
+  assert.equal(isEasy({ labels: ["bug"] }), false);
+  assert.equal(isEasy({}), false);
 });

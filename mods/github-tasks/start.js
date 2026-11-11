@@ -10,7 +10,8 @@ import { mainCheckout, prepareWorktree } from "./worktree.js";
 import { app } from "./ui.js";
 import { localTasks, repoHasGithubRemote, tasksConfig } from "./local-tasks-env.js";
 import { blank, ROLES } from "./workflow-model.js";
-import { out, agentArgv, branchName, FOLDER_LABEL, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, workerPrompt, worktreePath } from "./run.js";
+import { out, agentArgv, branchName, FOLDER_LABEL, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, soloPrompt, workerPrompt, worktreePath } from "./run.js";
+import { isEasy } from "./match.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 
@@ -121,11 +122,11 @@ async function localTaskFor(repoRoot, ticket) {
 }
 
 async function writeRunFolder(id, parts, argv) {
-  const { runDir, workDir, branch } = parts;
+  const { runDir, workDir, branch, solo } = parts;
   const made = await exec("mkdir", ["-p", runDir]);
   if (made.code !== 0) throw new Error(`Couldn't make ${runDir}: ${out(made)}`);
   await Promise.all([
-    writeTextFile(`${runDir}/orchestrator.md`, orchestratorPrompt({ ...parts, id }), null),
+    writeTextFile(`${runDir}/orchestrator.md`, solo ? soloPrompt(parts) : orchestratorPrompt({ ...parts, id }), null),
     writeTextFile(`${runDir}/worker.md`, workerPrompt(parts), null),
     writeTextFile(`${runDir}/reviewer.md`, reviewerPrompt(parts), null),
     writeTextFile(`${runDir}/investigator.md`, investigatorPrompt(parts), null),
@@ -165,12 +166,13 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   const found = await localTaskFor(repoRoot, ticket); // a local task: its file describes the run; the project and its status field are not used
   if (found) { ticket = found.ticket; board = {}; repo = repo || repoRoot.split("/").filter(Boolean).pop(); }
 
+  const solo = isEasy(ticket); // the easy label: the worker does the whole ticket alone, in the orchestrator's place
   const id = runId(ticket);
   const runDir = `${home()}/.herdr/workflow-runs/${id}`;
   const argv = await resolveAgents(workflow, runDir); // before the worktree: this fails without changing anything
   const branch = branchName(ticket);
   const workDir = await prepareWorktree(git, repoRoot, branch, worktreePath(repoRoot, branch, home()));
-  await writeRunFolder(id, { workflow, ticket, repo, runDir, workDir, repoRoot, branch, local: Boolean(found), noRemote: Boolean(found) && !found.githubRemote }, argv);
+  await writeRunFolder(id, { solo, workflow, ticket, repo, runDir, workDir, repoRoot, branch, local: Boolean(found), noRemote: Boolean(found) && !found.githubRemote }, argv);
 
   const name = ticketName(ticket);
   const props = {
@@ -178,7 +180,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
     repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null, status: ticket.status ?? null }, // status: what it is now, so a launch never moves it back
     projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
     // What a new orchestrator needs if this one ends and the person presses the red Merge button (bgrun.js restartOrchestrator).
-    orchestratorArgv: argv.orchestrator, ticketLabel: key,
+    orchestratorArgv: solo ? argv.worker : argv.orchestrator, ticketLabel: key, solo,
     // A local task: the page moves the task's file, and Merge depends on whether origin is on GitHub (no remote: a local squash).
     ...(found ? { taskSource: "local", mainRoot: repoRoot, githubRemote: found.githubRemote } : {}),
   };
@@ -202,7 +204,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
       await endHost({ id, hc, terminals, run, spaces: spaces(), panes: panes(), record: shared(hostKey(id)), also: [host?.address] });
       setShared(hostKey(id), null);
     },
-  }, { id, key, workDir, argv: argv.orchestrator, task: `Read ${runDir}/orchestrator.md and follow it.`, props }));
+  }, { id, key, workDir, argv: solo ? argv.worker : argv.orchestrator, task: `Read ${runDir}/orchestrator.md and follow it.`, props }));
   if (launched.problems.length) notify({ title: "The workflow started, with a problem", body: launched.problems.join(" "), level: "warning" });
   return { resumed: false };
 }

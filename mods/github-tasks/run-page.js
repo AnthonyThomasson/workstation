@@ -47,7 +47,7 @@ export class RunPage {
     this.githubRemote = props?.githubRemote !== false;
     this.stage = Number(shared(stageKey(this.id))) || 0; // the furthest status already set
     this.pr = shared(prKey(this.id)) || null; // { url, state, number }
-    this.finalSeen = finalSeen({ saved: shared(finalKey(this.id)) });
+    this.finalSeen = Boolean(props?.solo) || finalSeen({ saved: shared(finalKey(this.id)) }); // a solo run has no final review to wait for
     this.autoPrTried = Boolean(Number(shared(autoPrKey(this.id))));
     this.busy = null; // "pr" | "merge" | "fix" while one runs
     this.error = null;
