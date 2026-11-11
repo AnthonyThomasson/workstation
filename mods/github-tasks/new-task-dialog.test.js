@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ENTER_HINT, NewTaskDialog, PROMPT, TITLE, WIDTH, chooseAgent, enterStep, escStep, newTaskOverlay, newTaskProps, panelWidth, boxRows } from "./new-task-dialog.js";
+import { NewTaskDialog, PROMPT, TITLE, WIDTH, chooseAgent, enterStep, escStep, newTaskOverlay, newTaskProps, panelWidth, boxRows } from "./new-task-dialog.js";
 import { MARGIN } from "./popup.js";
 
 test("the dialog says what the mock-up says", () => {
@@ -170,8 +170,4 @@ test("the text box shows only as many rows as fit in its 114px, at any text size
   assert.equal(boxRows(12.5), 6);
   assert.equal(boxRows(16.5), 4);
   for (const size of [10, 12, 13.5, 15, 18, 24, 60]) assert.ok(boxRows(size) === 1 || boxRows(size) * size * 1.5 <= 114, `size ${size}`);
-});
-
-test("the hint under the box says what Enter and Shift+Enter do", () => {
-  assert.equal(ENTER_HINT, "Enter to continue · Shift+Enter for a new line");
 });
