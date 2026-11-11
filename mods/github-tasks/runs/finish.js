@@ -1,8 +1,8 @@
 // What the run page does when the person is done: move the ticket along, open a pull request, merge it.
 // Pure: no Herdr imports, so node --test runs it. run-page.js does the exec calls and the drawing.
 
-import { sameStatus, STATUSES } from "./lib/index.js";
-import { STATUS_MUTATION } from "./github/index.js";
+import { sameStatus, STATUSES } from "../lib/index.js";
+import { STATUS_MUTATION } from "../github/index.js";
 
 export const STAGES = [STATUSES.inProgress, STATUSES.inReview, STATUSES.done]; // what a ticket becomes as the run goes on, in order (Done is set by Merge)
 

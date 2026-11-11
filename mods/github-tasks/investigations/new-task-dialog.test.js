@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ENTER_HINT, NewTaskDialog, PROMPT, TITLE, WIDTH, chooseAgent, enterStep, escStep, newTaskOverlay, newTaskProps, panelWidth, boxRows } from "./new-task-dialog.js";
-import { MARGIN } from "./lib/index.js";
+import { MARGIN } from "../lib/index.js";
 
 test("the dialog says what the mock-up says", () => {
   assert.equal(TITLE, "New task");

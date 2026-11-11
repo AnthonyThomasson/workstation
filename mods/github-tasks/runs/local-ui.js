@@ -1,7 +1,7 @@
 // Local tasks in the panel, with no Herdr in it: the task source the sidebar and the settings share, a local task as the
 // ticket the rest of Tasks knows, the sidebar's sections, the settings checkbox's state and the New Task prompt.
 // local-tasks.js has the files, tasks-config.js the config; local-ui-env.js is Herdr's side.
-import { groupByStage, ASK_WITH_TOOL, pickableStatuses, newTaskStart, newTaskSubAgents, refactorSections } from "./lib/index.js";
+import { groupByStage, ASK_WITH_TOOL, pickableStatuses, newTaskStart, newTaskSubAgents, refactorSections } from "../lib/index.js";
 import { FOLDERS } from "./local-tasks.js";
 import { mainCheckout } from "./worktree.js";
 

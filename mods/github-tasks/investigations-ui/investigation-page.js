@@ -5,11 +5,9 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, panes, run, setShared, shared, spaces, terminals, theme } from "herdr";
-import { hostKey, peekSpace, slotFromPage, slotKey } from "./bgrun.js";
-import { investigationAgentsFor, investigationQueries } from "./investigation-agents.js";
-import { INVESTIGATIONS_KEY, endInvestigation } from "./investigations.js";
-import { orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
-import { openAgentPopup, S, stop } from "./widgets/index.js";
+import { hostKey, peekSpace, slotFromPage, slotKey, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "../runs/index.js";
+import { investigationAgentsFor, investigationQueries, INVESTIGATIONS_KEY, endInvestigation } from "../investigations/index.js";
+import { openAgentPopup, S, stop } from "../widgets/index.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 const agentsKey = (id) => `github-tasks.investigation.${id}.agents`; // the investigators and workers seen, so a reload still lists the finished ones

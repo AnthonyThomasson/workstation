@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EMPTY_TEXT, ENTER_HINT, FOCUS_HEIGHT, FOCUS_LABEL, FOCUS_PLACEHOLDER, PICK_PREFIX, RefactorDialog, SUBTITLE, TITLE, TOOLTIP, enterStep, focusRows, initialPick, pickKey, pickValue, refactorOverlay, typeKey, typeRows } from "./refactor-dialog.js";
-import { blankRefactor as blank } from "./workflow/index.js";
+import { blankRefactor as blank } from "../workflow/index.js";
 
 const make = (id, name, scope = "global", over = {}) => {
   const b = blank();

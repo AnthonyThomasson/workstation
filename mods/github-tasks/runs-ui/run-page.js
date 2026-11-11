@@ -6,12 +6,8 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, notify, panes, run, setShared, shared, spaces, terminals, readTextFile, theme, writeTextFile } from "herdr";
-import { endRun, findHost, findTicketSpace, hostKey, mergeOutcome, peekSpace, restartOrchestrator, runTabParts, slotFromPage, slotKey } from "./bgrun.js";
-import { openAgentPopup, S, app, icon, note, stop } from "./widgets/index.js";
-import { RUN_LABEL as RUN, out } from "./run.js";
-import { agentsFor, liveOrchestratorFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
-import { branchArgs, canMerge, finalSeen, fixMessage, fixingDone, fixingNote, fixingStart, mergeFailure, mergeSteps, mergeView, mergeWait, movesTo, openPullRequest, optionFor, parsePr, parsePrState, prStateArgs, prViewArgs, restartTask, restoreFailure, restoreFixing, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
-import { defaultBranchOf, localMergeSteps, localPrBody, moveToStage, squashMessage } from "./local-runs.js";
+import { endRun, findHost, findTicketSpace, hostKey, mergeOutcome, peekSpace, restartOrchestrator, runTabParts, slotFromPage, slotKey, RUN_LABEL as RUN, out, agentsFor, liveOrchestratorFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel, branchArgs, canMerge, finalSeen, fixMessage, fixingDone, fixingNote, fixingStart, mergeFailure, mergeSteps, mergeView, mergeWait, movesTo, openPullRequest, optionFor, parsePr, parsePrState, prStateArgs, prViewArgs, restartTask, restoreFailure, restoreFixing, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs, defaultBranchOf, localMergeSteps, localPrBody, moveToStage, squashMessage } from "../runs/index.js";
+import { openAgentPopup, S, app, icon, note, stop } from "../widgets/index.js";
 import { localTasks, repoHasGithubRemote } from "./local-tasks-env.js";
 
 const stageKey = (id) => `github-tasks.run.${id}.stage`;

@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { localTicket, localStages, rowLabel, sourceFor, sourceToggle, LOCAL_STATUS_OPTIONS, LOCAL_ONLY_HERE, typedLabels, localNewTaskPrompt } from "./local-ui.js";
-import { ASK_WITH_TOOL } from "./lib/index.js";
+import { ASK_WITH_TOOL } from "../lib/index.js";
 import { makeLocalTasks } from "./local-tasks.js";
-import { matchWorkflows } from "./workflow/index.js";
+import { matchWorkflows } from "../workflow/index.js";
 
 const task = (id, status, createdAt, over = {}) => ({ id, title: `Task ${id}`, description: `About ${id}`, labels: ["bug"], createdAt, status, folder: "x", path: "/p", ...over });
 

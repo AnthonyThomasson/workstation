@@ -5,8 +5,8 @@
 // (local-tasks-env.js passes Herdr's), so node --test runs it against a Map. Nothing here runs git.
 //   io.list(dir) -> file names ([] when the folder is missing)    io.read(path) -> text | null
 //   io.write(path, text)  (last write wins)    io.remove(path)    io.mkdir(dir)
-import { parse, stringify, STATUSES, sameStatus } from "./lib/index.js";
-import { slug, uniqueLabels } from "./workflow/index.js";
+import { parse, stringify, STATUSES, sameStatus } from "../lib/index.js";
+import { slug, uniqueLabels } from "../workflow/index.js";
 
 // The six status folders, in the order the board reads, each with the status (model.js STATUSES) it stands for.
 export const FOLDERS = [

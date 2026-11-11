@@ -4,11 +4,11 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea } from "gpui-base";
 import { shared, setShared, theme, closeOverlay } from "herdr";
-import { REFACTOR } from "./workflow/index.js";
-import { store, repoRootOf } from "./workflow-ui/index.js";
+import { REFACTOR } from "../workflow/index.js";
+import { store, repoRootOf } from "../workflow-ui/index.js";
 import { startTask, stopPresses } from "./new-task.js";
-import { S, stop, action, note } from "./widgets/index.js";
-import { EMPTY_TEXT, ENTER_HINT, FOCUS_HEIGHT, FOCUS_LABEL, FOCUS_PLACEHOLDER, RefactorDialog, SUBTITLE, TITLE, enterStep, focusRows, panelWidth, pickKey, pickValue, typeRows } from "./refactor-dialog.js";
+import { S, stop, action, note } from "../widgets/index.js";
+import { EMPTY_TEXT, refactorDialogENTER_HINT as ENTER_HINT, FOCUS_HEIGHT, FOCUS_LABEL, FOCUS_PLACEHOLDER, RefactorDialog, SUBTITLE, refactorDialogTITLE as TITLE, refactorDialogEnterStep as enterStep, focusRows, refactorDialogPanelWidth as panelWidth, pickKey, pickValue, typeRows } from "../investigations/index.js";
 
 const baseName = (path) => String(path ?? "").split("/").filter(Boolean).pop() ?? "";
 

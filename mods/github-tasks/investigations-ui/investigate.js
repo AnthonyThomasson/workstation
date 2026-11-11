@@ -4,20 +4,12 @@
 // session's tab to the front again (viewInvestigation) and shows the agents again after an app restart. The tab's page is
 // investigation-page.js. The sidebar lists sessions with investigationsHere and opens them with viewInvestigation.
 import { exec, hc, home, knownAgents, notify, panes, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
-import { endHost, guarded, hostKey, openHost, slotKey, undoRunTab, viewConnect, viewQuick } from "./bgrun.js";
-import { connect, connecting } from "./start.js";
-import { mainCheckout, prepareWorktree } from "./worktree.js";
-import { app } from "./widgets/index.js";
-import { localTasks } from "./local-tasks-env.js";
-import { statusDir } from "./local-tasks.js";
-import { localNewTaskPrompt, localRefactorPrompt } from "./local-ui.js";
-import { newTaskPrompt, refactorPrompt } from "./lib/index.js";
-import { normalizeRefactor } from "./workflow/index.js";
-import { out, worktreePath } from "./run.js";
-import { sessionFolder } from "./investigation-spawn.js";
-import {
-  INVESTIGATIONS_KEY, INVESTIGATION_HOST_LABEL, INVESTIGATION_ROLE, agentOf, beginInvestigation, deleteBranch, investigationsFor, reapplyInvestigations, removeWorktree, tabNameFor,
-} from "./investigations.js";
+import { endHost, guarded, hostKey, openHost, slotKey, undoRunTab, viewConnect, viewQuick, mainCheckout, prepareWorktree, statusDir, localNewTaskPrompt, localRefactorPrompt, out, worktreePath } from "../runs/index.js";
+import { connect, connecting, localTasks } from "../runs-ui/index.js";
+import { app } from "../widgets/index.js";
+import { newTaskPrompt, refactorPrompt } from "../lib/index.js";
+import { normalizeRefactor } from "../workflow/index.js";
+import { sessionFolder, INVESTIGATIONS_KEY, INVESTIGATION_HOST_LABEL, INVESTIGATION_ROLE, agentOf, beginInvestigation, deleteBranch, investigationsFor, reapplyInvestigations, removeWorktree, tabNameFor } from "../investigations/index.js";
 
 export { investigationsFor };
 

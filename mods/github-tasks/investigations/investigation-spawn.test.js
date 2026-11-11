@@ -8,10 +8,8 @@ import {
   NEW_TASK_PLUMBING, investigationSpawnScript, newTaskAgentArgv, newTaskInvestigatorPrompt, newTaskWorkerPrompt, refactorAgentArgv, sessionFiles, sessionFolder, subAgentArgv,
 } from "./investigation-spawn.js";
 import { INVESTIGATION_LABEL, beginInvestigation, investigationRunArgs } from "./investigations.js";
-import { hostKey } from "./bgrun.js";
-import { shQuote, worktreePath } from "./run.js";
-import { newTaskPrompt, refactorPrompt, ASK_WITH_TOOL } from "./lib/index.js";
-import { localNewTaskPrompt, localRefactorPrompt } from "./local-ui.js";
+import { hostKey, shQuote, worktreePath, localNewTaskPrompt, localRefactorPrompt } from "../runs/index.js";
+import { newTaskPrompt, refactorPrompt, ASK_WITH_TOOL } from "../lib/index.js";
 
 const DIR = "/home/me/.herdr/investigations/inv-x";
 // The values of a flag that takes any number of them, up to the next flag.

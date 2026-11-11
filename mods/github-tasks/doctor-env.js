@@ -4,8 +4,8 @@ import { normalizeGroomer, GROOMER_KEY, projectKey } from "./lib/index.js";
 import { loadWorkflows, repoRootOf } from "./workflow-ui/index.js";
 import { Doctor } from "./doctor-run.js";
 import { gh } from "./widgets/index.js";
-import { mainCheckout } from "./worktree.js";
-import { tasksConfig, repoHasGithubRemote } from "./local-tasks-env.js";
+import { mainCheckout } from "./runs/index.js";
+import { tasksConfig, repoHasGithubRemote } from "./runs-ui/index.js";
 
 const LEGACY_AGENT_KEY = "github-tasks.groomAgent"; // the agent saved before the settings page held it
 

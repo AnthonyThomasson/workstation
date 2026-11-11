@@ -1,9 +1,8 @@
 // Herdr's side of local tasks: real files, and the git call. Everything else is local-tasks.js, tasks-config.js and
 // github-remote.js, which are pure. Never runs git on tasks.json or a task file: git is only asked for origin's URL.
 import { exec, home, readTextFile, writeTextFile } from "herdr";
-import { makeLocalTasks } from "./local-tasks.js";
-import { makeTasksConfig } from "./tasks-config.js";
-import { hasGithubRemote } from "./github/index.js";
+import { makeLocalTasks, makeTasksConfig } from "../runs/index.js";
+import { hasGithubRemote } from "../github/index.js";
 
 const sh = (script, ...args) => exec("sh", ["-c", script, "github-tasks", ...args]);
 const must = async (r, what) => { if (r.code !== 0) throw new Error(r.stderr || `${what} exited with code ${r.code}.`); };

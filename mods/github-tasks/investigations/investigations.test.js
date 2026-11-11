@@ -9,10 +9,8 @@ import {
   investigationHostName, investigationId, investigationLabel, investigationRow, investigationRunArgs, investigationsFor, liveInvestigations, reapplyInvestigations, removeWorktree,
   prototypesOf, refactorBranch, refactorHostName, refactorLabel, savedList, sessionFolder, tabNameFor, unsafeToRemove, withEntry, withoutEntry,
 } from "./investigations.js";
-import { hostKey, placeholderArgv, slotKey } from "./bgrun.js";
-import { mainCheckout, prepareWorktree } from "./worktree.js";
-import { shQuote, worktreePath } from "./run.js";
-import { slug } from "./workflow/index.js";
+import { hostKey, placeholderArgv, slotKey, mainCheckout, prepareWorktree, shQuote, worktreePath } from "../runs/index.js";
+import { slug } from "../workflow/index.js";
 
 // ---- Naming -------------------------------------------------------------------------------------------
 

@@ -13,8 +13,8 @@ import { S, icon, stop, note, iconButton, action, gh, scrim } from "./widgets/in
 import { Auth, REFRESH, LOGIN } from "./github-ui/index.js";
 import { matchWorkflows } from "./workflow/index.js";
 import { loadWorkflows } from "./workflow-ui/index.js";
-import { StartDialog } from "./start-dialog.js";
-import { renderStartDialog, startChosen } from "./start-dialog-view.js";
+import { StartDialog } from "./runs/index.js";
+import { renderStartDialog, startChosen } from "./runs-ui/index.js";
 import { markdownLiteral } from "./settings-model.js";
 
 // Set to the time of each save, so the panel's list refreshes.

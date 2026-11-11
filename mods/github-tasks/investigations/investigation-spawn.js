@@ -3,9 +3,9 @@
 // so node --test runs it. Like a ticket run's spawn script (run.js), the script is the only way they start, so each gets its
 // role's agent, model, permissions and labels whatever the agent types. investigations.js writes the session folder (this
 // module says what is in it); investigation-agents.js lists the helpers on the session's page by the labels set here.
-import { groomArgv } from "./lib/index.js";
-import { CUSTOM } from "./workflow/index.js";
-import { FOLDER_LABEL, NAME_LABEL, ROLE_LABEL, agentArgv, readOnlyArgv, shQuote } from "./run.js";
+import { groomArgv } from "../lib/index.js";
+import { CUSTOM } from "../workflow/index.js";
+import { FOLDER_LABEL, NAME_LABEL, ROLE_LABEL, agentArgv, readOnlyArgv, shQuote } from "../runs/index.js";
 
 export const INVESTIGATION_LABEL = "herdr.investigation"; // on the session's agent and on each of its helpers: the session's id
 

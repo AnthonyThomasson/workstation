@@ -5,12 +5,10 @@
 // the run page (run-page.js), the list of its agents, on the right. Merge closes that space again. From there the
 // orchestrator runs the ticket itself (run.js says how).
 import { exec, focused, hc, home, knownAgents, notify, panes, readTextFile, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
-import { connectRun, endHost, findHost, guarded, hostKey, hostTabName, launchRun, openHost, reapplyRuns, runTabParts, slotKey, undoRunTab, viewConnect, viewQuick, viewTarget } from "./bgrun.js";
-import { mainCheckout, prepareWorktree } from "./worktree.js";
-import { app } from "./widgets/index.js";
+import { connectRun, endHost, findHost, guarded, hostKey, hostTabName, launchRun, openHost, reapplyRuns, runTabParts, slotKey, undoRunTab, viewConnect, viewQuick, viewTarget, mainCheckout, prepareWorktree, out, agentArgv, branchName, FOLDER_LABEL, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, soloPrompt, workerPrompt, worktreePath } from "../runs/index.js";
+import { app } from "../widgets/index.js";
 import { localTasks, repoHasGithubRemote, tasksConfig } from "./local-tasks-env.js";
-import { blank, ROLES, isEasy } from "./workflow/index.js";
-import { out, agentArgv, branchName, FOLDER_LABEL, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, ROLE_LABEL, RUN_LABEL, runId, spawnScript, TICKET_LABEL, ticketFile, ticketKey, ticketName, soloPrompt, workerPrompt, worktreePath } from "./run.js";
+import { blank, ROLES, isEasy } from "../workflow/index.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
 

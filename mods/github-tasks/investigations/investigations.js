@@ -9,12 +9,10 @@
 // Done ends the agent and everything it started (investigators and prototype workers, their worktrees and branches, its host and
 // its session folder), closes that space, removes the worktree and deletes the branch. Pure apart from the deps it is handed
 // (no Herdr imports), so node --test runs it; investigate.js is Herdr's side, investigation-page.js the page in the tab.
-import { FOLDER_LABEL, ROLE_LABEL, shQuote } from "./run.js";
-import { slug, normalizeRefactor, validateRefactor } from "./workflow/index.js";
-import { normalizeSubAgent } from "./lib/index.js";
+import { FOLDER_LABEL, ROLE_LABEL, shQuote, endHost, findTicketSpace, launchRun, runTabParts, row as terminalRow } from "../runs/index.js";
+import { slug, normalizeRefactor, validateRefactor } from "../workflow/index.js";
+import { normalizeSubAgent } from "../lib/index.js";
 import { INVESTIGATION_LABEL, newTaskAgentArgv, refactorAgentArgv, sessionFiles, sessionFolder, subAgentArgv } from "./investigation-spawn.js";
-import { endHost, findTicketSpace, launchRun, runTabParts } from "./bgrun.js";
-import { row as terminalRow } from "./runview.js";
 
 // The list of investigations still to track (shared state): [{ id, label, repoRoot, repo, branch, workDir, agent }].
 // The tab's own slot ({ tab, left, space }) is kept beside it, per id, by bgrun.js's slotKey, as a run's is.
