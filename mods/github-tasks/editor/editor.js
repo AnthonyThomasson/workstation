@@ -7,7 +7,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, TextView } from "gpui-base";
 import { run, setShared, theme, closeOverlay } from "herdr";
-import { markdownLiteral, snapshot, isDirty, changes, pickableStatuses, panelSize, panelAppeared, closeStep, escStep, afterSave, PRESS_BUTTONS, wontDoFooter, wontDoPrompt, retryAfterSignIn, CHANGED } from "../lib/index.js";
+import { markdownLiteral, snapshot, isDirty, changes, pickableStatuses, panelSize, panelAppeared, closeStep, escStep, afterSave, PRESS_BUTTONS, BACKDROP, wontDoFooter, wontDoPrompt, retryAfterSignIn, CHANGED } from "../lib/index.js";
 import { GitHubError, loadTask, loadStatusField, saveTask, markWontDo, loadLabels } from "../github/index.js";
 import { S, icon, stop, note, iconButton, action, gh, scrim } from "../widgets/index.js";
 import { Auth, REFRESH, LOGIN } from "../github-ui/index.js";
@@ -390,7 +390,7 @@ export class TaskEditor {
     const t = theme(), panel = panelSize(this.window);
     // The backdrop covers the window; a press on it asks to close, and the panel stops presses so they don't. The
     // stops also keep the window from being dragged.
-    const backdrop = div().id("editor-popup").size_full().flex().items_center().justify_center().bg("#000000a6")
+    const backdrop = div().id("editor-popup").size_full().flex().items_center().justify_center().bg(BACKDROP)
       .on_size_change((win, cx) => {
         // The editor's root only exists once the window is measured, so that is when it can take the keyboard.
         if (panelAppeared(this.window, win)) cx.timer.after(50, () => this.handle.focus());

@@ -5,14 +5,14 @@
 // Roles (props.role): "sidebar" (default), the list; "settings", the collapsible agent sections and list of
 // workflows, in the layout's shared side panel, which the gear opens; "editor", one ticket, in a popup (props.popup)
 // opened by a click on a row, or in a tab an older version opened; "workflow-editor", one workflow or refactor type (props.kind) in the center (workflow-ui/workflow-editor.js); "run", a started
-// workflow's agents, beside its orchestrator (runs-ui/run-page.js); "investigation", a New Task session's Done button, beside its agent (investigations-ui/investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (investigations-ui/new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (runs-ui/start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js); "agent-bar", the bar over a peeked agent's terminal in its popup (widgets/agent-bar.js).
+// workflow's agents, beside its orchestrator (runs-ui/run-page.js); "investigation", a New Task session's Done button, beside its agent (investigations-ui/investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (investigations-ui/new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (runs-ui/start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js); "agent-bar", the bar over a peeked agent's terminal in its popup (widgets/agent-bar.js); "agent-backdrop", the dim around that popup, a press on which closes it (widgets/agent-backdrop.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, notify, shared, setShared, terminals, playSound, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
 import { BACK_AFTER, Shakes, bellFirst, bellTip, bellToast, waitingAgents, INVESTIGATION_LABEL, RUN_LABEL, normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload, CHANGED, AGENT_KEY, DOCTOR_KEY } from "./lib/index.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, setupProject, setupNote } from "./github/index.js";
 import { installedAgents, investigationsHere, reconnectInvestigations, viewInvestigation, InvestigationPage, NewTaskPage, RefactorPage } from "./investigations-ui/index.js";
-import { S, icon, stop, note, iconButton, action, gh, later, openAgentPopup, AgentBar } from "./widgets/index.js";
+import { S, icon, stop, note, iconButton, action, gh, later, openAgentPopup, AgentBar, AgentBackdrop } from "./widgets/index.js";
 import { Auth, REFRESH, LOGIN } from "./github-ui/index.js";
 import { TaskEditor } from "./editor/index.js";
 import { readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen } from "./runs-ui/index.js";
@@ -77,6 +77,7 @@ export default class GitHubTasks extends View {
     if (this.role === "start") { this.startPage = new StartPage(blockProps(), cx); return; }
     if (this.role === "prompt") { this.promptPage = new PromptPage(blockProps()); return; }
     if (this.role === "agent-bar") { this.agentBar = new AgentBar(blockProps(), cx); return; }
+    if (this.role === "agent-backdrop") { this.agentBackdrop = new AgentBackdrop(blockProps()); return; }
     if (this.role === "settings") {
       this.settingsKey = null;
       this.page = null;
@@ -222,6 +223,7 @@ export default class GitHubTasks extends View {
     if (this.role === "start") return this.startPage.render(cx);
     if (this.role === "prompt") return this.promptPage.render(cx);
     if (this.role === "agent-bar") return this.agentBar.render(cx);
+    if (this.role === "agent-backdrop") return this.agentBackdrop.render(cx);
     if (this.role === "settings") return this.renderSettings(cx);
     const t = theme();
 
