@@ -27,9 +27,9 @@ export const WORKFLOW = { key: "workflow", noun: "workflow", plural: "workflows"
   editor: { trigger: true, permissionRoles: permissionRolesOf(workflowModel),
     prompts: { orchestrator: { label: "Prompt" }, worker: { label: "Prompt" }, reviewer: { label: "Prompt" }, investigator: { label: "Prompt" } } },
 };
-export const REFACTOR = { key: "refactor", noun: "refactor", plural: "refactors", folder: "refactors", model: refactorModel, starters: ["redundant-tests", "architecture", "isolation"],
+export const REFACTOR = { key: "refactor", noun: "refactor", plural: "refactors", folder: "refactors", model: refactorModel, starters: ["redundant-tests", "architecture", "isolation", "clean-the-backlog"],
   changed: REFACTORS_CHANGED,
-  labels: { listTitle: "Refactors", listNote: "How a refactor type runs: the Refactor Orchestrator's prompt, and the investigators and prototype workers it starts.", newLabel: "New refactor", emptyText: "No refactor types yet. Make one with New refactor.", editorNoun: "refactor type", namePlaceholder: "Dead code", starterNames: ["Redundant tests", "Architecture", "Isolation"] },
+  labels: { listTitle: "Refactors", listNote: "How a refactor type runs: the Refactor Orchestrator's prompt, and the investigators and prototype workers it starts.", newLabel: "New refactor", emptyText: "No refactor types yet. Make one with New refactor.", editorNoun: "refactor type", namePlaceholder: "Dead code", starterNames: ["Redundant tests", "Architecture", "Isolation", "Clean the backlog"] },
   editor: { trigger: false, permissionRoles: permissionRolesOf(refactorModel),
     prompts: {
       orchestrator: { label: "Refactor prompt", hint: "what the refactor looks for and how to report it" },
