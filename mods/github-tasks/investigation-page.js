@@ -9,6 +9,7 @@ import { hostKey, peekSpace, slotFromPage, slotKey } from "./bgrun.js";
 import { investigationAgentsFor, investigationQueries } from "./investigation-agents.js";
 import { INVESTIGATIONS_KEY, endInvestigation } from "./investigations.js";
 import { orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
+import { openAgentPopup } from "./agent-bar.js";
 import { S, stop } from "./ui.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
@@ -51,11 +52,11 @@ export class InvestigationPage {
     return found;
   }
 
-  // Looks in on a live investigator or worker, from the session's space first (the run page's way).
+  // Looks in on a live investigator or worker: the session's space first, then the agent popup (the run page's way).
   peek(address) {
     const space = peekSpace({ slot: shared(slotKey(this.id)), spaces: spaces(), panes: panes(), folder: this.props.folder, repoRoot: this.props.repoRoot });
     if (space) run("space.select", { id: space });
-    run("terminal.peek", { terminal: address });
+    openAgentPopup(address);
   }
 
   renderSection(t, title, rows) {

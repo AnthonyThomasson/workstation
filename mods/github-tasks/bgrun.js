@@ -248,8 +248,9 @@ export async function endHost({ id, label = HOST_LABEL, hc, terminals, run, spac
   return { error: null };
 }
 
-// The space a worker's or reviewer's terminal is peeked from, so that keeping it as a tab lands in the ticket's space: the
-// space of the run's open tab, else the ticket's space found by its worktree, else null.
+// The space selected before a worker's or reviewer's terminal is peeked (agent-popup.js), so the popup opens over the ticket's
+// space and not whichever the person last looked at: the space of the run's open tab, else the ticket's space found by its
+// worktree, else null.
 export function peekSpace({ slot, spaces, panes, folder, repoRoot }) {
   return runTabParts({ slot, spaces, panes })?.space ?? findTicketSpace({ spaces, panes, folder, repoRoot });
 }
