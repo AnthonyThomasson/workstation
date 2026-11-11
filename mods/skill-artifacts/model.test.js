@@ -124,7 +124,7 @@ test("HTML in a cloned repo or in test output is skipped; the top of a source ne
     assert.equal(skip(`/private/tmp/${d}/index.html`, `${d}/index.html`), true, d);
   }
   // an ordinary folder of reports is listed, and so is a file at the top
-  for (const d of ["architecture", "fe-perf-findings", "security-report", "reports", "reporting", "my-coverage-notes", "distance"]) {
+  for (const d of ["report_final", "report_", "architecture", "fe-perf-findings", "security-report", "reports", "reporting", "my-coverage-notes", "distance"]) {
     assert.equal(skip(`/private/tmp/${d}/index.html`, `${d}/index.html`), false, d);
   }
   assert.equal(skip("/private/tmp/clone.html", "clone.html"), false);

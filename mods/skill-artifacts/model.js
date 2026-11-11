@@ -77,7 +77,7 @@ export function htmlTitle(text) {
   return t.length > 120 ? `${t.slice(0, 119)}…` : t;
 }
 
-// ---- Which project a scratchpad or a run belongs to ----
+// ---- Which project a scratchpad belongs to ----
 
 // Claude Code names a project's folder under /private/tmp/claude-<uid>/ after the project's absolute path
 // with every "/" and "." written as "-": /Users/a/.herdr/x -> -Users-a--herdr-x.
@@ -127,7 +127,7 @@ export function matchProject(dirName, folders, home) {
 
 // A folder name that is test or build output, or hidden: GdUnit's report_<n>, test-report, test-results, coverage,
 // htmlcov, playwright-report, allure-report, lcov-report, junit, build, dist, target, node_modules, ".git" and the like.
-export const NOISE_DIR = /^(report_.*|test[-_ ]?(reports?|results?|output)|(playwright|allure|lcov|junit)[-_ ]?(reports?|results?)?|coverage|htmlcov|build|dist|target|node_modules|\..*)$/i;
+export const NOISE_DIR = /^(report_\d+|test[-_ ]?(reports?|results?|output)|(playwright|allure|lcov|junit)[-_ ]?(reports?|results?)?|coverage|htmlcov|build|dist|target|node_modules|\..*)$/i;
 // Files whose presence in a folder says it is a checkout (or an installed project): a sibling of the HTML file.
 export const CHECKOUT_MARKERS = [".git", "package.json", "node_modules"];
 
