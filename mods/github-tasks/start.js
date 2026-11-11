@@ -131,7 +131,7 @@ async function writeRunFolder(id, parts, argv) {
     writeTextFile(`${runDir}/investigator.md`, investigatorPrompt(parts), null),
     writeTextFile(`${runDir}/ticket.md`, ticketFile(parts.ticket, parts.repo, parts.local), null),
     writeTextFile(`${runDir}/spawn`, spawnScript({ id, runDir, workDir, branch, argv }), null),
-    writeTextFile(`${runDir}/merge`, mergeScript({ id, workDir, branch, number: parts.ticket?.number }), null),
+    writeTextFile(`${runDir}/merge`, mergeScript({ id, workDir, branch, number: parts.ticket?.number, runDir }), null),
   ]);
   const chmod = await exec("chmod", ["+x", `${runDir}/spawn`, `${runDir}/merge`]);
   if (chmod.code !== 0) throw new Error(`Couldn't make the spawn and merge scripts runnable: ${out(chmod)}`);

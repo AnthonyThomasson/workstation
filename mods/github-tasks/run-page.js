@@ -10,7 +10,7 @@ import { endRun, findHost, findTicketSpace, hostKey, mergeOutcome, peekSpace, re
 import { S, app, icon, note, stop } from "./ui.js";
 import { RUN_LABEL as RUN, out } from "./run.js";
 import { agentsFor, liveOrchestratorFor, lsQueries, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "./runview.js";
-import { branchArgs, canMerge, finalSeen, fixMessage, fixingDone, fixingNote, fixingStart, mergeFailure, mergeSteps, mergeView, movesTo, openPullRequest, optionFor, parsePr, parsePrState, prStateArgs, prViewArgs, restartTask, restoreFailure, restoreFixing, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
+import { branchArgs, canMerge, finalSeen, fixMessage, fixingDone, fixingNote, fixingStart, mergeFailure, mergeSteps, mergeView, mergeWait, movesTo, openPullRequest, optionFor, parsePr, parsePrState, prStateArgs, prViewArgs, restartTask, restoreFailure, restoreFixing, runSteps, shouldAutoPr, stageOf, statusArgs, worktreeArgs } from "./finish.js";
 import { defaultBranchOf, localMergeSteps, localPrBody, moveToStage, squashMessage } from "./local-runs.js";
 import { localTasks, repoHasGithubRemote } from "./local-tasks-env.js";
 
@@ -206,8 +206,11 @@ export class RunPage {
 
   renderActions(t, lead, cx, workers = [], reviewers = [], investigators = []) {
     // Merge waits for the final review and for every worker, reviewer and investigator to end. With no pull request yet it opens one first.
-    const ready = canMerge({ finalSeen: this.finalSeen, workers, reviewers, investigators }) && Boolean(this.folder && this.branch);
-    const view = mergeView({ ready, busy: this.busy, failure: this.failure, fixing: this.fixing });
+    const known = Boolean(this.folder && this.branch);
+    const ready = canMerge({ finalSeen: this.finalSeen, workers, reviewers, investigators }) && known;
+    const wait = mergeWait({ finalSeen: this.finalSeen, workers, reviewers, investigators, known });
+    const view = mergeView({ ready, busy: this.busy, failure: this.failure, fixing: this.fixing, wait });
+    const hidden = view.mode === "hidden"; // gated: no button, a muted line says what it waits for
     const red = view.mode === "red";
     const tip = view.mode === "fixing" ? this.fixing.error : red ? this.failure.error
       : this.noPr() ? "Merges the ticket branch into the default branch of the main checkout, as one commit. Nothing is pushed."
@@ -218,7 +221,8 @@ export class RunPage {
       .when(!red && !view.enabled, (el) => el.text_color(t.muted))
       .when(view.enabled, (el) => el.cursor_pointer().hover((s) => s.bg(red ? t.blocked : t.hover)).on_mouse_down("left", stop).on_click((_e, cx) => this.merge(cx)))
       .when(Boolean(tip), (el) => el.tooltip(tip)).child(view.label);
-    const row = h_flex().gap(8).items_center().pt(4).child(merge);
+    const row = h_flex().gap(8).items_center().pt(4).when(!hidden, (el) => el.child(merge))
+      .when(hidden, (el) => el.child(div().id("run-merge-wait").min_w(0).text_size(S().secondary).text_color(t.muted).child(view.wait)));
     if (this.pr) row.child(h_flex().id("run-pr-link").h(26).px(10).gap(6).items_center().rounded(6).cursor_pointer().bg(t.selected).hover((s) => s.bg(t.hover))
       .text_size(S().secondary).font_medium().on_mouse_down("left", stop).on_click((_e, cx) => cx.open_url(this.pr.url))
       .child(`PR #${this.pr.number}${this.pr.state === "MERGED" ? " · merged" : ""}`).child(icon("external", 12, t.muted)));
