@@ -8,9 +8,7 @@ export const TICKET_LABEL = "herdr.workflow.ticket"; // on the orchestrator: whi
 export const FOLDER_LABEL = "herdr.workflow.folder"; // on every terminal: the folder it works in
 export const FINAL_LABEL = "herdr.workflow.final"; // "1" on the final reviewer, which reviews the whole ticket branch
 export const NAME_LABEL = "herdr.workflow.name"; // on a worker, reviewer or investigator: the name the orchestrator gave it
-export const HOST_LABEL = "herdr.workflow.host"; // on a run's host terminal (runs/bgrun.js): the run id. Never RUN_LABEL: the host is not an agent of the run
-export const ROLE_LABEL = "herdr.role"; // orchestrator | worker | reviewer | investigator | host
+export const ROLE_LABEL = "herdr.role"; // orchestrator | worker | reviewer | investigator
 
 // Labels on an Investigation's terminals.
 export const INVESTIGATION_LABEL = "herdr.investigation"; // on the session's agent and on each of its helpers: the session's id
-export const INVESTIGATION_HOST_LABEL = "herdr.investigation.host"; // on the session's host terminal: the investigation's id. Never INVESTIGATION_LABEL: the host is not the agent, and investigationsFor reads the agent's status by that one

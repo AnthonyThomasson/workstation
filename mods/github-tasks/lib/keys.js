@@ -40,8 +40,6 @@ export const PICK_PREFIX = "github-tasks.refactorPick."; // + the repo's key: th
 export const openKey = (subject) => `github-tasks.open:${subject}`;
 // Where the run's tab is saved (shared state, as herdr.tab labels are gone): { tab, left, space }.
 export const slotKey = (id) => `github-tasks.runtab.${id}`;
-// Where the run's host is saved (shared state): { tab, space, created } (created: Start made the space for it).
-export const hostKey = (id) => `github-tasks.host.${id}`;
 
 // A run's page.
 export const stageKey = (id) => `github-tasks.run.${id}.stage`;

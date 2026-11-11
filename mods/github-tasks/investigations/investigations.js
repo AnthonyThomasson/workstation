@@ -1,17 +1,17 @@
 // An Investigation: a New Task Orchestrator that works like a workflow run. It has a branch and a git worktree of its own
 // (investigate/<what it is about>-<time>), runs in the background owned by no tab (hc run --bg, like a run's orchestrator),
 // and is shown in the first tab of a space of its own at the worktree, which the Spaces sidebar nests under the repo's.
-// Like a ticket run's orchestrator it has a **host** (bgrun.js): a tiny terminal in a tab of the repo's space (a space of its own named for the repo
-// when that isn't open) that is the agent's parent, so Herdr's Agents panel (which lists only terminals in a pane, and their children) lists host > agent > its helpers. A host
-// that won't open fails the start (the agent would be listed nowhere). It is labelled herdr.investigation.host=<id>; the agent's own
-// label stays herdr.investigation=<id>.
-// The host is not in the session's space, so closing that space or its tab ends neither the host nor the agent.
-// Done ends the agent and everything it started (investigators and prototype workers, their worktrees and branches, its host and
-// its session folder), closes that space, removes the worktree and deletes the branch. Pure apart from the deps it is handed
+// Like a ticket run's orchestrator (bgrun.js) the agent has no parent and no pane (`hc run --bg --no-parent`), so no tab or space
+// close, the session's own included, ends it or its helpers; only Done or `hc kill` does. Herdr's Agents panel lists only terminals
+// in a pane (and their children), so it does not list the agent or its helpers: the github-tasks sidebar (the Investigations row
+// and the page's agent rows) is where they are seen. There is deliberately no host terminal. The agent's own label is
+// herdr.investigation=<id>.
+// Done ends the agent and everything it started (investigators and prototype workers, their worktrees and branches and its session
+// folder), closes that space, removes the worktree and deletes the branch. Pure apart from the deps it is handed
 // (no Herdr imports), so node --test runs it; investigate.js is Herdr's side, investigation-page.js the page in the tab.
-import { shQuote, endHost, findTicketSpace, launchRun, runTabParts, row as terminalRow } from "../runs/index.js";
+import { shQuote, findTicketSpace, launchRun, runTabParts, row as terminalRow } from "../runs/index.js";
 import { slug, normalizeRefactor, validateRefactor, sessionFolder } from "../workflow/index.js";
-import { normalizeSubAgent, FOLDER_LABEL, INVESTIGATION_HOST_LABEL, INVESTIGATION_LABEL, ROLE_LABEL } from "../lib/index.js";
+import { normalizeSubAgent, FOLDER_LABEL, INVESTIGATION_LABEL, ROLE_LABEL } from "../lib/index.js";
 import { newTaskAgentArgv, refactorAgentArgv, sessionFiles, subAgentArgv } from "./investigation-spawn.js";
 
 export const INVESTIGATION_ROLE = "investigation"; // its herdr.role label, and the mod pane's props.role
@@ -32,24 +32,17 @@ export const tabNameFor = (label) => String(label).slice(0, TAB_NAME_MAX).trimEn
 // investigate/fix-the-login-redirect-lq3k9f2: the slug of the first line (40 at most), then the time, so two on one subject never share a branch.
 export const investigationBranch = (description, now = Date.now()) => `investigate/${slug(firstLine(description), 40) || "investigation"}-${now.toString(36)}`;
 
-// The session's host tab name: its description's first line cut at 40 and trimmed, and " agents" (`New task agents` with no description).
-export const investigationHostName = (description) => `${tabNameFor(firstLine(description) || "New task")} agents`;
-
-// A refactor session's names. Label (the sidebar row, the tab and space, and the host's name before " agents"): `Refactor · <Name>`, with
-// `: <first line of the focus>` when there is one; the tab and host cut it at 40 as for any session. Branch: `investigate/refactor-<type id>-<time>`,
+// A refactor session's names. Label (the sidebar row, and the tab and space): `Refactor · <Name>`, with
+// `: <first line of the focus>` when there is one; the tab cuts it at 40 as for any session. Branch: `investigate/refactor-<type id>-<time>`,
 // the id cut so that `refactor-<id>` is 40 at most. It starts investigate/, so Done accepts it as it does any session's.
 export const refactorLabel = (type, focus) => `Refactor · ${type.name}${firstLine(focus) ? `: ${firstLine(focus)}` : ""}`;
 export const refactorBranch = (type, now = Date.now()) => `investigate/${slug(`refactor-${type.id || slug(type.name)}`, 40)}-${now.toString(36)}`;
-export const refactorHostName = (type, focus) => `${tabNameFor(refactorLabel(type, focus))} agents`;
-
 // `hc run` for the agent: in the background, owned by no tab (none of the herdr.space / herdr.tab labels that would adopt it into a
-// pane), labelled so it can be found again. Under `parent` (the session's host, bgrun.js) it outlives it and types no notes into it,
-// so the Agents panel lists host > agent > its helpers; without one it has no parent. `key` is unused: launchRun passes the same
-// fields as for a run.
-export function investigationRunArgs({ id, workDir, argv, parent = null }) {
+// pane), labelled so it can be found again. Always `--no-parent`: it has no parent and no pane, so no tab close ends it. `key` is
+// unused: launchRun passes the same fields as for a run.
+export function investigationRunArgs({ id, workDir, argv }) {
   const labels = [`${INVESTIGATION_LABEL}=${id}`, `${ROLE_LABEL}=${INVESTIGATION_ROLE}`, `${FOLDER_LABEL}=${workDir}`];
-  const family = parent ? ["--parent", parent, "--outlive-parent", "--no-notify"] : ["--no-parent"];
-  return ["run", "--bg", "--json", ...family, "--cwd", workDir, ...labels.flatMap((l) => ["--label", l]), "--", ...argv];
+  return ["run", "--bg", "--json", "--no-parent", "--cwd", workDir, ...labels.flatMap((l) => ["--label", l]), "--", ...argv];
 }
 
 // ---- The saved list -----------------------------------------------------------------------------------
@@ -145,18 +138,16 @@ function checkInstalled(type, known) {
 }
 
 // Makes the branch and worktree and the session's folder (sessionFolder: the spawn script and the prompts of the helpers the agent may
-// start), opens the host, starts the agent with the prompt as its first message and opens its tab; saves the entry as soon as the agent
-// exists. Throws with a message for the person, having taken back what it made: the agent, the host and the tab (launchRun), the saved
-// entry, the session folder, the worktree and the branch (all brand new, so nothing of the person's is in them). A host that won't open
-// fails the start, with the reason, before the agent is started (and with no openHost to call, the start fails the same way).
+// start), starts the agent with the prompt as its first message and opens its tab; saves the entry as soon as the agent
+// exists. Throws with a message for the person, having taken back what it made: the agent and the tab (launchRun), the saved
+// entry, the session folder, the worktree and the branch (all brand new, so nothing of the person's is in them).
 //   args: { agent (an entry of knownAgents()), description, repo, refactor ({ type: a refactor type as refactor-model.js normalizes it, focus: string } or null: the
 //           session is then a Refactor Orchestrator's, with the type's own agents and prompts, and agent, description and groomer are not used), groomer ({ model, effort }), subAgents ({ investigator, worker }: each { agent,
 //           model, effort }, as normalizeSubAgent leaves them; the defaults when none), where ({ cwd, on }) }
 //   deps: { now(), home, mainCheckout(cwd) -> path, prepareWorktree(repoRoot, branch, target) -> path,
 //           worktreePath(repoRoot, branch, home), task(dir) -> the first message (dir: the session folder), knownAgents() -> the core's agents,
 //           writeSession(dir, files { name: text }), removeSession(dir), hc(args), connect(props) -> slot (throws), closeTab(),
-//           load() -> saved list, save(list), guard?(id, fn) -> Promise (runs fn alone for that id), cleanup?(repoRoot, branch, workDir) -> Promise (removes a worktree and branch),
-//           openHost({ id, name, label, workDir, repoRoot }) -> host (throws; the agent's parent; saves the host's record), closeHost(host) (ends it, clears the record) }
+//           load() -> saved list, save(list), guard?(id, fn) -> Promise (runs fn alone for that id), cleanup?(repoRoot, branch, workDir) -> Promise (removes a worktree and branch) }
 //   Resolves with { entry, problems }.
 export async function beginInvestigation(deps, { agent, description, repo, groomer, subAgents, where, refactor = null }) {
   checkStart({ agent, where, refactor });
@@ -178,15 +169,13 @@ export async function beginInvestigation(deps, { agent, description, repo, groom
   const launchDeps = {
     hc: deps.hc, connect: deps.connect, closeTab: deps.closeTab,
     writePaneJson: async (full) => deps.save(withEntry(deps.load(), { ...base, agent: full.orchestrator })), // saved the moment the agent exists
-    openHost: deps.openHost && (() => deps.openHost({ id, name: type ? refactorHostName(type, focus) : investigationHostName(description), label, workDir, repoRoot })),
-    closeHost: deps.closeHost,
   };
   try {
     // In a refactor session every role is the type's own (agent, command, model, effort); otherwise the New Task settings'.
     const mine = type ? { investigator: type.investigator, worker: type.worker } : { investigator: normalizeSubAgent(subAgents?.investigator), worker: normalizeSubAgent(subAgents?.worker) };
     const argv = { investigator: subAgentArgv("investigator", mine.investigator, known, dir), worker: subAgentArgv("worker", mine.worker, known, dir) };
     const launch = () => launchRun(launchDeps, {
-      id, key: label, workDir, argv: type ? refactorAgentArgv(type.orchestrator, known, dir) : newTaskAgentArgv(agent, groomer, dir), task, props, runArgs: investigationRunArgs, who: "agent", hostRequired: true,
+      id, key: label, workDir, argv: type ? refactorAgentArgv(type.orchestrator, known, dir) : newTaskAgentArgv(agent, groomer, dir), task, props, runArgs: investigationRunArgs, who: "agent",
     });
     const prompts = type && { investigator: type.investigator.prompt, worker: type.worker.prompt };
     await deps.writeSession(dir, sessionFiles({ id, dir, workDir, repoRoot, branch, argv, refactor: prompts })); // before the agent: it may use them at once
@@ -205,16 +194,16 @@ export async function beginInvestigation(deps, { agent, description, repo, groom
 // Takes an investigation down. After the refusal checks (read-only), the New Task Orchestrator is ended first, and checked to be no longer
 // live, so it can't start anything more. Then everything the session started: every terminal labelled with the session's id (the
 // investigators and prototype workers: found by label, so it works when the agent had ended already; live ones are killed, finished
-// ones removed), its host, every prototype worktree (`<workDir>--<job>` on `<branch>--<job>`), every `<branch>--*` branch and the
+// ones removed), every prototype worktree (`<workDir>--<job>` on `<branch>--<job>`), every `<branch>--*` branch and the
 // session folder (~/.herdr/investigations/<id>/). Then the rest of what Done always did: removes the worktree and deletes the
 // branch, forgets the entry, the tab's slot and the page's saved sub-agent rows and, as the very last step (the page lives in it),
 // closes its space (confirmed, whatever else the person opened in it; only the tab when it was moved to another space). Stops at
 // the first thing that fails, with the reason and nothing after it done, so Done can be pressed again: anything that is already
-// gone (a terminal, host, worktree, branch or folder) counts as done.
+// gone (a terminal, worktree, branch or folder) counts as done.
 // Whatever isn't the session's own is refused before anything is ended or removed: a branch outside investigate/, the main
 // checkout, a worktree of the `<workDir>--` folders that isn't on a `<branch>--` branch (the message says how to fix that by hand).
 //   deps: { hc(args), terminals(), spaces(), panes(), slot() (the saved one), git(cwd, ...args), run(name, args), save(list), load(), clearSlot(),
-//           home, removeDir(path) -> { code, stderr } (rm -rf), host?() (the saved host record), clearHost?(), clearAgents?() (the page's saved sub-agent rows) }
+//           home, removeDir(path) -> { code, stderr } (rm -rf), clearAgents?() (the page's saved sub-agent rows) }
 //   Resolves with { done, error, closed } (closed: false when no space or tab was found to close).
 export async function endInvestigation(deps, entry) {
   const { id, agent, repoRoot, workDir, branch } = entry;
@@ -229,7 +218,7 @@ export async function endInvestigation(deps, entry) {
   if (!folder) return fail(`Done refused: the session id ${id || "(none)"} isn't an investigation's, so its folder can't be found. Nothing was ended or removed.`);
 
   // The New Task Orchestrator first, so it can't start anything more while Done works. A failed kill of a terminal that is still live stops
-  // Done (a kill that exits 0 is believed: the listing may not have refreshed yet, as in endRun and endHost).
+  // Done (a kill that exits 0 is believed: the listing may not have refreshed yet, as in endRun).
   const killed = await deps.hc(["kill", agent]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
   if (killed.code !== 0 && (deps.terminals() ?? []).some((k) => k.state === "live" && k.address === agent)) return fail(`Couldn't end the agent ${agent}: ${said(killed) || "kill failed"}. Nothing else was removed; end it with hc kill, then press Done again.`);
   await deps.hc(["rm", agent]).catch(() => {});
@@ -245,9 +234,6 @@ export async function endInvestigation(deps, entry) {
     await deps.hc(["rm", k.address]).catch(() => {});
   }
   if (stuck.length) return fail(`Couldn't end ${stuck.join("; ")}. Nothing else was removed; end ${stuck.length > 1 ? "them" : "it"} with hc kill.`);
-  const hosted = await endHost({ id, label: INVESTIGATION_HOST_LABEL, hc: deps.hc, terminals: deps.terminals, run: deps.run, spaces: deps.spaces(), panes: deps.panes(), record: deps.host?.() ?? null });
-  if (hosted.error) return fail(`${hosted.error}. Nothing else was removed; end it with hc kill.`);
-  deps.clearHost?.();
 
   for (const w of prototypes.worktrees) {
     const gone = await removeWorktree(deps.git, repoRoot, w, "The agent and its sub-agents were ended; press Done again once that is fixed.");
