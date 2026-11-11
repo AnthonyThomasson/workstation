@@ -5,12 +5,12 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, panes, run, setShared, shared, spaces, terminals, theme } from "herdr";
-import { hostKey, peekSpace, slotFromPage, slotKey, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "../runs/index.js";
-import { investigationAgentsFor, investigationQueries, INVESTIGATIONS_KEY, endInvestigation } from "../investigations/index.js";
+import { peekSpace, slotFromPage, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "../runs/index.js";
+import { investigationAgentsFor, investigationQueries, endInvestigation } from "../investigations/index.js";
 import { openAgentPopup, S, stop } from "../widgets/index.js";
+import { hostKey, slotKey, INVESTIGATIONS_KEY, investigationAgentsKey } from "../lib/index.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
-const agentsKey = (id) => `github-tasks.investigation.${id}.agents`; // the investigators and workers seen, so a reload still lists the finished ones
 
 export class InvestigationPage {
   constructor(props) {
@@ -21,7 +21,7 @@ export class InvestigationPage {
     this.branch = props?.branch ?? "";
     this.busy = false;
     this.error = null;
-    const saved = shared(agentsKey(this.id));
+    const saved = shared(investigationAgentsKey(this.id));
     this.saved = Array.isArray(saved) ? saved : []; // the rows kept from before (runview.js keep)
     this.listed = { investigator: null, worker: null }; // the last answer of each `hc ls --all` query
     this.listing = false;
@@ -45,7 +45,7 @@ export class InvestigationPage {
   // The sub-agents now: the live terminals, the core's list and what was saved. What there is to keep is saved when it changed.
   agents(all) {
     const found = investigationAgentsFor({ id: this.id, workDir: this.props.folder, terminals: all, listed: this.listed, saved: this.saved });
-    if (!sameKept(found.kept, this.saved)) { this.saved = found.kept; setShared(agentsKey(this.id), found.kept); }
+    if (!sameKept(found.kept, this.saved)) { this.saved = found.kept; setShared(investigationAgentsKey(this.id), found.kept); }
     return found;
   }
 
@@ -95,7 +95,7 @@ export class InvestigationPage {
           hc, terminals, spaces, panes, git, run,
           slot: () => shared(slotKey(this.id)), clearSlot: () => setShared(slotKey(this.id), null),
           load: () => shared(INVESTIGATIONS_KEY), save: (list) => setShared(INVESTIGATIONS_KEY, list),
-          clearAgents: () => setShared(agentsKey(this.id), null),
+          clearAgents: () => setShared(investigationAgentsKey(this.id), null),
           host: () => shared(hostKey(this.id)), clearHost: () => setShared(hostKey(this.id), null),
           home: home(), removeDir: (path) => exec("rm", ["-rf", path]),
         }, { id: this.id, agent: this.agent, repoRoot: this.props.repoRoot, workDir: this.props.folder, branch: this.branch });

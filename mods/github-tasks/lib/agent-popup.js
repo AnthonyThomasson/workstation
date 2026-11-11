@@ -3,8 +3,8 @@
 // "go to" and never handles Esc, so Esc reached the agent; ours has neither button and closes on Esc (agent-bar.js).
 // The pure side: the overlay spec, its size and the bar's texts.
 import { panelSize } from "./popup.js";
+import { AGENT_POPUP_KEY } from "./keys.js";
 
-export const AGENT_POPUP_KEY = "github-tasks.agent"; // one fixed key: a second click replaces the open window, in its place
 export const BAR_HEIGHT = 28;
 export const SHARE = 0.8;
 export const WORDS = { working: "working", blocked: "needs you", done: "finished", idle: "idle" };

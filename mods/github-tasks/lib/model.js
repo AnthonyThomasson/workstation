@@ -76,18 +76,6 @@ const GRANT = ["-h", "github.com", "-s", "project"];
 export const REFRESH = ["auth", "refresh", ...GRANT];
 export const LOGIN = ["auth", "login", "-h", "github.com", "-p", "https", "-s", "project", "-w"];
 
-// Set to the time of each workflow save or delete, so the lists (and the doctor) refresh.
-export const WORKFLOWS_CHANGED = "github-tasks.workflows.changed";
-// The same for refactor types.
-export const REFACTORS_CHANGED = "github-tasks.refactors.changed";
-
-// Shared state main.js publishes for the settings page and the doctor.
-export const CONTEXT = "github-tasks.context"; // { repo, project, where }: what the sidebar looks at
-export const PLACE = "github-tasks.place"; // { cwd, on }: where the selected space is. Set even with no repo
-
-// The shared key that holds the project chosen for a repo.
-export const projectKey = (repo) => `github-tasks.project.${repo}`;
-
 // What a gh failure means: no-write-scope, no-scope, no-auth, not-a-repo, or other.
 // GitHub names the scopes a field needs: a mutation on a project asks for plain "project", a read
 // for "read:project".
@@ -169,7 +157,6 @@ export function checkTask(after, statusOptions = []) {
 // The one sentence every prompt that asks the person questions uses.
 export const ASK_WITH_TOOL = "Ask each question with your built-in question tool (AskUserQuestion in Claude Code), not as plain text. If you have no such tool, ask in plain text.";
 
-export const GROOMER_KEY = "github-tasks.groomer"; // { agent, model, effort }: what New Task opens
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
 // The saved grooming agent choice: { agent (key or null for "pick the default"), model ("" = the agent's own), effort }.
@@ -180,8 +167,6 @@ export function normalizeGroomer(raw) {
 
 // The New Task Orchestrator's own helpers (investigation-spawn.js): the investigators and prototype workers it may start. Each has its own
 // agent, model and effort, saved apart from the New Task Orchestrator's: { agent, model, effort }, claude / "" (the agent's own) / medium.
-export const INVESTIGATOR_KEY = "github-tasks.investigator";
-export const WORKER_KEY = "github-tasks.protoWorker";
 // "custom" (a workflow's own command) is not a choice here, so a saved one reads as the default.
 export const normalizeSubAgent = (raw) => {
   const g = normalizeGroomer(raw);

@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { viewQuick, viewConnect, connectRun, endRun, guarded, mergeOutcome, launchRun, holdShown, findRunTab, runTabParts, waitReady, orchestratorRunArgs, parseStarted, placeholderArgv, reapplyRuns, slotKey, viewTarget, findTicketSpace, peekSpace, undoRunTab, restartOrchestrator, slotFromPage, hostArgv, hostTabName, hostKey, findRepoSpace, findHost, openHost, endHost } from "./bgrun.js";
+import { viewQuick, viewConnect, connectRun, endRun, guarded, mergeOutcome, launchRun, holdShown, findRunTab, runTabParts, waitReady, orchestratorRunArgs, parseStarted, placeholderArgv, reapplyRuns, viewTarget, findTicketSpace, peekSpace, undoRunTab, restartOrchestrator, slotFromPage, hostArgv, hostTabName, findRepoSpace, findHost, openHost, endHost } from "./bgrun.js";
 import { spawnSync } from "node:child_process";
 import { ticketName } from "./run.js";
+import { hostKey, slotKey } from "../lib/index.js";
 
 const SPACES = [{ id: "s1", tabs: [{ id: "tA" }, { id: "tB" }] }, { id: "s2", tabs: [{ id: "tC" }] }];
 const PANES = [{ pane: "pA", tab: "tA", terminal: "t9" }, { pane: "pB", tab: "tB", terminal: "t8" }, { pane: "pM", tab: "tB", mod: "github-tasks", terminal: null }];

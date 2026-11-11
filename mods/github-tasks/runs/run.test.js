@@ -5,7 +5,8 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { soloPrompt, agentArgv, branchName, investigatorPrompt, jobRoom, mergeScript, nameRoom, orchestratorPrompt, readOnlyArgv, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt, worktreePath } from "./run.js";
+import { soloPrompt, agentArgv, branchName, investigatorPrompt, jobRoom, mergeScript, nameRoom, orchestratorPrompt, readOnlyArgv, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt } from "./run.js";
+import { worktreePath } from "../workflow/index.js";
 
 const ticket = { number: 12, title: "Fix the login!", body: "It breaks.", labels: ["bug"], status: "Todo", url: "https://github.test/12" };
 const role = (extra = {}) => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium", ...extra });
@@ -16,21 +17,6 @@ test("branch names come from the number and title", () => {
   assert.equal(branchName(ticket), "workflow/12-fix-the-login");
   assert.equal(branchName({ title: "Draft: an idea" }), "workflow/draft-an-idea");
   assert.equal(branchName({ number: 3, title: "!!!" }), "workflow/3-ticket");
-});
-
-test("a ticket's worktree is where Herdr's worktree mod puts that branch", () => {
-  assert.equal(worktreePath("/src/app", "workflow/12-fix", "/Users/me"), "/Users/me/.herdr/worktrees/app/workflow-12-fix");
-});
-
-test("the worktree folder is named for the main checkout, whatever else is passed", () => {
-  assert.equal(worktreePath("/src/my app/", "workflow/3-x", "/h/"), "/h/.herdr/worktrees/my app/workflow-3-x");
-});
-
-test("odd branch names are slugged the way Herdr's worktree mod does", () => {
-  const at = (branch) => worktreePath("/src/app", branch, "/h");
-  assert.equal(at("workflow/12-fix the login: now!"), "/h/.herdr/worktrees/app/workflow-12-fix-the-login-now");
-  assert.equal(at("feat//a..b_c"), "/h/.herdr/worktrees/app/feat-a..b_c");
-  assert.equal(at("/lead/trail/"), "/h/.herdr/worktrees/app/lead-trail");
 });
 
 test("a job's worktree sits beside the ticket's, as <ticket slug>--<job>", () => {

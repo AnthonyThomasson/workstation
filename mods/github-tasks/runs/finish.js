@@ -3,6 +3,7 @@
 
 import { sameStatus, STATUSES } from "../lib/index.js";
 import { STATUS_MUTATION } from "../github/index.js";
+import { runIdFromDir } from "../workflow/index.js";
 
 export const STAGES = [STATUSES.inProgress, STATUSES.inReview, STATUSES.done]; // what a ticket becomes as the run goes on, in order (Done is set by Merge)
 
@@ -56,12 +57,8 @@ export const branchArgs = (repoRoot, branch) => ["-C", repoRoot, "rev-parse", "-
 // status: { args } to set the ticket Done, { warn } when the project has no such option, or nothing when there is no project.
 // workDirExists / branchExists: false when an earlier Merge already removed the folder / deleted the branch; the steps for
 // them are left out, so pressing Merge again finishes what was left.
-// Only a child of a .herdr/workflow-runs folder can be removed. In particular, never rm the parent or a path
-// reached through a run id containing traversal; Merge builds this path from home() and the run id.
-const safeRunDir = (runDir) => {
-  const id = typeof runDir === "string" ? runDir.match(/^\/(?:.*\/)?\.herdr\/workflow-runs\/([^/]+)$/)?.[1] : null;
-  return Boolean(id && id !== "." && !id.includes(".."));
-};
+// Only a child of a .herdr/workflow-runs folder can be removed (workflow/places.js runIdFromDir).
+const safeRunDir = (runDir) => Boolean(runIdFromDir(runDir));
 
 // The step that sets the ticket Done. status: { args } (a gh call), or { warn }.
 export const statusStep = (status) => status.warn ? { name: "status", warn: status.warn }

@@ -1,6 +1,7 @@
 // The ticket editor as a popup: the pure side of it. It opens as a full-window overlay the mod draws itself (a dimmed
 // backdrop, a panel in the middle), because a Herdr "dialog" closes on Esc and on a click beside it before the editor can
 // ask about unsaved edits, and a "window" leaves every close to the mod.
+import { EDITOR_OVERLAY_KEY } from "./keys.js";
 
 export const SHARE = 0.8;
 export const MIN_WIDTH = 720;
@@ -46,7 +47,7 @@ export function afterSave({ pending, dirty }) {
 
 // The overlay that shows an editor. props are the editor's, as the tab got them.
 export const editorOverlay = (props) => ({
-  mod: "github-tasks", kind: "window", key: "github-tasks.editor", width: 1, height: 1, frame: "none",
+  mod: "github-tasks", kind: "window", key: EDITOR_OVERLAY_KEY, width: 1, height: 1, frame: "none",
   props: { ...props, popup: true },
 });
 

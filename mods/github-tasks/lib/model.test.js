@@ -152,7 +152,7 @@ test("a save needs a title and a status the project has", () => {
   assert.equal(checkTask({ title: "T", status: null }, options), null);
 });
 
-import { groupByStage, newTaskPrompt, newTaskStart, groomArgv, normalizeGroomer, normalizeSubAgent, INVESTIGATOR_KEY, WORKER_KEY, GROOMER_KEY, STATUSES, spelled, sameStatus, recentlyDone, middleEllipsis, pickableStatuses, wontDoOption, wontDoDisabledReason } from "./model.js";
+import { groupByStage, newTaskPrompt, newTaskStart, groomArgv, normalizeGroomer, normalizeSubAgent, STATUSES, spelled, sameStatus, recentlyDone, middleEllipsis, pickableStatuses, wontDoOption, wontDoDisabledReason } from "./model.js";
 
 test("the statuses are fixed", () => {
   assert.deepEqual(STATUSES, { backlog: "To Do", groomed: "Up Next", inProgress: "In Progress", inReview: "In Review", done: "Done", wontDo: "Won't Do" });
@@ -296,12 +296,6 @@ test("the rest of the New Task prompt is the same with and without a description
 test("newTaskStart: the typed description is trimmed and left otherwise as typed", () => {
   assert.match(newTaskStart("  fix it  "), /^The person has already said what they want to make:\n\n> fix it\n\n/);
   assert.equal(newTaskStart(undefined), WAIT_LINE);
-});
-
-test("the investigators' and workers' settings have their own keys, distinct from the New Task Orchestrator's", () => {
-  assert.equal(INVESTIGATOR_KEY, "github-tasks.investigator");
-  assert.equal(WORKER_KEY, "github-tasks.protoWorker");
-  assert.equal(new Set([INVESTIGATOR_KEY, WORKER_KEY, GROOMER_KEY]).size, 3);
 });
 
 test("a sub-agent's saved settings default to claude, the agent's own model and medium effort, however little or much is saved", () => {

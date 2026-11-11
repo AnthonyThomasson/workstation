@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { baseFor, mainCheckout, placeInfo, NOT_A_REPO_MS, prepareWorktree } from "./worktree.js";
-import { worktreePath } from "./run.js";
+import { worktreePath } from "../workflow/index.js";
 
 // The same shape as the host's exec: { code, stdout, stderr }.
 const git = async (cwd, ...args) => {

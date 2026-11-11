@@ -4,9 +4,9 @@
 // read. Everything it uses comes in as `deps` (doctor-env.js passes Herdr's), so node --test runs it against fakes:
 //   deps.shared(key)  deps.setShared(key, value)  deps.gh(args, where)  deps.knownAgents()  deps.loadWorkflows(where)
 //   deps.repoRootOf(where)  deps.groomerAgent()  deps.chosenProject(repo)
-import { chooseProject, WORKFLOWS_CHANGED, PLACE } from "../lib/index.js";
+import { chooseProject, WORKFLOWS_CHANGED, PLACE, DOCTOR_KEY } from "../lib/index.js";
 import { findRepo, findProjects, loadStatusField, loadLabels, LABEL_LIMIT } from "../github/index.js";
-import { diagnose, parseAuthStatus, doctorSignature, doctorFor, DOCTOR_KEY } from "./doctor.js";
+import { diagnose, parseAuthStatus, doctorSignature, doctorFor } from "./doctor.js";
 
 const WATCH = 2000; // how often the shared state is looked at; a check runs only when it changed
 const EVERY = 60000; // the slow check, for what no state change tells (a sign-in, an install, a project edited on GitHub)

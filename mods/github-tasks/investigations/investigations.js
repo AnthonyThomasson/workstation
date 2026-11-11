@@ -9,16 +9,11 @@
 // Done ends the agent and everything it started (investigators and prototype workers, their worktrees and branches, its host and
 // its session folder), closes that space, removes the worktree and deletes the branch. Pure apart from the deps it is handed
 // (no Herdr imports), so node --test runs it; investigate.js is Herdr's side, investigation-page.js the page in the tab.
-import { FOLDER_LABEL, ROLE_LABEL, shQuote, endHost, findTicketSpace, launchRun, runTabParts, row as terminalRow } from "../runs/index.js";
-import { slug, normalizeRefactor, validateRefactor } from "../workflow/index.js";
-import { normalizeSubAgent } from "../lib/index.js";
-import { INVESTIGATION_LABEL, newTaskAgentArgv, refactorAgentArgv, sessionFiles, sessionFolder, subAgentArgv } from "./investigation-spawn.js";
+import { shQuote, endHost, findTicketSpace, launchRun, runTabParts, row as terminalRow } from "../runs/index.js";
+import { slug, normalizeRefactor, validateRefactor, sessionFolder } from "../workflow/index.js";
+import { normalizeSubAgent, FOLDER_LABEL, INVESTIGATION_HOST_LABEL, INVESTIGATION_LABEL, ROLE_LABEL } from "../lib/index.js";
+import { newTaskAgentArgv, refactorAgentArgv, sessionFiles, subAgentArgv } from "./investigation-spawn.js";
 
-// The list of investigations still to track (shared state): [{ id, label, repoRoot, repo, branch, workDir, agent }].
-// The tab's own slot ({ tab, left, space }) is kept beside it, per id, by bgrun.js's slotKey, as a run's is.
-export const INVESTIGATIONS_KEY = "github-tasks.investigations";
-export const INVESTIGATION_HOST_LABEL = "herdr.investigation.host"; // on the session's host terminal: the investigation's id. Never INVESTIGATION_LABEL: the host is not the agent, and investigationsFor reads the agent's status by that one
-export { INVESTIGATION_LABEL, sessionFolder }; // the label on the agent and on each of its helpers: the investigation's id; the session's folder (both in investigation-spawn.js)
 export const INVESTIGATION_ROLE = "investigation"; // its herdr.role label, and the mod pane's props.role
 export const TAB_NAME_MAX = 40;
 

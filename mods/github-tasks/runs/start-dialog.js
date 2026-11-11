@@ -3,8 +3,9 @@
 // button, editor/editor.js) and as an overlay of its own over the workspace (a row's Start with several or no matching workflows, main.js).
 // This file holds the state, what closes it, and the texts and layout; the view draws them.
 
+import { OVERLAY_KEY } from "../lib/index.js";
+
 export const WIDTH = 560;
-export const OVERLAY_KEY = "github-tasks.start";
 
 // The overlay that shows the dialog over the workspace. props: what the sidebar knew when Start was pressed (see startProps).
 export const startOverlay = (props) => ({

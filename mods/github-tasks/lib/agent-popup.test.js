@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AGENT_POPUP_KEY, BAR_HEIGHT, WORDS, agentPopupOverlay, popupSize, isEscape, barTitle, parentLabel } from "./agent-popup.js";
+import { BAR_HEIGHT, WORDS, agentPopupOverlay, popupSize, isEscape, barTitle, parentLabel } from "./agent-popup.js";
 import { MIN_WIDTH, MIN_HEIGHT, MARGIN } from "./popup.js";
+import { AGENT_POPUP_KEY } from "./keys.js";
 
 test("the popup is one window with a fixed key, so a second click replaces the open one", () => {
   const a = agentPopupOverlay("t7"), b = agentPopupOverlay("t9");

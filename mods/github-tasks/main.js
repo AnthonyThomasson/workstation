@@ -9,20 +9,20 @@
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, spaces, focused, notify, shared, setShared, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
-import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload } from "./lib/index.js";
+import { normalizeItems, groupTickets, groupByStage, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload, CHANGED, AGENT_KEY, DOCTOR_KEY } from "./lib/index.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, setupProject, setupNote } from "./github/index.js";
 import { installedAgents, investigationsHere, reconnectInvestigations, viewInvestigation, InvestigationPage, NewTaskPage, RefactorPage } from "./investigations-ui/index.js";
 import { S, icon, stop, note, iconButton, action, gh, later, AgentBar } from "./widgets/index.js";
 import { Auth, REFRESH, LOGIN } from "./github-ui/index.js";
-import { TaskEditor, CHANGED } from "./editor/index.js";
+import { TaskEditor } from "./editor/index.js";
 import { readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen } from "./runs-ui/index.js";
 import { statusColor, statusLabel, cantStartHere, startOverlay, startProps } from "./runs/index.js";
 import { TaskSettings } from "./settings/index.js";
 import { matchWorkflows, REFACTOR } from "./workflow/index.js";
 import { WorkflowEditor, WorkflowList, loadWorkflows } from "./workflow-ui/index.js";
 import { PromptPage } from "./prompts-page.js";
-import { investigationRow, refactorOverlay, TOOLTIP as REFACTOR_TIP, AGENT_KEY, newTaskOverlay, newTaskProps, chooseAgent } from "./investigations/index.js";
-import { startDoctor, DOCTOR_KEY, doctorFor } from "./doctor/index.js";
+import { investigationRow, refactorOverlay, TOOLTIP as REFACTOR_TIP, newTaskOverlay, newTaskProps, chooseAgent } from "./investigations/index.js";
+import { startDoctor, doctorFor } from "./doctor/index.js";
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;

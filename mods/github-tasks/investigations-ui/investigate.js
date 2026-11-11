@@ -4,12 +4,12 @@
 // session's tab to the front again (viewInvestigation) and shows the agents again after an app restart. The tab's page is
 // investigation-page.js. The sidebar lists sessions with investigationsHere and opens them with viewInvestigation.
 import { exec, hc, home, knownAgents, notify, panes, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
-import { endHost, guarded, hostKey, openHost, slotKey, undoRunTab, viewConnect, viewQuick, mainCheckout, prepareWorktree, out, worktreePath } from "../runs/index.js";
+import { endHost, guarded, openHost, undoRunTab, viewConnect, viewQuick, mainCheckout, prepareWorktree, out } from "../runs/index.js";
 import { connect, connecting } from "../runs-ui/index.js";
 import { app } from "../widgets/index.js";
-import { newTaskPrompt, refactorPrompt } from "../lib/index.js";
-import { normalizeRefactor } from "../workflow/index.js";
-import { sessionFolder, INVESTIGATIONS_KEY, INVESTIGATION_HOST_LABEL, INVESTIGATION_ROLE, agentOf, beginInvestigation, deleteBranch, investigationsFor, reapplyInvestigations, removeWorktree, tabNameFor } from "../investigations/index.js";
+import { newTaskPrompt, refactorPrompt, hostKey, slotKey, INVESTIGATIONS_KEY, INVESTIGATION_HOST_LABEL } from "../lib/index.js";
+import { normalizeRefactor, worktreePath, sessionFolder } from "../workflow/index.js";
+import { INVESTIGATION_ROLE, agentOf, beginInvestigation, deleteBranch, investigationsFor, reapplyInvestigations, removeWorktree, tabNameFor } from "../investigations/index.js";
 
 export { investigationsFor };
 

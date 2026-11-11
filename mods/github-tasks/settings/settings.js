@@ -6,15 +6,14 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Popover, TextView } from "gpui-base";
 import { run, shared, setShared, theme } from "herdr";
-import { markdownLiteral, normalizeGroomer, normalizeSubAgent, GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, EFFORTS, PLACE } from "../lib/index.js";
+import { markdownLiteral, normalizeGroomer, normalizeSubAgent, GROOMER_KEY, INVESTIGATOR_KEY, WORKER_KEY, EFFORTS, PLACE, DOCTOR_KEY, AGENT_KEY, SECTIONS_KEY } from "../lib/index.js";
 import { CLAUDE_MODELS } from "../workflow/index.js";
 import { installedAgents } from "../investigations-ui/index.js";
 import { loadStatusField } from "../github/index.js";
 import { normalizeSettingsSections, SETTINGS_GROUPS, groupKey, promptTitle } from "./settings-model.js";
-import { DOCTOR_KEY, fixPrompt, doctorFor } from "../doctor/index.js";
+import { fixPrompt, doctorFor } from "../doctor/index.js";
 import { S, stop, note, icon, iconButton, action, gh } from "../widgets/index.js";
 
-const SECTIONS_KEY = "github-tasks.settingsSections";
 // The helpers the New Task Orchestrator may start (investigation-spawn.js), each with agent, model and effort of its own and a prompt tab.
 const SUB_AGENTS = [
   { id: "investigator", heading: "Investigators", role: "newTaskInvestigator", about: "Read-only helpers the New Task Orchestrator starts to explore the code." },
@@ -74,7 +73,7 @@ export class TaskSettings {
 
   // The chosen agent: the saved one if it is installed, else Claude, else the first installed (as the panel picks it).
   agent() {
-    const saved = this.groomer().agent ?? shared("github-tasks.groomAgent");
+    const saved = this.groomer().agent ?? shared(AGENT_KEY);
     return this.agents.find((a) => a.key === saved) ?? this.agents.find((a) => a.key === "claude") ?? this.agents[0] ?? null;
   }
 

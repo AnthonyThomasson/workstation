@@ -1,11 +1,10 @@
 // The "New task" dialog: the pure side of it. The + in the Tasks header opens it as a small overlay the mod draws itself (a dimmed
 // backdrop and a compact panel in the middle, like the ticket editor's popup, popup.js): "Describe the ticket you want", a multi-line
 // box, Cancel and Continue. new-task.js draws it and starts the task; this file says what it does.
-import { MARGIN } from "../lib/index.js";
+import { MARGIN, NEW_TASK_OVERLAY_KEY } from "../lib/index.js";
 
 export const WIDTH = 520;
 export const TITLE = "New task";
-export const AGENT_KEY = "github-tasks.groomAgent"; // the agent saved before the settings page held it
 export const PROMPT = "Describe the ticket you want";
 
 // The panel's width for a window of `size`: 520px, or what the window has left after the margin on each side. Null until measured.
@@ -16,7 +15,7 @@ export function panelWidth(size) {
 
 // The overlay that shows the dialog. props: what the sidebar knew when + was pressed (see newTaskProps).
 export const newTaskOverlay = (props) => ({
-  mod: "github-tasks", kind: "window", key: "github-tasks.new-task", width: 1, height: 1, frame: "none",
+  mod: "github-tasks", kind: "window", key: NEW_TASK_OVERLAY_KEY, width: 1, height: 1, frame: "none",
   props: { ...props, role: "new-task" },
 });
 
