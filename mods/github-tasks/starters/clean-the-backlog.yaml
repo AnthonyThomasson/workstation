@@ -1,0 +1,51 @@
+version: 1
+id: clean-the-backlog
+name: Clean the backlog
+
+orchestrator:
+  agent: claude
+  command: ""
+  model: opus
+  effort: high
+  prompt: |-
+    Clean the backlog; do not look for code changes to make. Read every To Do and Up Next ticket with `gh`, including its full description and checklist, project item id, status, position and age. Read the project's Status options too. If the To Do is empty, say so and stop.
+
+    Up Next tickets are context only: a To Do duplicate may be merged into one, but never reorder, edit or close Up Next tickets. Tickets that are In Progress, In Review or Done are out of scope: never change them. If the repo has a `GLOSSARY.md` or ADRs, read them and use their terms.
+
+    Give each investigator a batch of To Do tickets, with no ticket in two batches. Have them check every ticket against the code and `git log` for evidence that it is already done, obsolete or no longer fits the project. Read their evidence and check uncertain cases yourself. Never start a worker: there is nothing to prototype.
+
+    Present four proposal groups, with one line of reasoning per item:
+    1. **Stale tickets** to set to Won't Do, because they are already done, obsolete or no longer fit.
+    2. **Merges**, naming the ticket to keep and the overlapping tickets to fold into it.
+    3. **New To Do order**, most pressing first, with a reason for each item's placement.
+    4. **Up Next picks**, at most 3 To Do tickets, with a reason for each pick.
+
+    Treat the person's Focus text as the priority message: let it steer the order and Up Next picks, and say how it shaped the order. With no Focus, judge priority by impact, dependencies and age, and say that is what you used.
+
+    Skip a group with no proposals. For each remaining group, ask a multi-select question so the person can choose which items to apply; wait for their answer before the next group. Nothing changes on GitHub before approval. After all groups have been answered, apply only the chosen items, in this order: merges, then Won't Do, then reorder, then move to Up Next.
+
+    For a merge, keep the most complete ticket and have its description and checklist rewritten to cover every ticket folded into it. Keep a To Do ticket when the combined text needs rewriting. A To Do duplicate may merge into an Up Next ticket only when that ticket already covers it: leave the Up Next ticket unchanged. Set each other ticket to Won't Do and add the comment `Merged into #N`, where N is the kept issue's number. Never delete an issue.
+
+    For a stale ticket, add a comment giving the reason it is stale. For every stale or merged-away ticket, set its Status to Won't Do, add its comment with `gh issue comment`, then close it with `gh issue close <number> --reason "not planned"`, in that order. If the project has no Won't Do status, say so and don't close anything; skip the stale and merge changes, but still offer any independent reorder and Up Next changes.
+
+    Reorder only tickets that started in To Do, leaving all existing Up Next positions untouched. Move items with the project's `updateProjectV2ItemPosition` mutation through `gh api graphql`, as `github/loader.js` `moveItem` does: pass the project id, item id and the preceding item's id as `afterId`; omit `afterId` to put an item at the top. Apply the approved To Do order from top to bottom, accounting for tickets removed by merges or Won't Do. Tell the person to refresh the Tasks sidebar to see the new order.
+
+    For each chosen pick that started in To Do, set its Status to Up Next and place it with the same position mutation, so the chosen picks appear in the order proposed. Do not otherwise touch Up Next.
+
+    If a `gh` call fails part way, stop that change and report which changes were applied and which were not, including a status that succeeded before a comment, close or move failed. Don't retry blindly; ask how to proceed.
+
+investigator:
+  agent: claude
+  command: ""
+  model: sonnet
+  effort: medium
+  prompt: |-
+    Check your batch of tickets against the code and `git log` to judge whether each is stale. Report only; do not change anything.
+
+worker:
+  agent: claude
+  command: ""
+  model: sonnet
+  effort: high
+  prompt: |-
+    Do not run a prototype: this refactor has no code to try. Report that no worker is needed and make no changes.

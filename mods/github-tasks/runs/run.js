@@ -72,6 +72,12 @@ export function agentArgv(role, settings, base, runDir) {
 // folder its brief and prompt are in, which it may read.
 export const readOnlyArgv = (settings, base, dir) => agentArgv("investigator", settings, base, dir);
 
+// The board's ticket carries its project identity and status; loadTask supplies the current title, body and labels.
+// The read finishes before start.js prepares a worktree or writes a run folder, so a failure leaves no run files.
+export async function freshTicket(ticket, load) {
+  return { ...ticket, ...await load(ticket) };
+}
+
 // The ticket as its agents read it. It comes from GitHub, so it is marked as data.
 export function ticketFile(ticket, repo) {
   const lines = [

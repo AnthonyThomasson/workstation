@@ -566,7 +566,7 @@ test("clone and paste work for refactor types, and paste validates as a refactor
   assert.throws(() => replacementFromYaml("- a", "x", REFACTOR), /Clipboard is not a valid refactor/);
 });
 
-test("restore puts the three shipped refactor starters in the plan's scope, replacing what was there", async () => {
+test("restore puts the four shipped refactor starters in the plan's scope, replacing what was there", async () => {
   const starters = REFACTOR.starters.map(starterText);
   const { d, store } = rsetup();
   await store.save(rf("Old global"), "global");
@@ -577,7 +577,7 @@ test("restore puts the three shipped refactor starters in the plan's scope, repl
   await store.restore(restorePlan(await store.list(), "all", "/proj"), starters);
   assert.deepEqual([...d.fs.keys()].sort(), REFACTOR.starters.map((n) => `${R_GLOBAL}/${n}.yaml`).sort());
   const names = (await store.list()).map((i) => i.name);
-  assert.deepEqual(names, ["Architecture", "Isolation", "Redundant tests"]);
+  assert.deepEqual(names, ["Architecture", "Clean the backlog", "Isolation", "Redundant tests"]);
 });
 
 test("an invalid refactor starter is refused before restore deletes anything, and a workflow is not a refactor starter", async () => {
