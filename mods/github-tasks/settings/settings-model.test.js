@@ -103,11 +103,14 @@ test("built-in role prompts use the sample run placeholders", () => {
   assert.match(promptForRole("investigator"), /<the workflow's investigator prompt goes here>/);
 });
 
-test("the New Task prompt waits for the person, grills on acceptance criteria and asks about status", () => {
+test("the New Task prompt waits for the person, grills on acceptance criteria, shows blockers and asks about status", () => {
   const prompt = promptForRole("newTask", { repo: "me/app", project: { title: "Work" }, options: [{ name: "Todo" }, { name: "Up next" }] });
   assert.match(prompt, /me\/app/);
   assert.match(prompt, /acceptance criteria/);
+  assert.match(prompt, /\*\*Blocked by\*\*/);
+  assert.match(prompt, /\*\*Ready to start\*\*/);
   assert.match(prompt, /"Up next" or "Todo"/);
+  assert.match(prompt, /repos\/me\/app\/issues\/<n>\/dependencies\/blocked_by/);
   assert.match(promptForRole("newTask"), /<project>/);
 });
 

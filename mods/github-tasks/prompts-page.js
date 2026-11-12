@@ -9,7 +9,7 @@ import { promptForRole, promptTitle } from "./settings/index.js";
 import { S, note } from "./widgets/index.js";
 
 const PAGES = [
-  ["newTask", "What the + in the Tasks header tells the New Task Orchestrator when it opens: wait for what you want to make, grill you on the acceptance criteria, then ask whether to create it and in which status."],
+  ["newTask", "What the + in the Tasks header tells the New Task Orchestrator when it opens: wait for what you want to make, grill you on what it can't look up, show the tickets back with what blocks each and a dependency graph, then ask in which status each starts and create them, blockers first, once you say yes."],
   ["orchestrator", "The Task Orchestrator runs a workflow: it plans the work, starts Workers, Reviewers and Investigators, and decides what to fix."],
   ["refactor", "What the broom button tells the Refactor Orchestrator when it opens: run the refactor type, find and rate candidates, then make a ticket for each one you pick. It starts Investigators and Workers (prototypes)."],
   ["worker", "Started by the Task Orchestrator, in workflow runs only. Does one job the Task Orchestrator gives it."],

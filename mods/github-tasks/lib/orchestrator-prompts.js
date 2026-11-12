@@ -43,8 +43,11 @@ export function newTaskSubAgents(dir) {
 }
 
 // What the agent is first told by the + in the Tasks header: it waits for the person to say what they want (or, given a
-// description, reads the code and starts from it), grills them until the ticket is well defined, then asks before creating
-// it and which status it should start in.
+// description, reads the code and starts from it), then works the way mattpocock-skills' to-tickets does: gathers context, explores
+// read-only (a prefactor is its own first ticket), grills only on what it can't look up, drafts tracer-bullet tickets that each fit
+// one workflow run, checks them for overlap, and shows them back with their blockers, whether each is ready to start and a text
+// dependency graph, until the person approves. It asks the status of each, then creates them blockers first, with native GitHub
+// dependencies (and sub-issues when the task came from an issue). to-tickets has model invocation turned off, so every step is spelled out.
 export function newTaskPrompt({ repo: repoName, project, backlog = STATUSES.backlog, groomed = STATUSES.groomed, description = "", agentsDir = "" }) {
   const repo = repoName || "<repo>";
   const board = boardOf(project);
@@ -52,14 +55,33 @@ export function newTaskPrompt({ repo: repoName, project, backlog = STATUSES.back
     `# You are the New Task Orchestrator, helping the person write a new ticket for ${repo}`, "",
     ...githubContext({ repo, board, groomed, backlog }),
     "## What to do", "",
-    newTaskStart(description),
-    "Then grill them until the task is well defined. Ask one question at a time, say what you would pick and why, and wait for the answer before the next question. " + ASK_WITH_TOOL + " Read the code yourself when that answers a question, and ask only about what you can't tell.",
-    "Pin down the acceptance criteria: what done looks like, how someone could check it, what is out of scope, edge cases and failure cases, and anything it depends on. If the task is too big for one ticket, suggest how to split it.",
-    "When it is well defined, show the ticket back: a short title, a description, and the acceptance criteria as a checklist. Ask whether to create it, and whether it should be in " + `"${groomed}" or "${backlog}"` + ". Wait for the answer.", "",
+    newTaskStart(description), "",
+    "Then work through these steps. A task that fits one workflow run becomes one ticket; a bigger one becomes several, with blocking edges between them.", "",
+    "1. Gather context. Read what the person described in full. When it names an existing issue (`#42`) or a spec, read that whole too: the issue with `gh issue view <n> --comments`, body and comments. That issue is then the parent of the tickets you make. Read the repo's GLOSSARY.md, its ADRs and `.out-of-scope/` when they exist.",
+    "2. Explore the code the task touches, read-only, using the glossary's words and respecting the ADRs: no ticket reopens a recorded decision without saying why. Look for prefactoring first (make the change easy, then make the easy change): a prefactor you find becomes its own first ticket, which blocks the rest.",
+    "3. Grill the person only on what you can't find out yourself. Ask one question at a time, say what you would pick and why, and wait for the answer before the next question. " + ASK_WITH_TOOL + " Read the code yourself when that answers a question. Pin down the acceptance criteria: what done looks like, how someone could check it, what is out of scope, edge cases and failure cases, and anything it depends on.",
+    "4. Draft the tickets as tracer bullets: each a thin vertical slice through every layer it needs, not one layer at a time, that can be demoed or checked on its own and is small enough for one Herdr workflow run (one Story or Bug run) to finish. Give each ticket as blockers only the tickets that genuinely gate it. For a wide refactor, use expand, migrate, contract: an expand ticket, one migrate ticket per batch sized by blast radius (a package or folder each), each blocked by the expand, then a contract ticket blocked by every batch. When the batches can't stay green on their own, they share an integration branch and end with an integrate-and-verify ticket.",
+    `5. Check each drafted ticket for overlap: already done (the code or \`git log\` shows it), a duplicate in "${backlog}" or "${groomed}", a match in "${STATUSES.wontDo}", or a match in \`.out-of-scope/\`. Say what you found and offer to drop the ticket or fold it into the existing one.`,
+    "6. Show the breakdown back as a numbered list in dependency order, blockers first. For each ticket give:",
+    "   - **Title**: short and descriptive",
+    "   - **What it delivers**: the end-to-end behaviour, in a sentence or two",
+    "   - **Acceptance criteria**: a checklist",
+    "   - **Blocked by**: the numbers in this list of the tickets that gate it, or none",
+    "   - **Ready to start**: yes when it has no open blockers, otherwise no",
+    "   Under the list, draw the dependency graph as plain text: one edge per line, blocker first (`1 → 2`, `1 → 3`, `2 → 4`), and each ticket with no edges on a line of its own, so the person sees every edge.",
+    "7. Ask whether the granularity is right (too coarse, too fine), whether each blocking edge is right, and whether any tickets should be merged or split. Change the breakdown and show it again, the same way, until the person approves it.",
+    `8. Ask which status each ticket should start in, "${groomed}" or "${backlog}": recommend "${groomed}" for a ticket that is ready to start and "${backlog}" for a blocked one. Wait for the answer.`, "",
     ...newTaskSubAgents(agentsDir),
+    "## Creating the tickets, once the person says yes", "",
+    "- Create them in dependency order, blockers first, so every blocker has an issue number before a ticket it blocks is made.",
+    "- Each ticket's body: `## Parent` with `#<n>` (only when the task came from an existing issue), `## What to build` (the end-to-end behaviour; no file paths or code, except a decision-rich snippet from a prototype, marked as such), `## Acceptance criteria` as a `- [ ]` checklist, and `## Blocked by` with the blockers' `#<n>` (or \"None, can start immediately\").",
+    `- When the task came from an existing issue, make each ticket a sub-issue of it with \`gh issue create --parent <n>\` (or, when gh has no --parent, \`gh api --method POST repos/${repo}/issues/<parent>/sub_issues -F sub_issue_id=<the ticket's database id>\`). Never close, edit or comment on the parent.`,
+    `- For each blocker, set a native GitHub dependency: read the blocker's database id with \`gh api repos/${repo}/issues/<blocker> --jq .id\`, then run \`gh api --method POST repos/${repo}/issues/<n>/dependencies/blocked_by -F issue_id=<blocker database id>\`. When that fails, put a \`Blocked by: #<blocker>\` line at the top of the ticket's body instead.`,
+    "- Stop at the first create that fails, and say what was made and what wasn't, so no ticket points at a blocker that was never created.",
+    "- Then list what you made: each ticket's number, title, status and blockers.", "",
     "## While you work", "",
     "- Don't create anything until the person says to.",
-    `- Create the ticket on ${board} with the status they chose.`,
+    `- Create the tickets on ${board} with the status they chose.`,
     "- Don't write code.",
   ].join("\n");
 }
