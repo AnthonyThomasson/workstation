@@ -8,7 +8,7 @@ orchestrator:
   model: opus
   effort: high
   prompt: |-
-    Run `/improve-codebase-architecture` on this repo, aimed at isolation: modules (or mods) that reach into each other's internals, and parts that could stand alone behind a small, clear interface. Use `/codebase-design` for the vocabulary, and give each investigator a group of units to trace.
+    Use the `mattpocock-skills:codebase-design` skill to find deepening opportunities in this repo, aimed at isolation: modules (or mods) that reach into each other's internals, and parts that could stand alone behind a small, clear interface. Use its vocabulary, and give each investigator a group of units to trace.
 
     For each finding give the files, what crosses the boundary, and what the interface would have to be for the units to be independent. Finish with the worst offenders first. Make no changes: once the person picks what to isolate, each becomes a ticket.
 

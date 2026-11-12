@@ -77,12 +77,24 @@ for (const file of CODE_REFACTOR_STARTERS) {
   });
 }
 
-test("the Isolation starter runs /improve-codebase-architecture; Architecture runs /codebase-design and writes an HTML report", () => {
+test("the Isolation starter uses the mattpocock-skills:codebase-design skill; Architecture runs /codebase-design and writes an HTML report", () => {
   const { prompt } = refactor.parse(readFileSync(new URL("architecture.yaml", dir), "utf8")).orchestrator;
   assert.match(prompt, /`\/codebase-design`/);
   assert.doesNotMatch(prompt, /`\/improve-codebase-architecture`/);
   assert.match(prompt, /HTML file in the temp directory, never in the repo/);
-  assert.match(refactor.parse(readFileSync(new URL("isolation.yaml", dir), "utf8")).orchestrator.prompt, /`\/improve-codebase-architecture`/);
+  const isolation = refactor.parse(readFileSync(new URL("isolation.yaml", dir), "utf8")).orchestrator.prompt;
+  assert.match(isolation, /`mattpocock-skills:codebase-design` skill to find deepening opportunities/);
+  assert.doesNotMatch(isolation, /`\/improve-codebase-architecture`/);
+});
+
+// improve-codebase-architecture and grill-with-docs have model invocation turned off, so a starter names skills the agent can load itself.
+test("the Story starters grill with mattpocock-skills:grilling and domain-modeling instead of /grill-with-docs", () => {
+  for (const file of ["story.yaml", "story-kimi.yaml"]) {
+    const text = readFileSync(new URL(file, dir), "utf8");
+    assert.match(text, /`mattpocock-skills:grilling` skill/, file);
+    assert.match(text, /`mattpocock-skills:domain-modeling` skill to update GLOSSARY\.md and the ADRs/, file);
+    assert.doesNotMatch(text, /`\/grill-with-docs`/, file);
+  }
 });
 
 test("Clean the backlog reads the whole backlog with gh, uses investigator batches and never a worker", () => {

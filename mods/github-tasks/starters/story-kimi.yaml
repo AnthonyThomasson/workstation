@@ -12,7 +12,7 @@ orchestrator:
   model: opus
   effort: medium
   prompt: If the orchestrator thinks it needs any more than 2 workers, decline to do the work and recommend using a non-kimi workflow.
-  planning: "Run `/grill-with-docs` on the ticket until nothing material is open, then present the plan for acceptance."
+  planning: "Grill the user on the ticket with the `mattpocock-skills:grilling` skill until nothing material is open, using the `mattpocock-skills:domain-modeling` skill to update GLOSSARY.md and the ADRs as terms and decisions settle, then present the plan for acceptance."
   retro: "Run `/retro` on this run, then propose follow-up tickets with the question tool and add the ones the person picks to To Do."
 
 worker:
