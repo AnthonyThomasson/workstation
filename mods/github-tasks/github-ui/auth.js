@@ -3,14 +3,13 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, readTextFile, settings } from "herdr";
-import { signInFrom, preparedFrom, usesDeviceFlow, REFRESH, LOGIN, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, DEVICE_URL } from "../lib/index.js";
+import { signInFrom, preparedFrom, usesDeviceFlow, REFRESH, LOGIN, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, DEVICE_URL, DEVICE_TIMEOUT_MS, signInSeconds } from "../lib/index.js";
 import { shOn } from "../runs/index.js";
 import { S, note, action } from "../widgets/index.js";
 
 // The sign-in's scripts (lib/gh-sign-in.js) run as the machine runs sh: plain sh here and on Unix, Git Bash on Windows, which has
 // no sh on its PATH (shOn asks the machine what it runs, once).
-const sh = (on, script, args) => shOn({ exec }, on, script, args);
-const SIGN_IN_SECONDS = 900; // GitHub's device codes last about 15 minutes
+const sh = (on, script, args, opts) => shOn({ exec }, on, script, args, opts);
 
 export { REFRESH, LOGIN };
 
@@ -35,7 +34,7 @@ export class Auth {
       // On another machine or a non-Mac: the device flow, its exec held open until gh ends (ended, once it has).
       const device = usesDeviceFlow(on, kernel);
       let ended = null;
-      if (device) sh(on, SIGN_IN_DEVICE, [dir, ...args]).catch(failed).then((r) => { ended = r; });
+      if (device) sh(on, SIGN_IN_DEVICE, [dir, ...args], { timeout: DEVICE_TIMEOUT_MS }).catch(failed).then((r) => { ended = r; });
       else {
         const started = await sh(on, SIGN_IN, [dir, ...args]).catch(failed);
         if (this.state !== pending) return;
@@ -44,7 +43,7 @@ export class Auth {
       this.state = { ...pending, phase: "waiting", dir, device };
       cx.notify();
       const mine = () => this.state?.dir === dir;
-      for (let i = 0; i < SIGN_IN_SECONDS; i++) {
+      for (let i = 0; i < signInSeconds(device); i++) {
         await cx.sleep(1000);
         if (!mine()) return;
         const over = ended; // read before the files: gh's code file is written before its exec ends

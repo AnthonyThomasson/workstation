@@ -215,3 +215,16 @@ test("machinePath prints a path as it is where there is no cygpath (any Unix)", 
 test("machinePath is the snippet the Windows probe and the sign-in use, its argument kept quoted", () => {
   assert.equal(machinePath('"$HOME"'), `if command -v cygpath >/dev/null 2>&1; then cygpath -m "$HOME"; else printf '%s\\n' "$HOME"; fi`);
 });
+
+test("shOn passes a timeout through to exec, beside on; without one exec gets exactly what it did before", async () => {
+  const { exec, calls } = fakeExec((cmd) => (cmd === "sh" || cmd === GIT_BASH ? { code: 0, stdout: "", stderr: "" } : undefined));
+  const deps = { exec, probe: async (_e, on) => ({ on, os: "windows", home: "C:/Users/me" }), seen: new Map() };
+  await shOn(deps, "desktop", "a", ["1"], { timeout: 600000 });
+  assert.deepEqual(calls.at(-1), { cmd: GIT_BASH, args: ["-lc", "a", "github-tasks", "1"], opts: { on: "desktop", timeout: 600000 } });
+  await shOn(deps, "desktop", "b");
+  assert.deepEqual(calls.at(-1).opts, { on: "desktop" });
+  await shOn(deps, null, "c", [], { timeout: 5000 });
+  assert.deepEqual(calls.at(-1), { cmd: "sh", args: ["-c", "c", "github-tasks"], opts: { timeout: 5000 } });
+  await shOn(deps, null, "d");
+  assert.equal(calls.at(-1).opts, undefined); // here, no options at all, as before
+});

@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { DEVICE_URL, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, classifyError, preparedFrom, signInFrom, usesDeviceFlow } from "./gh-sign-in.js";
+import { DEVICE_TIMEOUT_MS, DEVICE_URL, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, classifyError, preparedFrom, signInFrom, signInSeconds, usesDeviceFlow } from "./gh-sign-in.js";
 
 test("reads gh's one-time code and page from its sign-in output", () => {
   const out = "\n! One-time code (AA8B-5FB7) copied to clipboard\nOpen this URL to continue in your web browser: https://github.com/login/device\n";
@@ -111,4 +111,11 @@ test("the sign-in's scripts take their arguments as $@ and $1, so they run under
   assert.match(SIGN_IN_PREPARE, /cygpath -m "\$d"/);
   assert.equal(SIGN_IN_CLEANUP, 'rm -rf "$1"');
   assert.equal(DEVICE_URL, "https://github.com/login/device");
+});
+
+test("the device flow's exec may run up to Herdr's 600s cap, and the mod stops waiting then too; the Mac waits out the code", () => {
+  assert.equal(DEVICE_TIMEOUT_MS, 600000); // Herdr's exec cap, and the spawn scripts' hc exec --timeout 600
+  assert.equal(signInSeconds(true), 600);
+  assert.ok(signInSeconds(true) * 1000 <= DEVICE_TIMEOUT_MS);
+  assert.equal(signInSeconds(false), 900);
 });

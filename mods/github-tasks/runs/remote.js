@@ -57,8 +57,9 @@ export async function hostOf({ exec, probe = probeMachine, seen = SEEN }, on) {
 
 // Runs a sh script on a machine as that machine runs one: on this computer (on unset) plain sh, never probed; elsewhere as
 // hostOf says, so Windows gets Git Bash. A probe that fails resolves like a failed command ({ code: 1, stderr: why }), so a
-// caller that reads code and stderr says why.
-export async function shOn(deps, on, script, args = []) {
+// caller that reads code and stderr says why. timeout (ms): how long Herdr's exec lets the script run (its default is 30s, its
+// cap 600000); left out, exec gets no timeout and keeps that default.
+export async function shOn(deps, on, script, args = [], { timeout } = {}) {
   let os = "unix";
   if (on) {
     try {
@@ -68,7 +69,8 @@ export async function shOn(deps, on, script, args = []) {
     }
   }
   const [cmd, argv] = shArgv(os, script, args);
-  return deps.exec(cmd, argv, ...(on ? [{ on }] : []));
+  const opts = { ...(on ? { on } : {}), ...(timeout ? { timeout } : {}) };
+  return deps.exec(cmd, argv, ...(Object.keys(opts).length ? [opts] : []));
 }
 
 // Where an agent's program is on a host: its bare name when the host's PATH has it, else the usual install folder

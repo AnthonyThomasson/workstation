@@ -19,6 +19,11 @@ export const SIGN_IN = 'd=$1; shift; ( GH_PROMPT_DISABLED=1 gh "$@" </dev/null >
 // exec that runs this stays open until gh ends: hc exec would kill a detached gh once the shell exits.
 export const SIGN_IN_DEVICE = 'd=$1; shift; GH_BROWSER=true BROWSER=true GH_PROMPT_DISABLED=1 gh "$@" </dev/null >"$d/out" 2>"$d/err"; echo $? > "$d/code"';
 export const DEVICE_URL = "https://github.com/login/device";
+// How long the device flow's held-open exec may run: Herdr's exec cap (its default, 30s, would kill gh mid-sign-in), as the
+// spawn scripts' hc exec --timeout 600. The mod stops waiting at the same point; on the Mac gh is detached, so it waits as long
+// as GitHub's device codes last (about 15 minutes).
+export const DEVICE_TIMEOUT_MS = 600000;
+export const signInSeconds = (device) => (device ? DEVICE_TIMEOUT_MS / 1000 : 900);
 
 // SIGN_IN_PREPARE's two lines: { dir, kernel }.
 export function preparedFrom(stdout) {
