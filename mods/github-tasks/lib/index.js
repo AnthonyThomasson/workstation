@@ -2,7 +2,7 @@
 export { BACK_AFTER, SHAKE_FOR, Shakes, bellFirst, bellTip, bellToast, waitingAgents } from "./bell.js";
 export { WORDS, agentPopupOverlay, barTitle, isEscape, parentLabel } from "./agent-popup.js";
 export { EFFORTS, groomArgv, normalizeGroomer, normalizeSubAgent } from "./agent-settings.js";
-export { classifyError, LOGIN, REFRESH, SIGN_IN, SIGN_IN_CLEANUP, signInFrom } from "./gh-sign-in.js";
+export { classifyError, LOGIN, REFRESH, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, DEVICE_URL, preparedFrom, usesDeviceFlow, signInFrom } from "./gh-sign-in.js";
 export { AGENT_KEY, AGENT_POPUP_KEY, CHANGED, CLI_ACTION, CONTEXT, DOCTOR_KEY, EDITOR_OVERLAY_KEY, GROOMER_KEY, INVESTIGATIONS_KEY, INVESTIGATOR_KEY, NEW_TASK_OVERLAY_KEY, OVERLAY_KEY, PICK_PREFIX, PLACE, REFACTORS_CHANGED, REFACTOR_OVERLAY_KEY, SECTIONS_KEY, WORKER_KEY, WORKFLOWS_CHANGED, autoPrKey, failureKey, finalKey, fixingKey, investigationAgentsKey, leadKey, modCommand, openKey, prKey, projectKey, runAgentsKey, slotKey, stageKey } from "./keys.js";
 export { markdownLiteral } from "./markdown.js";
 export { ASK_WITH_TOOL, newTaskPrompt, newTaskStart, newTaskSubAgents, refactorPrompt, refactorSections } from "./orchestrator-prompts.js";

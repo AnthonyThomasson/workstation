@@ -4,7 +4,7 @@
 // the run page (run-page.js), the list of its agents, on the right. Merge closes that space again. From there the
 // orchestrator runs the ticket itself (run.js says how).
 import { exec, focused, hc, home, knownAgents, notify, panes, readTextFile, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
-import { connectRun, freshTicket, guarded, launchRun, reapplyRuns, runTabParts, undoRunTab, viewConnect, viewQuick, viewTarget, mainCheckout, prepareWorktree, out, agentArgv, branchName, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, runId, spawnScript, ticketFile, ticketKey, ticketName, soloPrompt, workerPrompt, hostArgv, probeMachine, remoteProgram, shArgv } from "../runs/index.js";
+import { connectRun, freshTicket, guarded, launchRun, reapplyRuns, runTabParts, undoRunTab, viewConnect, viewQuick, viewTarget, mainCheckout, prepareWorktree, out, agentArgv, branchName, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, runId, spawnScript, ticketFile, ticketKey, ticketName, soloPrompt, workerPrompt, hostArgv, hostOf, remoteProgram, shOn } from "../runs/index.js";
 import { loadTask } from "../github/index.js";
 import { app, gh } from "../widgets/index.js";
 import { blank, ROLES, isEasy, worktreePath, runDir as runDirFor, runPanePath } from "../workflow/index.js";
@@ -136,8 +136,7 @@ async function resolveAgents(workflow, runDir, host = null, localDir = runDir) {
 // be mistaken for one that works. hc file write makes missing folders, but a folder is made first anyway, as for a local run.
 async function writeRemoteRunFolder(id, parts, argv, host, localDir) {
   const { runDir, workDir, branch } = parts;
-  const [mkCmd, mkArgs] = shArgv(host.os, 'mkdir -p "$1"', [runDir]);
-  const remote = await exec(mkCmd, mkArgs, { on: host.on }).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+  const remote = await shOn({ exec }, host.on, 'mkdir -p "$1"', [runDir]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
   if (remote.code !== 0) throw new Error(`Couldn't make ${runDir} on ${host.on}: ${out(remote)}`);
   const local = await exec("mkdir", ["-p", localDir]);
   if (local.code !== 0) throw new Error(`Couldn't make ${localDir}: ${out(local)}`);
@@ -207,7 +206,7 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   // The board query has no body. Read the whole ticket before anything is prepared or written; a failure keeps its reason.
   ticket = await freshTicket(ticket, (listed) => loadTask(gh, repo, listed, where));
 
-  const host = where.on ? await probeMachine(exec, where.on) : null; // { on, os, home }: before anything changes
+  const host = where.on ? await hostOf({ exec }, where.on) : null; // { on, os, home }: before anything changes
   const git = gitOn(host?.on);
   const repoRoot = await mainCheckout(git, where.cwd); // the main checkout, even when Start is used from one of its worktrees
 

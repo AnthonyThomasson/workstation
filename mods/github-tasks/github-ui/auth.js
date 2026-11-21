@@ -3,7 +3,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { exec, readTextFile, settings } from "herdr";
-import { signInFrom, REFRESH, LOGIN, SIGN_IN, SIGN_IN_CLEANUP } from "../lib/index.js";
+import { signInFrom, preparedFrom, usesDeviceFlow, REFRESH, LOGIN, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, DEVICE_URL } from "../lib/index.js";
 import { shOn } from "../runs/index.js";
 import { S, note, action } from "../widgets/index.js";
 
@@ -26,21 +26,38 @@ export class Auth {
     this.state = pending;
     cx.notify();
     cx.spawn(async (cx) => {
-      const started = await sh(on, SIGN_IN, args)
-        .catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
-      const dir = started.stdout.trim();
+      const failed = (e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) });
+      const fail = (r) => { this.state = { phase: "failed", message: r.stderr.trim().split("\n")[0] || "Could not start gh." }; cx.notify(); };
+      const prepared = await sh(on, SIGN_IN_PREPARE, []).catch(failed);
+      const { dir, kernel } = preparedFrom(prepared.stdout);
       if (this.state !== pending) return;
-      if (started.code !== 0 || !dir) { this.state = { phase: "failed", message: started.stderr.trim().split("\n")[0] || "Could not start gh." }; return cx.notify(); }
-      this.state = { ...pending, phase: "waiting", dir };
+      if (prepared.code !== 0 || !dir) return fail(prepared);
+      // On another machine or a non-Mac: the device flow, its exec held open until gh ends (ended, once it has).
+      const device = usesDeviceFlow(on, kernel);
+      let ended = null;
+      if (device) sh(on, SIGN_IN_DEVICE, [dir, ...args]).catch(failed).then((r) => { ended = r; });
+      else {
+        const started = await sh(on, SIGN_IN, [dir, ...args]).catch(failed);
+        if (this.state !== pending) return;
+        if (started.code !== 0) return fail(started);
+      }
+      this.state = { ...pending, phase: "waiting", dir, device };
       cx.notify();
       const mine = () => this.state?.dir === dir;
       for (let i = 0; i < SIGN_IN_SECONDS; i++) {
         await cx.sleep(1000);
         if (!mine()) return;
+        const over = ended; // read before the files: gh's code file is written before its exec ends
         const err = (await readTextFile(`${dir}/err`, { on }).catch(() => null)) ?? "";
         const done = ((await readTextFile(`${dir}/code`, { on }).catch(() => null)) ?? "").trim();
         const { code, url } = signInFrom(err);
         if (code !== this.state.code || url !== this.state.url) { this.state = { ...this.state, code, url }; cx.notify(); }
+        if (!done && over) {
+          sh(on, SIGN_IN_CLEANUP, [dir]).catch(() => {});
+          const why = `${over.stderr}\n${err}`.trim().split("\n").filter(Boolean);
+          this.state = { phase: "failed", message: why[why.length - 1] ?? "gh stopped before signing in." };
+          return cx.notify();
+        }
         if (!done) continue;
         sh(on, SIGN_IN_CLEANUP, [dir]).catch(() => {});
         if (done === "0") {
@@ -64,11 +81,13 @@ export class Auth {
       .child(action("github-sign-in-retry", "Try again", t, retry));
     if (!a.code) return note(t, "Starting sign-in with GitHub…");
     return v_flex().gap(8)
-      .child(note(t, "Enter this code on GitHub, then approve gh:"))
+      .child(note(t, a.device
+        ? `On this computer, open ${(a.url ?? DEVICE_URL).replace(/^https:\/\//, "")}, enter this code, then approve gh:`
+        : "Enter this code on GitHub, then approve gh:"))
       .child(div().id("github-sign-in-code").px(10).py(8).rounded(6).border_1().border_color(t.border).bg(t.chrome)
         .font_family(settings().font_family || "Menlo").text_size(S().body).font_semibold().text_color(t.foreground).child(a.code))
       .child(h_flex().gap(6)
-        .child(action("github-sign-in-open", "Open GitHub", t, (_e, cx) => cx.open_url(a.url ?? "https://github.com/login/device")))
+        .child(action("github-sign-in-open", "Open GitHub", t, (_e, cx) => cx.open_url(a.url ?? DEVICE_URL)))
         .child(action("github-sign-in-copy", "Copy code", t, (_e, cx) => cx.write_to_clipboard(a.code), true)))
       .child(note(t, "Waiting for you to approve in the browser…"));
   }

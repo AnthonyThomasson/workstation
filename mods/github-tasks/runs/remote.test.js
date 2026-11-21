@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { GIT_BASH, gitWhere, hostArgv, hostShell, isWindowsKernel, parseProbe, probeMachine, remoteProgram, shArgv, shOn } from "./remote.js";
+import { GIT_BASH, gitWhere, hostArgv, hostOf, hostShell, isWindowsKernel, machinePath, parseProbe, probeMachine, remoteProgram, shArgv, shOn } from "./remote.js";
 import { shQuote } from "./run.js";
 
 // A fake exec: answers(cmd, args, opts) -> { code, stdout, stderr } or undefined (program not found). Records every call.
@@ -165,4 +165,53 @@ test("shOn: on a Unix machine it runs sh -c there; a probe that fails resolves a
   const r = await shOn({ exec, probe: async () => { throw new Error("Couldn't tell what gone runs"); }, seen: new Map() }, "gone", "a");
   assert.deepEqual(r, { code: 1, stdout: "", stderr: "Couldn't tell what gone runs" });
   assert.equal(calls.length, 1); // nothing ran on a machine it couldn't place
+});
+
+test("hostOf: a machine is probed once and its host kept; a probe that fails is not kept, so the next call asks again", async () => {
+  let probed = 0;
+  let up = false;
+  const deps = { exec: async () => ({}), probe: async (_e, on) => { probed++; if (!up) throw new Error(`${on} is off`); return { on, os: "windows", home: "C:/Users/me" }; }, seen: new Map() };
+  await assert.rejects(hostOf(deps, "desktop"), /desktop is off/);
+  up = true;
+  assert.deepEqual(await hostOf(deps, "desktop"), { on: "desktop", os: "windows", home: "C:/Users/me" });
+  await hostOf(deps, "desktop");
+  assert.equal(probed, 2);
+});
+
+test("hostOf and shOn share what they found: a host found for a start is the one shOn's scripts run as", async () => {
+  const { exec, calls } = fakeExec(windowsBox);
+  const deps = { exec, seen: new Map() };
+  assert.equal((await hostOf(deps, "desktop")).os, "windows");
+  const probes = calls.length;
+  await shOn(deps, "desktop", 'mkdir -p "$1"', ["C:/Users/me/run"]);
+  assert.equal(calls.length, probes + 1); // no second probe
+  assert.deepEqual(calls.at(-1), { cmd: GIT_BASH, args: ["-lc", 'mkdir -p "$1"', "github-tasks", "C:/Users/me/run"], opts: { on: "desktop" } });
+});
+
+// machinePath run for real: a fake cygpath stands in for Git Bash's, and with none the path is printed as it is.
+function printed(ref, { cygpath }) {
+  const dir = mkdtempSync(join(tmpdir(), "machine-path-"));
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  if (cygpath) { writeFileSync(join(bin, "cygpath"), '#!/bin/sh\n[ "$1" = -m ] && printf "C:/msys64%s\n" "$2"\n'); chmodSync(join(bin, "cygpath"), 0o755); }
+  const env = { ...process.env, D: "/tmp/tmp.x" };
+  const pathKey = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+  env[pathKey] = cygpath ? `${bin}${delimiter}${env[pathKey]}` : `${bin}${delimiter}/usr/bin${delimiter}/bin`;
+  return spawnSync("sh", ["-c", machinePath(ref)], { env, encoding: "utf8" });
+}
+
+test("machinePath prints a Git Bash path as Windows names it (cygpath -m), so Herdr's file calls find it there", () => {
+  const r = printed('"$D"', { cygpath: true });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "C:/msys64/tmp/tmp.x\n");
+});
+
+test("machinePath prints a path as it is where there is no cygpath (any Unix)", { skip: process.platform === "win32" && "Git Bash has its own cygpath on the PATH" }, () => {
+  const r = printed('"$D"', { cygpath: false });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, "/tmp/tmp.x\n");
+});
+
+test("machinePath is the snippet the Windows probe and the sign-in use, its argument kept quoted", () => {
+  assert.equal(machinePath('"$HOME"'), `if command -v cygpath >/dev/null 2>&1; then cygpath -m "$HOME"; else printf '%s\\n' "$HOME"; fi`);
 });

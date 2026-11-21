@@ -14,8 +14,13 @@ export const shArgv = (os, script, args = []) => (os === "windows"
   ? [GIT_BASH, ["-lc", script, "github-tasks", ...args]]
   : ["sh", ["-c", script, "github-tasks", ...args]]);
 
+// A sh snippet that prints a path as the machine itself names it, so Herdr's file calls (readTextFile, writeTextFile with on)
+// and the machine's programs resolve it alike: cygpath -m on Git Bash, MSYS2 or Cygwin (/tmp/x is C:/Users/…/Temp/x there),
+// the path as it is elsewhere. ref: a quoted sh expression, such as "$HOME" or "$d".
+export const machinePath = (ref) => `if command -v cygpath >/dev/null 2>&1; then cygpath -m ${ref}; else printf '%s\\n' ${ref}; fi`;
+
 const UNIX_PROBE = 'uname -s; printf "%s\\n" "$HOME"';
-const WINDOWS_PROBE = 'uname -s; cygpath -m "$HOME"';
+const WINDOWS_PROBE = `uname -s; ${machinePath('"$HOME"')}`;
 
 // The two lines a probe prints: the kernel and the home folder.
 export function parseProbe(stdout) {
@@ -41,23 +46,29 @@ export async function probeMachine(exec, on) {
   throw new Error(`Couldn't tell what ${on} runs (sh: ${why(unix) || "no answer"}; Git Bash at ${GIT_BASH}: ${why(win) || "no answer"}).`);
 }
 
-// Runs a sh script on a machine as that machine runs one: on this computer (on unset) plain sh, never probed; elsewhere the
-// machine's OS is asked first (probeMachine, once per machine: `seen` keeps the answers) so Windows gets Git Bash. A probe
-// that fails resolves like a failed command ({ code: 1, stderr: why }), so a caller that reads code and stderr says why.
+// The host a machine is (probeMachine), asked once per machine: `seen` keeps the answers. A probe that fails is not kept, so the
+// next call asks again. Remote shell calls go through this, so sh or Git Bash is decided for a machine in one place.
 //   deps: { exec, probe = probeMachine, seen = a Map of machine -> host }
 const SEEN = new Map();
-export async function shOn({ exec, probe = probeMachine, seen = SEEN }, on, script, args = []) {
+export async function hostOf({ exec, probe = probeMachine, seen = SEEN }, on) {
+  if (!seen.has(on)) seen.set(on, await probe(exec, on));
+  return seen.get(on);
+}
+
+// Runs a sh script on a machine as that machine runs one: on this computer (on unset) plain sh, never probed; elsewhere as
+// hostOf says, so Windows gets Git Bash. A probe that fails resolves like a failed command ({ code: 1, stderr: why }), so a
+// caller that reads code and stderr says why.
+export async function shOn(deps, on, script, args = []) {
   let os = "unix";
   if (on) {
     try {
-      if (!seen.has(on)) seen.set(on, await probe(exec, on));
-      os = seen.get(on).os;
+      os = (await hostOf(deps, on)).os;
     } catch (e) {
       return { code: 1, stdout: "", stderr: String(e?.message ?? e) };
     }
   }
   const [cmd, argv] = shArgv(os, script, args);
-  return exec(cmd, argv, ...(on ? [{ on }] : []));
+  return deps.exec(cmd, argv, ...(on ? [{ on }] : []));
 }
 
 // Where an agent's program is on a host: its bare name when the host's PATH has it, else the usual install folder
