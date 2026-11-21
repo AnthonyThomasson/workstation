@@ -21,9 +21,9 @@ export const startProps = ({ ticket, repo, project, where, matches, skipped }) =
 });
 
 // Why a run can't start from this place (`where`: the space's folder and machine), or null. The sidebar says so itself instead of opening a
-// dialog that could only fail; start.js refuses the same places.
-export const cantStartHere = (where) => (where?.on ? `This space is on ${where.on}. Workflows only run on this computer for now.`
-  : !where?.cwd ? "This space has no folder to work in." : null);
+// dialog that could only fail; start.js refuses the same places. A space on another machine can start one: its worktrees and agents go
+// there, and the Task Orchestrator stays on this computer (start.js).
+export const cantStartHere = (where) => (!where?.cwd ? "This space has no folder to work in." : null);
 
 // What Esc does: the dialog closes, unless a run is being started, which can't be called back halfway (an overlay's tasks end with it):
 // then nothing.

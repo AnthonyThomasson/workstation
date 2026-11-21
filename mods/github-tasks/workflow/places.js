@@ -43,7 +43,8 @@ export const cliRepliesDir = (home) => `${cliDir(home)}/replies`;
 // reached through a run id containing traversal; Merge builds this path from home() and the run id.
 // The child's id, or null when the path is not safe to remove.
 export const runIdFromDir = (path) => {
-  const id = typeof path === "string" ? path.match(/^\/(?:.*\/)?\.herdr\/workflow-runs\/([^/]+)$/)?.[1] : null;
+  // an absolute path: /… here or on a Unix machine, C:/… on a Windows one (a run's folder there, removed by Merge)
+  const id = typeof path === "string" ? path.match(/^(?:[A-Za-z]:)?\/(?:.*\/)?\.herdr\/workflow-runs\/([^/]+)$/)?.[1] : null;
   return id && id !== "." && !id.includes("..") ? id : null;
 };
 

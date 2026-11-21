@@ -59,7 +59,10 @@ test("a run folder and its pane.json live under the home's workflow-runs folder"
 test("the run-folder guard accepts only one safe child of workflow-runs", () => {
   assert.equal(runIdFromDir("/home/me/.herdr/workflow-runs/12-abc"), "12-abc");
   assert.equal(runIdFromDir(runDir("/home/me", "12-abc")), "12-abc");
+  assert.equal(runIdFromDir(runDir("C:/Users/me", "12-abc")), "12-abc"); // a run's folder on a Windows machine
   for (const path of [
+    "C:/Users/me/.herdr/workflow-runs", "C:/Users/me/.herdr/workflow-runs/..", "C:relative/.herdr/workflow-runs/9-abc",
+    "CD:/x/.herdr/workflow-runs/9-abc", "C:\\Users\\me\\.herdr\\workflow-runs\\9-abc",
     "/home/me/.herdr/workflow-runs", "/home/me/.herdr/workflow-runs/", "/home/me/.herdr/workflow-runs/.",
     "/home/me/.herdr/workflow-runs/..", "/home/me/.herdr/workflow-runs/9..abc", "/home/me/.herdr/workflow-runs/9-abc/extra",
     "relative/.herdr/workflow-runs/9-abc", null,

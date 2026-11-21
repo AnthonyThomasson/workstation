@@ -772,3 +772,40 @@ test("openPullRequest: a failed push is a Push branch failure, a refused pull re
   assert.match(e2.message, /gh didn't open a pull request: no permission/);
   assert.equal(mergeFailure({ error: e2 }).label, "Fix merge");
 });
+// A run whose worktree is on another machine (start.js saves on, os, worktree and remoteRunDir): Merge's git and gh run there,
+// the ticket status (a GitHub API call) and the run folder here stay here, and the agents' run folder there is removed too.
+const onWindows = { ...ctx, repoRoot: "C:/Users/me/app", workDir: "C:/Users/me/.herdr/worktrees/app/workflow-9-x", host: { on: "desktop", os: "windows" }, remoteRunDir: "C:/Users/me/.herdr/workflow-runs/9-abc123" };
+
+test("mergeSteps on another machine: git and gh run there, the status and this computer's run folder here", () => {
+  const steps = mergeSteps(onWindows);
+  assert.deepEqual(names(steps), ["tree-status", "fetch", "ahead", "pr-merge", "status", "remove-worktree", "delete-branch", "remove-run-files", "remove-run-files"]);
+  const by = (name) => steps.filter((s) => s.name === name);
+  for (const name of ["tree-status", "fetch", "ahead", "pr-merge", "remove-worktree", "delete-branch"]) assert.equal(by(name)[0].on, "desktop", name);
+  assert.equal(by("status")[0].on, undefined);
+  const [here, there] = by("remove-run-files");
+  assert.deepEqual([here.cmd, here.args, here.on], ["rm", ["-rf", ctx.runDir], undefined]);
+  assert.deepEqual([there.cmd, there.args, there.on], ["C:/Program Files/Git/bin/bash.exe", ["-lc", 'rm -rf "$1"', "github-tasks", onWindows.remoteRunDir], "desktop"]);
+  assert.match(by("ahead")[0].dirty, /Run `hc exec --on desktop -- git -C C:\/Users\/me\/\.herdr\/worktrees\/app\/workflow-9-x push origin workflow\/9-x`/);
+});
+
+test("mergeSteps on a Unix machine removes its run folder with sh, and never one outside workflow-runs", () => {
+  const unix = { ...onWindows, host: { on: "vps", os: "unix" }, remoteRunDir: "/home/me/.herdr/workflow-runs/9-abc123" };
+  const there = mergeSteps(unix).filter((s) => s.name === "remove-run-files")[1];
+  assert.deepEqual([there.cmd, there.args, there.on], ["sh", ["-c", 'rm -rf "$1"', "github-tasks", "/home/me/.herdr/workflow-runs/9-abc123"], "vps"]);
+  for (const bad of ["C:/Users/me", "C:/Users/me/.herdr/workflow-runs", null]) {
+    assert.equal(mergeSteps({ ...onWindows, remoteRunDir: bad }).filter((s) => s.name === "remove-run-files").length, 1, String(bad));
+  }
+});
+
+test("mergeSteps here is unchanged: no step names a machine", () => {
+  assert.ok(mergeSteps(ctx).every((s) => !("on" in s)));
+  assert.match(mergeSteps(ctx).find((s) => s.name === "ahead").dirty, /Run `git -C \/r-9-x push origin workflow\/9-x`/);
+});
+
+test("runSteps passes each step's machine and folder to exec, and nothing when a step has neither", async () => {
+  const seen = [];
+  await runSteps(mergeSteps(onWindows), async (cmd, args, opts) => { seen.push([cmd, opts]); return { code: 0, stdout: "", stderr: "" }; });
+  assert.deepEqual(seen.find(([c]) => c === "gh")[1], { cwd: onWindows.workDir, on: "desktop" }); // gh pr merge
+  assert.deepEqual(seen[0][1], { on: "desktop" }); // git status there
+  assert.equal(seen.find(([c]) => c === "rm")[1], undefined); // this computer's run folder
+});
