@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { baseFor, mainCheckout, placeInfo, NOT_A_REPO_MS, prepareWorktree } from "./worktree.js";
@@ -14,6 +14,9 @@ const git = async (cwd, ...args) => {
 };
 const sh = (cwd, ...args) => execFileSync("git", ["-C", cwd, ...args], { encoding: "utf8" }).trim();
 const ident = ["-c", "user.name=t", "-c", "user.email=t@t"];
+// The same folder, whichever slashes name it: on Windows git prints C:/…, Node's path.join C:\…, and worktreePath C:/….
+const slashes = (p) => (process.platform === "win32" ? String(p).replace(/\\/g, "/") : p);
+const samePath = (actual, expected) => assert.equal(slashes(actual), slashes(expected));
 
 // A repo with a commit on `main`. With `remote`, it also has an origin that has one commit more.
 function scratch({ remote = false } = {}) {
@@ -40,16 +43,16 @@ function scratch({ remote = false } = {}) {
 
 test("mainCheckout is the repo itself", async () => {
   const { repo } = scratch();
-  assert.equal(await mainCheckout(git, repo), repo);
+  samePath(await mainCheckout(git, repo), repo);
   mkdirSync(join(repo, "sub"));
-  assert.equal(await mainCheckout(git, join(repo, "sub")), repo);
+  samePath(await mainCheckout(git, join(repo, "sub")), repo);
 });
 
 test("mainCheckout from inside a linked worktree is still the main checkout", async () => {
   const { repo, dir } = scratch();
   const linked = join(dir, "linked");
   sh(repo, "worktree", "add", "-q", "-b", "other", linked);
-  assert.equal(await mainCheckout(git, linked), repo);
+  samePath(await mainCheckout(git, linked), repo);
 });
 
 test("a new ticket branch is cut from origin's default branch, after a fetch", async () => {
@@ -92,7 +95,7 @@ test("a branch already checked out in a worktree gives that worktree's path", as
   const { repo, dir, home } = scratch();
   const elsewhere = join(dir, "somewhere else");
   sh(repo, "worktree", "add", "-q", "-b", "workflow/5-v", elsewhere);
-  assert.equal(await prepareWorktree(git, repo, "workflow/5-v", worktreePath(repo, "workflow/5-v", home)), elsewhere);
+  samePath(await prepareWorktree(git, repo, "workflow/5-v", worktreePath(repo, "workflow/5-v", home)), elsewhere);
 });
 
 test("a worktree whose folder was deleted by hand is made again, not reused", async () => {
@@ -110,7 +113,7 @@ test("a worktree that can't be made says why", async () => {
   const { repo, home } = scratch();
   const target = worktreePath(repo, "workflow/7-t", home);
   mkdirSync(target, { recursive: true });
-  execFileSync("touch", [join(target, "in the way")]);
+  writeFileSync(join(target, "in the way"), "");
   await assert.rejects(prepareWorktree(git, repo, "workflow/7-t", target), /Couldn't make a worktree at/);
 });
 
@@ -120,8 +123,8 @@ test("a ticket worktree lands in Herdr's worktree folder, named for the main che
   sh(repo, "worktree", "add", "-q", "-b", "side", linked);
   const main = await mainCheckout(git, linked);
   const target = worktreePath(main, "workflow/9-q", home);
-  assert.equal(target, join(home, ".herdr", "worktrees", "my app", "workflow-9-q"));
-  assert.equal(await prepareWorktree(git, main, "workflow/9-q", target), target);
+  samePath(target, join(home, ".herdr", "worktrees", "my app", "workflow-9-q"));
+  samePath(await prepareWorktree(git, main, "workflow/9-q", target), target);
   assert.ok(existsSync(join(target, ".git")));
   assert.equal(sh(target, "branch", "--show-current"), "workflow/9-q");
 });
@@ -130,7 +133,7 @@ test("a second Start for the same branch reuses its worktree under Herdr's folde
   const { repo, home } = scratch();
   const target = worktreePath(repo, "workflow/10-p", home);
   await prepareWorktree(git, repo, "workflow/10-p", target);
-  assert.equal(await prepareWorktree(git, repo, "workflow/10-p", target), target);
+  samePath(await prepareWorktree(git, repo, "workflow/10-p", target), target);
 });
 
 // ---- which place ----

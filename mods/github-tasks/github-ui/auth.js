@@ -2,19 +2,17 @@
 // can be read while it waits for the browser. Used by the panel and by the editor.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, readTextFile, settings } from "herdr";
+import { readTextFile, settings } from "herdr";
 import { signInFrom, preparedFrom, usesDeviceFlow, REFRESH, LOGIN, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, DEVICE_URL, DEVICE_TIMEOUT_MS, signInSeconds } from "../lib/index.js";
-import { shOn } from "../runs/index.js";
 import { S, note, action } from "../widgets/index.js";
-
-// The sign-in's scripts (lib/gh-sign-in.js) run as the machine runs sh: plain sh here and on Unix, Git Bash on Windows, which has
-// no sh on its PATH (shOn asks the machine what it runs, once).
-const sh = (on, script, args, opts) => shOn({ exec }, on, script, args, opts);
 
 export { REFRESH, LOGIN };
 
 export class Auth {
-  constructor() { this.state = null; } // a sign-in in progress, or the last one's failure
+  // sh(on, script, args, opts) -> Promise<{ code, stdout, stderr }>: runs the sign-in's scripts (lib/gh-sign-in.js) as the machine
+  // runs sh: plain sh here and on Unix, Git Bash on Windows, which has no sh on its PATH. The callers pass runs/ shOn with Herdr's
+  // exec (shOn asks the machine what it runs, once); auth.js sits below runs/, so it is handed in.
+  constructor(sh) { this.sh = sh; this.state = null; } // state: a sign-in in progress, or the last one's failure
 
   get busy() { return this.state?.phase === "starting" || Boolean(this.state?.dir); }
 
@@ -27,16 +25,16 @@ export class Auth {
     cx.spawn(async (cx) => {
       const failed = (e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) });
       const fail = (r) => { this.state = { phase: "failed", message: r.stderr.trim().split("\n")[0] || "Could not start gh." }; cx.notify(); };
-      const prepared = await sh(on, SIGN_IN_PREPARE, []).catch(failed);
+      const prepared = await this.sh(on, SIGN_IN_PREPARE, []).catch(failed);
       const { dir, kernel } = preparedFrom(prepared.stdout);
       if (this.state !== pending) return;
       if (prepared.code !== 0 || !dir) return fail(prepared);
       // On another machine or a non-Mac: the device flow, its exec held open until gh ends (ended, once it has).
       const device = usesDeviceFlow(on, kernel);
       let ended = null;
-      if (device) sh(on, SIGN_IN_DEVICE, [dir, ...args], { timeout: DEVICE_TIMEOUT_MS }).catch(failed).then((r) => { ended = r; });
+      if (device) this.sh(on, SIGN_IN_DEVICE, [dir, ...args], { timeout: DEVICE_TIMEOUT_MS }).catch(failed).then((r) => { ended = r; });
       else {
-        const started = await sh(on, SIGN_IN, [dir, ...args]).catch(failed);
+        const started = await this.sh(on, SIGN_IN, [dir, ...args]).catch(failed);
         if (this.state !== pending) return;
         if (started.code !== 0) return fail(started);
       }
@@ -52,13 +50,13 @@ export class Auth {
         const { code, url } = signInFrom(err);
         if (code !== this.state.code || url !== this.state.url) { this.state = { ...this.state, code, url }; cx.notify(); }
         if (!done && over) {
-          sh(on, SIGN_IN_CLEANUP, [dir]).catch(() => {});
+          this.sh(on, SIGN_IN_CLEANUP, [dir]).catch(() => {});
           const why = `${over.stderr}\n${err}`.trim().split("\n").filter(Boolean);
           this.state = { phase: "failed", message: why[why.length - 1] ?? "gh stopped before signing in." };
           return cx.notify();
         }
         if (!done) continue;
-        sh(on, SIGN_IN_CLEANUP, [dir]).catch(() => {});
+        this.sh(on, SIGN_IN_CLEANUP, [dir]).catch(() => {});
         if (done === "0") {
           this.state = null;
           onDone(cx);

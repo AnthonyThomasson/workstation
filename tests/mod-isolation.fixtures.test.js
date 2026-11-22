@@ -4,6 +4,7 @@
 // Name the file: a bare `node --test tests/` would also execute the fixtures' own *.test.js, which are only meant to be parsed.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { lstatSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkMods } from "./mod-isolation.test.js";
@@ -112,9 +113,20 @@ const EXPECTED = [
   "alpha/fake.test.js:13 file-path",
 ];
 
+// The two symlink fixtures are links in git. Where git can't make links (Windows without Developer Mode or admin rights), it checks
+// them out as small text files holding the target, which test nothing about links: there, their lines are left out on both sides.
+const LINKS = ["alpha/linked.js", "alpha/linkdir"];
+const isLink = (rel) => { try { return lstatSync(path.join(root, rel)).isSymbolicLink(); } catch { return false; } };
+const linksCheckedOut = LINKS.every(isLink);
+const judged = (line) => linksCheckedOut || !LINKS.includes(line.split(" ")[0].replace(/:\d+$/, ""));
+
 test("reports exactly the expected failures on the fixtures", () => {
-  const got = checkMods(root).map((f) => `${f.file}:${f.line} ${f.rule}`);
-  assert.deepEqual(got, [...EXPECTED].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).sort(byFileLine));
+  const got = checkMods(root).map((f) => `${f.file}:${f.line} ${f.rule}`).filter(judged);
+  assert.deepEqual(got, EXPECTED.filter(judged).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).sort(byFileLine));
+});
+
+test("the symlink fixtures are checked out as links (not on a Windows checkout without them)", { skip: !linksCheckedOut && process.platform === "win32" && "git checked the links out as files" }, () => {
+  assert.ok(linksCheckedOut, `${LINKS.join(" and ")} should be symlinks`);
 });
 
 test("reports nothing for the clean mods", () => {

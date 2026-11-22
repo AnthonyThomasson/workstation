@@ -10,7 +10,7 @@
 // folder), closes that space, removes the worktree and deletes the branch. Pure apart from the deps it is handed
 // (no Herdr imports), so node --test runs it; investigate.js is Herdr's side, investigation-page.js the page in the tab.
 import { shQuote, findTicketSpace, launchRun, runTabParts, row as terminalRow } from "../runs/index.js";
-import { slug, normalizeRefactor, validateRefactor, sessionFolder } from "../workflow/index.js";
+import { slug, normalizeRefactor, validateRefactor, sessionFolder, posixFolder } from "../workflow/index.js";
 import { normalizeSubAgent, FOLDER_LABEL, INVESTIGATION_LABEL, ROLE_LABEL } from "../lib/index.js";
 import { newTaskAgentArgv, refactorAgentArgv, sessionFiles, subAgentArgv } from "./investigation-spawn.js";
 
@@ -273,7 +273,7 @@ export async function endInvestigation(deps, entry) {
 // so the entry's folder is first resolved the same way (`rev-parse --show-toplevel`; as given when it is gone).
 // Resolves with { worktrees, branches, refused }.
 export async function prototypesOf(git, { repoRoot, workDir, branch }) {
-  const clean = (p) => String(p ?? "").replace(/\/+$/, "");
+  const clean = posixFolder; // no trailing slash, and on Windows one slash style: git says C:/…, a folder may come as C:\…
   const out = { worktrees: [], branches: [], refused: null };
   if (typeof branch !== "string" || !branch.startsWith("investigate/")) return { ...out, refused: `the branch ${branch || "(none)"} isn't an investigation's (investigate/...)` };
   const branchPrefix = `${branch}--`;
@@ -309,7 +309,7 @@ export async function prototypesOf(git, { repoRoot, workDir, branch }) {
 // investigation's own: the branch is investigate/..., and the folder is neither the main checkout (the entry's repoRoot, or the
 // first entry of `git worktree list`) nor empty. Resolves with why not, or null.
 export async function unsafeToRemove(git, { repoRoot, workDir, branch }) {
-  const clean = (p) => String(p ?? "").replace(/\/+$/, "");
+  const clean = posixFolder; // no trailing slash, and on Windows one slash style: git says C:/…, a folder may come as C:\…
   if (typeof branch !== "string" || !branch.startsWith("investigate/")) return `the branch ${branch || "(none)"} isn't an investigation's (investigate/...)`;
   if (!clean(workDir) || !clean(repoRoot)) return "the entry has no folder to remove";
   if (clean(workDir) === clean(repoRoot)) return `${workDir} is the repo's main checkout`;

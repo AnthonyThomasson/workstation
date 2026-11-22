@@ -4,6 +4,8 @@
 // A machine is described as a host: { on, os: "unix" | "windows", home }, home in forward slashes (C:/Users/me on Windows).
 // Windows has no sh: anything that needs a shell there goes through Git Bash, and git itself is called as plain git.
 
+import { machinePath } from "../lib/index.js";
+
 export const GIT_BASH = "C:/Program Files/Git/bin/bash.exe";
 
 // What `uname -s` says on Git Bash, MSYS2 or Cygwin.
@@ -14,10 +16,9 @@ export const shArgv = (os, script, args = []) => (os === "windows"
   ? [GIT_BASH, ["-lc", script, "github-tasks", ...args]]
   : ["sh", ["-c", script, "github-tasks", ...args]]);
 
-// A sh snippet that prints a path as the machine itself names it, so Herdr's file calls (readTextFile, writeTextFile with on)
-// and the machine's programs resolve it alike: cygpath -m on Git Bash, MSYS2 or Cygwin (/tmp/x is C:/Users/…/Temp/x there),
-// the path as it is elsewhere. ref: a quoted sh expression, such as "$HOME" or "$d".
-export const machinePath = (ref) => `if command -v cygpath >/dev/null 2>&1; then cygpath -m ${ref}; else printf '%s\\n' ${ref}; fi`;
+// machinePath (lib/machine-path.js): the sh snippet that prints a path as the machine itself names it (cygpath -m on Git Bash).
+// Kept in lib/ so the sign-in can use it too; exported from here as well, for runs/'s callers.
+export { machinePath };
 
 const UNIX_PROBE = 'uname -s; printf "%s\\n" "$HOME"';
 const WINDOWS_PROBE = `uname -s; ${machinePath('"$HOME"')}`;

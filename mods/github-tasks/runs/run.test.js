@@ -4,11 +4,26 @@ import { ASK_WITH_TOOL } from "../lib/index.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { soloPrompt, agentArgv, branchName, freshTicket, investigatorPrompt, jobRoom, mergeScript, nameRoom, orchestratorPrompt, readOnlyArgv, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt } from "./run.js";
 import { loadTask } from "../github/index.js";
 import { worktreePath } from "../workflow/index.js";
 import { GIT_BASH } from "./remote.js";
+
+// Scripts run for real. Here a #! file runs by its #! line and sh is on the PATH; Windows has neither, so there both go through Git Bash.
+// A script gets only PATH (bin first) and `extra`; on Windows also the few variables its programs need to start at all. spawnSync on
+// Windows leaves stdout and stderr unset when nothing ran: they are "" here, and stderr says why.
+const WIN = process.platform === "win32";
+const SH = WIN ? GIT_BASH : "sh";
+const WINDOWS_ENV = ["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA"];
+const envWith = (bin, extra = {}) => ({
+  ...(WIN ? Object.fromEntries(Object.entries(process.env).filter(([k]) => WINDOWS_ENV.includes(k.toUpperCase()))) : {}),
+  PATH: `${bin}${delimiter}${process.env.PATH}`, ...extra,
+});
+const settled = (r) => ({ ...r, stdout: r.stdout ?? "", stderr: r.stderr ?? r.error?.message ?? "" });
+const runFile = (file, args, env) => settled(WIN ? spawnSync(GIT_BASH, [file, ...args], { env, encoding: "utf8" }) : spawnSync(file, args, { env, encoding: "utf8" }));
+const runText = (script, args, env) => settled(spawnSync(SH, ["-c", script, ...args], { env, encoding: "utf8" }));
+const ident = ["-c", "user.name=t", "-c", "user.email=t@t"];
 
 const ticket = { number: 12, title: "Fix the login!", body: "It breaks.", labels: ["bug"], status: "Todo", url: "https://github.test/12" };
 const role = (extra = {}) => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium", ...extra });
@@ -358,7 +373,7 @@ test("a reviewer is only told about git commands its allowlist permits, and how 
 });
 
 test("shQuote survives quotes", () => {
-  const out = execFileSync("sh", ["-c", `printf %s ${shQuote(`it's "x" $HOME`)}`]).toString();
+  const out = execFileSync(SH, ["-c", `printf %s ${shQuote(`it's "x" $HOME`)}`]).toString();
   assert.equal(out, `it's "x" $HOME`);
 });
 
@@ -406,7 +421,7 @@ function runSpawn(args, { failSend = false, setup = () => {}, workDir, host = nu
   const script = join(w.dir, "spawn");
   writeFileSync(script, spawnScript({ id: "12-abc", runDir: "/runs/it's", workDir: workDir?.(w) ?? w.ticketDir, branch: w.branch, argv: { worker: ["claude", "--model", "a b"], reviewer: ["codex"], investigator: ["claude", "--effort", "low"] }, host }));
   chmodSync(script, 0o755);
-  const r = spawnSync(script, args, { env: { PATH: `${w.bin}:${process.env.PATH}`, HC_TERMINAL_ID: "t7" }, encoding: "utf8" });
+  const r = runFile(script, args, envWith(w.bin, { HC_TERMINAL_ID: "t7" }));
   let calls = [];
   try { calls = readFileSync(w.log, "utf8").trim().split("\n"); } catch { /* it never called hc */ }
   return { ...r, calls, ...w, jobDir: jobAt(w.ticketDir, w.branch, "auth").path };
@@ -526,7 +541,7 @@ test("spawn investigator takes exactly a name and a brief, and names its usage",
 });
 
 test("spawn investigator won't work in a ticket worktree that is gone", () => {
-  const r = runSpawn(["investigator", "x", "y"], { setup: (w) => execFileSync("rm", ["-rf", w.ticketDir]) });
+  const r = runSpawn(["investigator", "x", "y"], { setup: (w) => rmSync(w.ticketDir, { recursive: true, force: true }) });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /worktree .* is gone/);
   assert.deepEqual(r.calls, []);
@@ -541,7 +556,7 @@ test("spawn refuses what it can't start", () => {
 });
 
 test("spawn won't work in a ticket worktree that is gone", () => {
-  const r = runSpawn(["worker", "auth", "y"], { setup: (w) => execFileSync("rm", ["-rf", w.ticketDir]) });
+  const r = runSpawn(["worker", "auth", "y"], { setup: (w) => rmSync(w.ticketDir, { recursive: true, force: true }) });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /worktree .* is gone/);
 });
@@ -580,7 +595,7 @@ test("spawn cleans a job's name into the folder and branch: runs collapse, ends 
 test("spawn builds a job's folder from the ticket worktree it was given, even when that isn't the usual place", () => {
   const r = runSpawn(["worker", "auth", "y"], {
     workDir: (w) => join(w.dir, "somewhere else"),
-    setup: (w) => { git(w.ticketDir, "worktree", "move", w.ticketDir, join(w.dir, "somewhere else")); },
+    setup: (w) => { git(w.repo, "worktree", "move", w.ticketDir, join(w.dir, "somewhere else")); }, // from outside it: Windows can't move a folder git is in
   });
   assert.equal(r.status, 0, r.stderr);
   const at = jobAt(join(r.dir, "somewhere else"), r.branch, "auth");
@@ -640,8 +655,8 @@ if (argv[0] === "kill" && ${failKill}) process.exit(1);
   const script = join(w.dir, "merge");
   writeFileSync(script, mergeScript({ id: "12-abc", workDir: w.ticketDir, branch: w.branch, number, runDir: "/runs/12-abc", host }));
   chmodSync(script, 0o755);
-  const env = { PATH: `${w.bin}:${process.env.PATH}`, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
-  const r = spawnSync(script, args, { env, encoding: "utf8" });
+  const env = envWith(w.bin, { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" });
+  const r = runFile(script, args, env);
   let calls = [];
   try { calls = readFileSync(w.log, "utf8").trim().split("\n"); } catch { /* it never called hc */ }
   return { ...r, calls, ...w, job: jobs };
@@ -736,9 +751,9 @@ test("merge: a second run after the worker settled the conflict goes through", (
       const j = w.addJob();
       writeFileSync(join(w.ticketDir, "shared.txt"), "ticket\n"); git(w.ticketDir, "add", "shared.txt"); w.commit(w.ticketDir, "ticket side");
       writeFileSync(join(j.path, "shared.txt"), "ticket\njob\n"); git(j.path, "add", "shared.txt"); w.commit(j.path, "job side");
-      spawnSync("git", ["-C", j.path, "rebase", w.branch], { encoding: "utf8" }); // stops on the conflict, as the worker would see
+      spawnSync("git", ["-C", j.path, ...ident, "rebase", w.branch], { encoding: "utf8" }); // stops on the conflict, as the worker would see
       writeFileSync(join(j.path, "shared.txt"), "ticket'+BS+'njob'+BS+'n"); git(j.path, "add", "shared.txt");
-      execFileSync("git", ["-C", j.path, "rebase", "--continue"], { env: { ...process.env, GIT_EDITOR: "true" }, stdio: "ignore" });
+      execFileSync("git", ["-C", j.path, ...ident, "rebase", "--continue"], { env: { ...process.env, GIT_EDITOR: "true" }, stdio: "ignore" });
     },
   });
   assert.equal(r.status, 0, r.stderr);
@@ -778,7 +793,7 @@ test("merge: a job worktree in the middle of a rebase is left to its worker", ()
       const j = w.addJob();
       writeFileSync(join(w.ticketDir, "s.txt"), "t\n"); git(w.ticketDir, "add", "s.txt"); w.commit(w.ticketDir, "t");
       writeFileSync(join(j.path, "s.txt"), "j\n"); git(j.path, "add", "s.txt"); w.commit(j.path, "j");
-      spawnSync("git", ["-C", j.path, "rebase", w.branch], { encoding: "utf8" }); // stops on the conflict
+      spawnSync("git", ["-C", j.path, ...ident, "rebase", w.branch], { encoding: "utf8" }); // stops on the conflict
     },
   });
   assert.equal(r.status, 1);
@@ -820,7 +835,7 @@ test("merge: when a terminal can't be ended, the merge stays done and the job is
   assert.ok(git(r.ticketDir, "worktree", "list").includes("--auth"));
   // a second run: nothing new to merge, and the cleanup is done
   writeFileSync(join(r.bin, "hc"), "#!/bin/sh\necho '{\"terminals\":[]}'\n");
-  const again = spawnSync(join(r.dir, "merge"), ["auth"], { env: { PATH: `${r.bin}:${process.env.PATH}` }, encoding: "utf8" });
+  const again = runFile(join(r.dir, "merge"), ["auth"], envWith(r.bin));
   assert.equal(again.status, 0, again.stderr);
   assert.match(again.stdout, /had nothing new/);
   assert.ok(!git(r.ticketDir, "worktree", "list").includes("--auth"));
@@ -834,7 +849,7 @@ test("merge cleans a job's name as spawn does, whatever is in the arguments", ()
   const folder = spawned.calls[0].match(/\[--cwd\]\[([^\]]*)\]/)[1];
   const script = mergeScript({ id: "12-abc", workDir: spawned.ticketDir, branch: spawned.branch });
   writeFileSync(join(spawned.bin, "hc"), "#!/bin/sh\necho '{\"terminals\":[]}'\n");
-  const m = spawnSync("sh", ["-c", script, "merge", long], { env: { PATH: `${spawned.bin}:${process.env.PATH}` }, encoding: "utf8" });
+  const m = runText(script, ["merge", long], envWith(spawned.bin));
   assert.equal(m.status, 0, m.stderr); // found the same worktree and branch spawn made
   assert.ok(!existsSync(folder));
 });
@@ -843,7 +858,7 @@ test("the merge script quotes whatever is in the paths and ids", () => {
   const text = mergeScript({ id: "12-abc", workDir: "/src/it's here", branch: "workflow/12-fix", number: 12 });
   assert.ok(text.includes(`ticket_dir=${shQuote("/src/it's here")}`));
   assert.ok(text.startsWith("#!/bin/sh\n"));
-  const syntax = spawnSync("sh", ["-n"], { input: text, encoding: "utf8" });
+  const syntax = settled(spawnSync(SH, ["-n"], { input: text, encoding: "utf8" }));
   assert.equal(syntax.status, 0, syntax.stderr);
 });
 
@@ -861,7 +876,7 @@ test("merge: with another job worktree still open, it does not say the final rev
 
 test("merge: a failing worktree check does not fail a merge that is done", () => {
   const text = mergeScript({ id: "12-abc", workDir: "/src/app", branch: "workflow/12-fix", runDir: "/runs/12-abc" });
-  assert.match(text, /if listed=\$\(git -C "\$ticket_dir" worktree list --porcelain 2>\/dev\/null\); then/);
+  assert.match(text, /if listed=\$\(rgit -C "\$ticket_dir" worktree list --porcelain 2>\/dev\/null\); then/);
   assert.ok(text.trimEnd().endsWith("exit 0"));
 });
 

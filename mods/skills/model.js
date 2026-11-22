@@ -12,10 +12,14 @@ export const SCOPES = [["all", "All"], ["project", "Project"], ["global", "Globa
 // detached, and the starter waits for it (up to 5 s) so it is not ended before then. Herdr also
 // hangs up programs that carry the exec's HC_SCOPE once the exec returns (git and gh, which
 // skillshare runs, died with exit 129), so the job drops it.
-const DETACH = 'unset HC_SCOPE; if command -v setsid >/dev/null 2>&1; then bg() { exec setsid "$@"; }; else set -m; bg() { exec "$@"; }; fi';
+// Git Bash and Cygwin have no setsid, and job control stays off there: a job in a background process group that starts a Windows
+// program (skillshare.exe, git.exe) can be stopped by the console it shares, and then never writes its exit code.
+const DETACH = 'unset HC_SCOPE; if command -v setsid >/dev/null 2>&1; then bg() { exec setsid "$@"; }; else case "${OSTYPE:-}" in msys*|cygwin*) ;; *) set -m ;; esac; bg() { exec "$@"; }; fi';
 // Named so SWEEP can tell the panel's job folders from anything else in the temp folder.
 const TEMP = 'd=$(mktemp -d "${TMPDIR:-/tmp}/skillshare-panel.XXXXXX")';
-const READY = 'i=0; while [ ! -s "$d/pid" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done; printf %s "$d"';
+// Then prints the folder as the machine itself names it, so readText finds it: cygpath -m on Git Bash, MSYS2 or Cygwin (/tmp/x is
+// C:/Users/…/Temp/x there, which Windows programs read; /c/Users/… they can't), the path as it is elsewhere.
+const READY = 'i=0; while [ ! -s "$d/pid" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done; if command -v cygpath >/dev/null 2>&1; then cygpath -m "$d"; else printf %s "$d"; fi';
 // sh -c START <name> <dir> <args...>: runs skillshare <args> in <dir>; prints the temp folder.
 export const START = `${DETACH}; ${TEMP}; dir=$1; shift
 bg sh -c 'echo $$ >"$2/pid"; cd "$1" 2>/dev/null || cd; d=$2; shift 2; skillshare "$@" >"$d/out" 2>"$d/err" </dev/null; echo $? >"$d/code"' job "$dir" "$d" "$@" >/dev/null 2>&1 </dev/null &

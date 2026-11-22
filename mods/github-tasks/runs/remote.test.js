@@ -193,17 +193,19 @@ function printed(ref, { cygpath }) {
   const dir = mkdtempSync(join(tmpdir(), "machine-path-"));
   const bin = join(dir, "bin");
   mkdirSync(bin);
-  if (cygpath) { writeFileSync(join(bin, "cygpath"), '#!/bin/sh\n[ "$1" = -m ] && printf "C:/msys64%s\n" "$2"\n'); chmodSync(join(bin, "cygpath"), 0o755); }
+  if (cygpath) { writeFileSync(join(bin, "cygpath"), '#!/bin/sh\n[ "$1" = -m ] && printf "C:/fake%s\n" "$2"\n'); chmodSync(join(bin, "cygpath"), 0o755); }
   const env = { ...process.env, D: "/tmp/tmp.x" };
   const pathKey = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
   env[pathKey] = cygpath ? `${bin}${delimiter}${env[pathKey]}` : `${bin}${delimiter}/usr/bin${delimiter}/bin`;
-  return spawnSync("sh", ["-c", machinePath(ref)], { env, encoding: "utf8" });
+  // On Windows the fake is a shell function too: Git Bash puts its own /usr/bin (and cygpath.exe) ahead of the PATH it is given.
+  const fake = cygpath && process.platform === "win32" ? 'cygpath() { [ "$1" = -m ] && printf "C:/fake%s\\n" "$2"; }; ' : "";
+  return spawnSync("sh", ["-c", `${fake}${machinePath(ref)}`], { env, encoding: "utf8" });
 }
 
 test("machinePath prints a Git Bash path as Windows names it (cygpath -m), so Herdr's file calls find it there", () => {
   const r = printed('"$D"', { cygpath: true });
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(r.stdout, "C:/msys64/tmp/tmp.x\n");
+  assert.equal(r.stdout, "C:/fake/tmp/tmp.x\n"); // the fake's answer: it was asked, with -m and the path
 });
 
 test("machinePath prints a path as it is where there is no cygpath (any Unix)", { skip: process.platform === "win32" && "Git Bash has its own cygpath on the PATH" }, () => {

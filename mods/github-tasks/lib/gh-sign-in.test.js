@@ -46,8 +46,11 @@ function runScript(script, args, { cygpath = false, fullPath = cygpath } = {}) {
   const pathKey = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
   // fullPath: false keeps Git Bash's own cygpath from being found: only the fake bin and the basics
   env[pathKey] = fullPath ? `${bin}${delimiter}${env[pathKey]}` : `${bin}${delimiter}/usr/bin${delimiter}/bin`;
-  return spawnSync("sh", ["-c", script, "github-tasks", ...args], { env, encoding: "utf8" });
+  return spawnSync("sh", ["-c", `${cygpath ? CYGPATH_FIRST : ""}${script}`, "github-tasks", ...args], { env, encoding: "utf8" });
 }
+// On Windows the fake cygpath is a shell function as well: Git Bash puts its own /usr/bin (and its cygpath.exe) ahead of the
+// PATH it is given, so a stub on PATH loses there, while a function wins over any PATH.
+const CYGPATH_FIRST = process.platform === "win32" ? 'cygpath() { [ "$1" = -m ] && printf "C:/fake%s\\n" "$2"; }; ' : "";
 const waitFor = (path) => { for (let i = 0; i < 200 && !existsSync(path); i++) spawnSync("sleep", ["0.05"]); };
 const noGitBash = { skip: process.platform === "win32" && "Git Bash has its own cygpath on the PATH" };
 

@@ -1,5 +1,5 @@
 // What a gh failure means, and how the browser sign-in starts. No Herdr in it.
-import { machinePath } from "../runs/remote.js";
+import { machinePath } from "./machine-path.js";
 
 // The gh commands that sign in with the permission Tasks needs. "project" lets Tasks read Projects and edit them;
 // it includes read:project. auth.js runs them; the doctor names them in its prompt.
