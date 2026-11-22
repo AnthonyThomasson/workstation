@@ -333,12 +333,37 @@ test("cleanup runs after a throw or a failure at every step, and the failing ste
   }
 });
 
-test("a run call that throws leaves no code file, so it reads as a command that didn't finish", async () => {
-  const w = world({ run: () => { throw new Error("spawn failed"); }, read: () => ({ code: 0, stdout: "code=missing\n---\n", stderr: "" }) });
-  const r = await run(w);
-  assert.equal(r.result.timedOut, true);
-  assert.equal(r.code, 1);
-  assert.ok(cleanedUp(w));
+test("a run that ended with no exit status and no report of Herdr's time limit is a lost run: exit 5 with the reason, and cleanup", async () => {
+  for (const ran of [() => { throw new Error("spawn failed"); }, () => ({ code: 1, stdout: "", stderr: "[hc] machine disconnected" }), () => ({ code: 0, stdout: "", stderr: "" })]) {
+    const w = world({ run: ran, read: () => ({ code: 0, stdout: "code=missing\n---\npartial\n", stderr: "" }) });
+    const r = await run(w);
+    assert.equal(r.code, EXIT.NOT_READY);
+    assert.equal(r.result, undefined);
+    assert.match(r.message, /ended without an exit status/);
+    assert.ok(cleanedUp(w));
+  }
+});
+
+test("a read-back that fails after a timeout is still a timeout: exit 1, timedOut, and cleanup", async () => {
+  const cut = () => ({ code: 124, stdout: "", stderr: "[hc] timed out after 600000 ms: ended" });
+  for (const read of [() => ({ code: 1, stdout: "", stderr: "no route" }), () => { throw new Error("spawn failed"); }, () => ({ code: 0, stdout: "garbage", stderr: "" })]) {
+    const w = world({ run: cut, read });
+    const r = await run(w);
+    assert.equal(r.code, 1);
+    assert.equal(r.result.timedOut, true);
+    assert.equal(r.result.exitCode, TIMED_OUT_CODE);
+    assert.equal(r.result.log, "");
+    assert.match(r.notes.join("\n"), /the run had timed out/);
+    assert.ok(cleanedUp(w));
+  }
+});
+
+test("a --commit that starts with a dash is never handed to git as an option", async () => {
+  const w = world();
+  const r = await run(w, { commit: "--output=/tmp/x" });
+  assert.equal(r.code, EXIT.USAGE);
+  assert.match(r.message, /Not a commit/);
+  assert.equal(w.calls.length, 0);
 });
 
 test("a run that fails before any call to the device has nothing to tidy there", async () => {
@@ -423,6 +448,8 @@ test("a lock older than the cap plus five minutes is taken over, and the note sa
 
 test("the prepare script: mkdir lock, id and start inside, sweep only what is older than a day and never the lock", () => {
   assert.match(PREPARE, /mkdir "\$lock"/);
+  assert.match(PREPARE, /mv "\$lock" "\$lock\.old\$id"[\s\S]*mkdir "\$lock"/, "a stale lock is moved aside, then made anew");
+  assert.doesNotMatch(PREPARE, /rm -rf "\$lock"/);
   assert.match(PREPARE, /printf "%s %s\\n" "\$id" "\$now" > "\$lock\/info"/);
   assert.match(PREPARE, /find "\$d" -mindepth 1 -maxdepth 1 -mmin \+"\$sweep" ! -name \.lock/);
   assert.match(PREPARE, /\*\[!a-z0-9\.\]\*\) continue/, "only names a run makes");
@@ -583,7 +610,7 @@ test("end to end: a second run while one holds the lock exits 6 and leaves the l
   const took = await real(f);
   assert.equal(took.code, 0, took.message);
   assert.match(took.notes.join("\n"), /Took over a stale lock from run rold/);
-  assert.deepEqual(left(f), []);
+  assert.deepEqual(left(f), [], "the old lock is gone too");
 
   mkdirSync(lock, { recursive: true });
   writeFileSync(join(lock, "info"), "");

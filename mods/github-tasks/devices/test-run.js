@@ -59,8 +59,9 @@ export const PREPARE = [
   '    if [ -n "$(find "$lock" -maxdepth 0 -mmin +$((stale / 60)) 2>/dev/null)" ]; then age=$((stale + 1)); else age=0; fi',
   '  fi',
   '  if [ "$age" -gt "$stale" ]; then',
-  '    rm -rf "$lock"',
+  '    mv "$lock" "$lock.old$id" 2>/dev/null',
   '    mkdir "$lock" 2>/dev/null || { echo lock=busy; echo holder="$holder"; echo since="$since"; exit 0; }',
+  '    rm -rf "$lock.old$id"',
   '    echo took_over="$holder"',
   '  else',
   '    echo lock=busy; echo holder="$holder"; echo since="$since"; exit 0',
@@ -152,6 +153,9 @@ export function readiness({ repo, binding, cheap, command }) {
   return null;
 }
 
+// Whether the run step's exec says Herdr's time limit ended it: hc exec exits 124 and prints "[hc] timed out".
+export const ranTimedOut = (r) => r?.code === TIMED_OUT_CODE || /timed out|timeout/i.test(String(r?.stderr ?? ""));
+
 class Step extends Error {
   constructor(code, message) { super(message); this.exitCode = code; }
 }
@@ -190,6 +194,7 @@ export async function runOnDevice(deps, input) {
   try {
     // 1. resolve, here: the commit (and whether the tree is dirty) and what the device may already have.
     const rev = input.commit || "HEAD";
+    if (rev.startsWith("-")) throw new Step(EXIT.USAGE, `Not a commit: ${rev}.`); // never an option to git
     const found = await here("rev-parse", "--verify", "--quiet", `${rev}^{commit}`).catch((e) => ({ code: 1, stderr: String(e?.message ?? e) }));
     const commit = String(found.stdout ?? "").trim();
     if (found.code !== 0 || !/^[0-9a-f]{40,64}$/.test(commit)) throw new Step(EXIT.USAGE, `Can't find commit ${rev} in ${cwd}.`);
@@ -234,10 +239,19 @@ export async function runOnDevice(deps, input) {
     const ran = await sh(runScript(command), [folder, log, codeFile, ...command], { timeout: RUN_TIMEOUT_MS }).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
     const durationMs = Math.max(0, now() - t0);
 
-    // 7. read back.
-    const read = await sh(READ_BACK, [codeFile, log, String(LOG_TAIL_BYTES)]);
-    if (read.code !== 0) throw new Step(EXIT.NOT_READY, `Couldn't read the run back from ${machine}: ${said(read)}`);
-    const back = parseReadBack(read.stdout);
+    // 7. read back. Only the run step's own report of Herdr's time limit makes a timeout; no exit status otherwise is a lost run.
+    const cut = ranTimedOut(ran);
+    let back;
+    try {
+      const read = await sh(READ_BACK, [codeFile, log, String(LOG_TAIL_BYTES)]);
+      if (read.code !== 0) throw new Error(`Couldn't read the run back from ${machine}: ${said(read)}`);
+      back = parseReadBack(read.stdout);
+    } catch (e) {
+      if (!cut) throw new Step(EXIT.NOT_READY, String(e?.message ?? e));
+      notes.push(`${String(e?.message ?? e)} (the run had timed out).`); // still a timeout: exit 1, with no log
+      back = { code: null, log: "" };
+    }
+    if (back.code === null && !cut) throw new Step(EXIT.NOT_READY, `The run on ${machine} ended without an exit status: ${said(ran) || "no answer from the device"}.`);
     const timedOut = back.code === null;
     if (timedOut) notes.push(`The command didn't finish in ${RUN_TIMEOUT_MS / 1000}s (${said(ran) || "Herdr ended it"}).`);
     const result = { device: machine, commit, exitCode: timedOut ? TIMED_OUT_CODE : back.code, log: back.log, durationMs, timedOut };
