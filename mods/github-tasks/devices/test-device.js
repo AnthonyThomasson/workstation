@@ -123,10 +123,11 @@ export function requiresFromConfig(configText) {
 }
 
 // The ONE script a deep check runs on the device (through shOn: sh on Unix, Git Bash on Windows, one spawn). Its arguments:
-// $1 the repo folder ("" when none is set), then the commands to look for. It prints `dc.key=value` lines and ends with dc.done=1,
+// $1 the repo folder ("-" when none is set: an empty argument is not relied on), then the commands to look for. It prints `dc.key=value` lines and ends with dc.done=1,
 // so output that stopped early is told from one that finished. It writes nothing. The mod's installed copy is compared with the
 // clone sync.json names, leaving out what mods/sync/sync.sh never copies.
 export const DEEP_SCRIPT = String.raw`root=$1; [ $# -gt 0 ] && shift
+[ "$root" = "-" ] && root=
 printf 'dc.os=%s\n' "$(uname -s 2>/dev/null)"
 if command -v git >/dev/null 2>&1; then printf 'dc.git=1\n'; else printf 'dc.git=0\n'; fi
 if command -v gh >/dev/null 2>&1; then
@@ -174,8 +175,8 @@ fi
 printf 'dc.done=1\n'
 `;
 
-// The arguments for DEEP_SCRIPT: the repo folder ("" when none), then each required command.
-export const deepArgs = ({ repoRoot, requires }) => [repoRoot ?? "", ...(requires ?? [])];
+// The arguments for DEEP_SCRIPT: the repo folder ("-" when none: the script reads that as unset), then each required command.
+export const deepArgs = ({ repoRoot, requires }) => [repoRoot || "-", ...(requires ?? [])];
 
 // What the script printed -> { done, os, git, ghCode, ghOut, repo, main, origin, diskKb, missing, mods, modsCount, modsFiles }.
 // CRLF (Git Bash through Windows) is read like LF, lines that aren't dc.* are ignored, and done is false unless dc.done=1 came last.
@@ -233,7 +234,7 @@ export function deepChecks({ machine, repo, repoRoot, requires = [] }, run) {
   const set = `Set "Repo folder on ${machine}" to where ${repo ?? "the repo"} is cloned (its main checkout).`;
   if (p.repo === "unset" || !folder) add("repo-folder", "red", `No repo folder is set for ${repo ?? "this repo"} on \`${machine}\`.`, set);
   else if (p.repo === "missing") add("repo-folder", "red", `${folder} doesn't exist on \`${machine}\`.`, `Clone ${repo ?? "the repo"} there, or ${set.charAt(0).toLowerCase()}${set.slice(1)}`);
-  else if (p.main === false) add("repo-main", "red", `${folder} on \`${machine}\` is a linked worktree, not the repo's main checkout.`, `Point "Repo folder on ${machine}" at the main checkout (the folder with the .git directory).`);
+  else if (p.main === false) add("repo-main", "red", `${folder} on \`${machine}\` isn't the main checkout (a worktree, a subfolder or not a repo).`, `Point "Repo folder on ${machine}" at the repo's main checkout (the folder with the .git directory).`);
   else if (repo && p.git !== false && repoSlug(p.origin)?.toLowerCase() !== repo.toLowerCase()) {
     add("repo-origin", "red", p.origin ? `${folder}'s origin on \`${machine}\` is ${p.origin}, not ${repo}.` : `${folder} on \`${machine}\` has no origin remote.`, `Point "Repo folder on ${machine}" at a clone of ${repo}.`);
   } else add("repo", "green", `${folder} is the main checkout of ${repo ?? "the repo"}.`);
@@ -243,13 +244,16 @@ export function deepChecks({ machine, repo, repoRoot, requires = [] }, run) {
   else add("git", "green", "git is installed.");
 
   // yellow: gh, through the doctor's own reading of `gh auth status`
-  const issues = authIssues(parseAuthStatus({ code: p.ghCode ?? 1, stdout: p.ghOut.join("\n"), stderr: "" }));
+  const auth = parseAuthStatus({ code: p.ghCode ?? 1, stdout: p.ghOut.join("\n"), stderr: "" });
+  const issues = authIssues(auth);
   if (issues.length) {
     for (const issue of issues) {
       const id = issue.kind === "gh-scope" ? "gh-scope" : issue.kind === "gh-auth" && p.ghCode === 127 ? "gh" : issue.kind;
       const fix = id === "gh" ? `Install the GitHub CLI (gh) on ${machine}.` : id === "gh-scope" ? `Sign in on ${machine} again to add the project scope.` : `Sign in to GitHub on ${machine}.`;
       add(id, "yellow", `On \`${machine}\`: ${issue.message}`, fix);
     }
+  } else if (auth.signedIn === null) {
+    add("gh-auth", "yellow", `On \`${machine}\`: couldn't tell whether gh is signed in.`, `Run gh auth status on ${machine}, and sign in if it says so.`);
   } else add("gh", "green", "gh is signed in with the project scope.");
 
   // yellow: disk

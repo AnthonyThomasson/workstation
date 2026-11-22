@@ -9,8 +9,14 @@ import { DEEP_SCRIPT, deepArgs, deepChecks, healthOf, probeFailure } from "./tes
 export const DEEP_TIMEOUT_MS = 300000;
 
 // -> { host: { on, os, home } | null, health: { level, checks, at } }. Never rejects: a probe or exec that fails is a red check.
-//   input: { machine, repo, repoRoot, requires, now }
-export async function runDeepCheck(deps, { machine, repo, repoRoot = null, requires = [], now = Date.now() }) {
+//   input: { machine, repo, repoRoot, requires, now, host }. host: the binding's cached { os, home } (or a full host), so a check after
+//   a reload doesn't probe again; bind has none and probes. The probe's answer is kept in deps.seen as hostOf does.
+export async function runDeepCheck(deps, { machine, repo, repoRoot = null, requires = [], now = Date.now(), host: cached = null }) {
+  if (cached?.os && cached?.home) {
+    const seen = deps.seen ?? new Map();
+    if (!seen.has(machine)) seen.set(machine, { on: machine, os: cached.os, home: cached.home });
+    deps = { ...deps, seen };
+  }
   let host;
   try {
     host = await hostOf(deps, machine);

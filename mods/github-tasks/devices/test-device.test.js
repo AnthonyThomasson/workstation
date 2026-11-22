@@ -233,7 +233,7 @@ test("red: no repo folder, a path that doesn't exist, a worktree, an origin that
 
   const worktree = by(deepChecks(input, run(withLine(GOOD, ["dc.main=1", "dc.main=0"]))));
   assert.equal(worktree["repo-main"].level, "red");
-  assert.match(worktree["repo-main"].message, /linked worktree/);
+  assert.match(worktree["repo-main"].message, /isn't the main checkout \(a worktree, a subfolder or not a repo\)/);
 
   for (const origin of ["https://github.com/someone/else.git", "", "/srv/git/workstation.git"]) {
     const wrong = by(deepChecks(input, run(withLine(GOOD, [`dc.origin=https://github.com/${REPO}.git`, `dc.origin=${origin}`]))));
@@ -273,6 +273,14 @@ test("yellow: gh missing, not signed in, or without the project scope, in the do
   assert.match(scope["gh-scope"].message, /missing the "project" scope/);
   assert.match(scope["gh-scope"].fix, /Sign in on desktop/);
   for (const checks of [missing, signedOut, scope]) assert.equal(rollup(Object.values(checks)), "yellow");
+});
+
+test("yellow, not green, when gh's state can't be told (a network failure, say)", () => {
+  const unknown = withLine(GOOD, [/dc\.gh_code=0\n(dc\.gh_out=.*\n)+/, "dc.gh_code=1\ndc.gh_out=error connecting to api.github.com\n"]);
+  const checks = by(deepChecks(input, run(unknown)));
+  assert.equal(checks["gh-auth"].level, "yellow");
+  assert.match(checks["gh-auth"].message, /couldn't tell whether gh is signed in/);
+  assert.equal(checks.gh, undefined);
 });
 
 test("the real desktop output with no repo folder: red for the folder, yellow for gh's scope, green elsewhere", () => {
@@ -341,7 +349,8 @@ test("the deep script runs once, writes nothing and never pushes", () => {
   assert.doesNotMatch(DEEP_SCRIPT, /\bpush\b|>\s*[^&\s/]|\brm\b|\bmkdir\b|\btee\b/);
   assert.match(DEEP_SCRIPT, /printf 'dc\.done=1\\n'\n$/);
   assert.deepEqual(deepArgs({ repoRoot: "C:/r", requires: ["godot"] }), ["C:/r", "godot"]);
-  assert.deepEqual(deepArgs({ repoRoot: null }), [""]);
+  assert.deepEqual(deepArgs({ repoRoot: null }), ["-"], "an unset folder is sent as a placeholder, not an empty argument");
+  assert.deepEqual(deepArgs({ repoRoot: "" }), ["-"]);
 });
 
 test("the deep script excludes what sync.sh never copies", () => {
@@ -361,7 +370,7 @@ test("the deep script runs under sh and prints what the parser reads (here, on t
   assert.equal(p.repo, "found");
   assert.deepEqual(p.missing, ["no-such-command-xyz"]);
   assert.equal(p.mods, "not-installed");
-  assert.equal(parseDeep(execFileSync("sh", ["-c", DEEP_SCRIPT, "github-tasks", "", ], { encoding: "utf8" })).repo, "unset");
+  assert.equal(parseDeep(execFileSync("sh", ["-c", DEEP_SCRIPT, "github-tasks", "-"], { encoding: "utf8" })).repo, "unset");
   assert.equal(parseDeep(execFileSync("sh", ["-c", DEEP_SCRIPT, "github-tasks", "/no/such/folder"], { encoding: "utf8" })).repo, "missing");
 });
 
@@ -386,6 +395,15 @@ test("a deep check is one probe and one script run on the machine, and returns t
   assert.ok(scripts[0].opts.timeout >= 120000);
   assert.deepEqual(scripts[0].args.slice(-1), ["C:/src/workstation"]);
   for (const call of deps.calls) assert.equal(call.opts.on, "desktop");
+});
+
+test("a cached host is used without probing, and the probe is not repeated for the machine", async () => {
+  const deps = fakeExec((cmd, args) => (args.includes(DEEP_SCRIPT) ? { code: 0, stdout: GOOD, stderr: "" } : { code: 1, stdout: "", stderr: "must not probe" }));
+  const got = await runDeepCheck(deps, { ...input, now: NOW, host: { os: "windows", home: "C:/Users/me" } });
+  assert.equal(got.health.level, "green");
+  assert.deepEqual(got.host, { on: "desktop", os: "windows", home: "C:/Users/me" });
+  assert.equal(deps.calls.length, 1, "only the script ran");
+  assert.equal(deps.calls[0].cmd, "C:/Program Files/Git/bin/bash.exe");
 });
 
 test("a machine that can't run anything is a red probe check, not a throw", async () => {
