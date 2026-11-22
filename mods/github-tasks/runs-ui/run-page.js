@@ -26,7 +26,13 @@ export class RunPage {
     this.branch = props?.branch ?? "";
     // What start.js hands over to move the ticket and merge the run (absent on runs from before this).
     this.repoRoot = props?.repoRoot ?? "";
-    this.folder = props?.folder ?? "";
+    this.folder = props?.folder ?? ""; // on this computer: the ticket worktree, or for a run on another machine its run folder here
+    // A run on another machine (start.js): `on` and `os` name it, `worktree` is the ticket worktree there and `remoteRunDir` the run
+    // folder its agents read. Merge's git and gh run there (atRun); the ticket's space is still found here by `folder`.
+    this.on = props?.on ?? null;
+    this.host = this.on ? { on: this.on, os: props?.os ?? "unix" } : null;
+    this.worktree = (this.on && props?.worktree) || this.folder;
+    this.remoteRunDir = this.on ? props?.remoteRunDir ?? null : null;
     this.project = new ProjectButtons({ folder: this.folder, space: () => this.rememberTicketSpace() });
     this.ticket = props?.ticket ?? null; // { number, key }
     this.projectId = props?.projectId ?? null;
@@ -188,7 +194,7 @@ export class RunPage {
       for (;;) {
         if (this.pr?.state === "MERGED") break;
         if (!this.busy) {
-          const r = await exec("gh", prViewArgs(this.branch), { cwd: this.folder }).catch(() => ({ code: 1, stdout: "" }));
+          const r = await this.atRun("gh", prViewArgs(this.branch), { cwd: this.worktree }).catch(() => ({ code: 1, stdout: "" }));
           const found = r.code === 0 ? parsePr(r.stdout) : null;
           if (found && (found.url !== this.pr?.url || found.state !== this.pr?.state)) { this.pr = found; setShared(prKey(this.id), found); cx.notify(); }
         }
@@ -238,10 +244,16 @@ export class RunPage {
       .when(Boolean(this.error), (el) => el.child(div().text_size(S().secondary).text_color(t.blocked).child(this.error)));
   }
 
+  // exec where the run's worktree is: here, or on the run's machine.
+  atRun(cmd, args, opts) {
+    const where = { ...(opts ?? {}), ...(this.on ? { on: this.on } : {}) };
+    return exec(cmd, args, Object.keys(where).length ? where : undefined);
+  }
+
   // Opens the pull request (finish.js openPullRequest: push -u, then gh pr create) and remembers it. Throws with the reason.
   async openPr() {
     const title = this.title.replace(/^#\d+\s+/, "");
-    this.pr = await openPullRequest(exec, { folder: this.folder, branch: this.branch, title, number: this.ticket?.number });
+    this.pr = await openPullRequest((c, a, o) => this.atRun(c, a, o), { folder: this.worktree, branch: this.branch, title, number: this.ticket?.number });
     setShared(prKey(this.id), this.pr);
   }
 
@@ -283,7 +295,7 @@ export class RunPage {
   // The hand-over itself, once sendFix (or press) has set busy: clears busy when done, with the reason in error when it failed.
   async runFix(failure) {
     try {
-      const input = { failure, branch: this.branch, workDir: this.folder };
+      const input = { failure, branch: this.branch, workDir: this.worktree };
       let lead = orchestratorOf(terminals(), this.orchestrator);
       if (!lead?.live) { // this run may have a live orchestrator the page did not know of: use it, don't start a second one
         const other = liveOrchestratorFor(terminals(), this.id);
@@ -340,7 +352,7 @@ export class RunPage {
   async failMerge(e, at) {
     let prState = null;
     if (e?.step === "pr-merge" && this.pr?.number) {
-      const r = await exec("gh", prStateArgs(this.pr.number), { cwd: at }).catch(() => null);
+      const r = await this.atRun("gh", prStateArgs(this.pr.number), { cwd: at }).catch(() => null);
       prState = r?.code === 0 ? parsePrState(r.stdout) : null;
     }
     const failure = mergeFailure({ error: e, prState });
@@ -364,22 +376,22 @@ export class RunPage {
   // Merge's steps, once merge (or press) has set busy. Resolves true when the ticket's space was closed (and this page with it), else
   // false with busy cleared and what is left to do in error, note or the red state.
   async runMerge(ticketSpace) {
-    let at = this.folder; // where gh can run: the worktree, else the repo
+    let at = this.worktree; // where gh can run: the worktree, else the repo (on the run's machine, for a run there)
     try {
       if (!this.pr) await this.openPr();
       // A Merge that stopped part way can be pressed again: leave out what is already gone (the folder, the branch).
-      const workDirExists = (await exec("git", worktreeArgs(this.folder))).code === 0;
+      const workDirExists = (await this.atRun("git", worktreeArgs(this.worktree))).code === 0;
       if (!workDirExists) at = this.repoRoot;
-      const branchExists = (await exec("git", branchArgs(this.repoRoot, this.branch))).code === 0;
+      const branchExists = (await this.atRun("git", branchArgs(this.repoRoot, this.branch))).code === 0;
       // Ask GitHub where the pull request stands now, so a saved state that has gone stale (merged by hand, say) doesn't matter.
-      const view = await exec("gh", prViewArgs(this.branch), { cwd: workDirExists ? this.folder : this.repoRoot });
+      const view = await this.atRun("gh", prViewArgs(this.branch), { cwd: workDirExists ? this.worktree : this.repoRoot });
       const found = view.code === 0 ? parsePr(view.stdout) : null;
       if (!found) throw new Error(`Couldn't look up the pull request: ${out(view)}`);
       if (found.url !== this.pr.url) throw new Error(`The branch's pull request is ${found.url}, not ${this.pr.url} that this run opened. Nothing was merged.`);
       if (found.state !== this.pr.state) { this.pr = found; setShared(prKey(this.id), found); }
       const { warnings } = await runSteps(mergeSteps({
-        repoRoot: this.repoRoot, workDir: this.folder, branch: this.branch, number: found.number, prMerged: found.state === "MERGED", headOid: found.headOid,
-        status: await this.doneStatus(), runDir: runDir(home(), this.id), workDirExists, branchExists,
+        repoRoot: this.repoRoot, workDir: this.worktree, branch: this.branch, number: found.number, prMerged: found.state === "MERGED", headOid: found.headOid,
+        status: await this.doneStatus(), runDir: runDir(home(), this.id), workDirExists, branchExists, host: this.host, remoteRunDir: this.remoteRunDir,
       }), exec);
       for (const body of warnings) notify({ title: "The ticket's status didn't change", body, level: "warning" });
       if (await this.closeSession(ticketSpace)) return true;

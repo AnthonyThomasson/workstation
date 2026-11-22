@@ -61,7 +61,10 @@ if [ -f "$layout" ]; then
 fi
 
 preview="$repo/preview.png"
-if [ -f "$preview" ]; then
+# sips is macOS's: elsewhere (Linux, Git Bash on Windows) the picture's size can't be read, so that one check is skipped.
+if [ -f "$preview" ] && ! command -v sips >/dev/null 2>&1; then
+  echo "skip: preview.png dimensions (no sips: not macOS)"
+elif [ -f "$preview" ]; then
   dimensions=$(sips -g pixelWidth -g pixelHeight "$preview" 2>&1)
   status=$?
   if [ "$status" -ne 0 ]; then

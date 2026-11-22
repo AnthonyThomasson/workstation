@@ -1,7 +1,7 @@
 import { execFileSync, execFile } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, cpSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
+import { delimiter, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRunner } from "./jobs.js";
 
@@ -24,22 +24,26 @@ export const [DEMO_MOD, OTHER_MOD] = sampleNames(2);
 // the scratch folder is touched.
 export const syncWorld = (name) => {
   const base = mkdtempSync(join(tmpdir(), `sync-${name}-`));
-  const w = { base, remote: join(base, "remote.git"), a: join(base, "a"), b: join(base, "b"), herdr: join(base, "herdr-home"), home: join(base, "home") };
+  const w = { base, remote: join(base, "remote.git"), a: join(base, "a"), b: join(base, "b"), herdr: join(base, "herdr-home"), home: join(base, "home"), tmp: join(base, "tmp") };
+  // The stub herdr-app's folder leads PATH too (the scripts also put $HOME/.local/bin first), so no test can reach a real herdr-app,
+  // however the shell spells HOME. TMPDIR is the world's own, so the job folders and the sweep stay in it and go with it.
+  const stubs = join(w.home, ".local", "bin");
   const env = {
-    ...process.env, HOME: w.home, HERDR_APP_HOME: w.herdr, SKILLSHARE_HOME: join(base, "ss"),
+    ...process.env, HOME: w.home, HERDR_APP_HOME: w.herdr, SKILLSHARE_HOME: join(base, "ss"), TMPDIR: w.tmp,
     GIT_AUTHOR_NAME: "T", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "T", GIT_COMMITTER_EMAIL: "t@example.com",
-    GIT_CONFIG_GLOBAL: join(base, "gitconfig"), PATH: `${process.env.PATH}`,
+    GIT_CONFIG_GLOBAL: join(base, "gitconfig"), PATH: `${stubs}${delimiter}${process.env.PATH}`,
   };
   w.env = env;
   w.git = (cwd, ...args) => execFileSync("git", args, { cwd, env, encoding: "utf8" });
   const sh = (script, args) => new Promise((resolve) => execFile("sh", ["-c", script, "sync", ...args], { env, maxBuffer: 8 << 20 }, (e, stdout, stderr) => resolve({ code: e?.code ?? 0, stdout, stderr })));
   // The sync goes through the detached job runner, as it does in Herdr.
-  const runner = createRunner({ exec: sh, readText: (path) => { try { return readFileSync(path, "utf8"); } catch { return null; } }, pollMs: 20 });
+  // A job that never shows its exit code fails here in 60 s, inside the test timeout, rather than polling for JOB_MINUTES.
+  const runner = createRunner({ exec: sh, readText: (path) => { try { return readFileSync(path, "utf8"); } catch { return null; } }, pollMs: 20, budgetMs: 60000 });
   w.io = { sh, job: (script, args) => runner.job(args, { script, sleep: (ms) => new Promise((r) => setTimeout(r, ms)) }) };
-  mkdirSync(w.home, { recursive: true }); mkdirSync(w.herdr, { recursive: true });
+  mkdirSync(w.home, { recursive: true }); mkdirSync(w.herdr, { recursive: true }); mkdirSync(w.tmp, { recursive: true });
   // A stand-in for the running Herdr's CLI, so tests never reach the real one: every mod loads, status has no errors.
-  mkdirSync(join(w.home, ".local/bin"), { recursive: true });
-  writeFileSync(join(w.home, ".local/bin/herdr-app"), '#!/bin/sh\ncase "$1" in status) echo \'{ "errors": [] }\' ;; *) echo "check passed" ;; esac\n', { mode: 0o755 });
+  mkdirSync(stubs, { recursive: true });
+  writeFileSync(join(stubs, "herdr-app"), '#!/bin/sh\ncase "$1" in status) echo \'{ "errors": [] }\' ;; *) echo "check passed" ;; esac\n', { mode: 0o755 });
   writeFileSync(env.GIT_CONFIG_GLOBAL, "[init]\n\tdefaultBranch = main\n[pull]\n\trebase = true\n");
   execFileSync("git", ["init", "-q", "--bare", w.remote], { env });
   mkdirSync(w.a, { recursive: true });
@@ -62,4 +66,8 @@ export const syncWorld = (name) => {
   execFileSync("sh", [join(w.a, "mods/sync/sync.sh")], { env, cwd: w.a });
   return w;
 };
-export const cleanWorld = (w) => rmSync(w.base, { recursive: true, force: true });
+// On Windows a folder still open in a process (a job that outlived its test) can't go at once: retry a little, then leave it to
+// the OS's temp cleanup rather than fail the test or hang the run.
+export const cleanWorld = (w) => {
+  try { rmSync(w.base, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch (e) { if (process.platform !== "win32") throw e; }
+};

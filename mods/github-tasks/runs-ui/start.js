@@ -4,13 +4,14 @@
 // the run page (run-page.js), the list of its agents, on the right. Merge closes that space again. From there the
 // orchestrator runs the ticket itself (run.js says how).
 import { exec, focused, hc, home, knownAgents, notify, panes, readTextFile, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
-import { connectRun, freshTicket, guarded, launchRun, reapplyRuns, runTabParts, undoRunTab, viewConnect, viewQuick, viewTarget, mainCheckout, prepareWorktree, out, agentArgv, branchName, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, runId, spawnScript, ticketFile, ticketKey, ticketName, soloPrompt, workerPrompt } from "../runs/index.js";
+import { connectRun, freshTicket, guarded, launchRun, reapplyRuns, runTabParts, undoRunTab, viewConnect, viewQuick, viewTarget, mainCheckout, prepareWorktree, out, agentArgv, branchName, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, runId, spawnScript, ticketFile, ticketKey, ticketName, soloPrompt, workerPrompt, hostArgv, hostOf, remoteProgram, shOn } from "../runs/index.js";
 import { loadTask } from "../github/index.js";
 import { app, gh } from "../widgets/index.js";
 import { blank, ROLES, isEasy, worktreePath, runDir as runDirFor, runPanePath } from "../workflow/index.js";
 import { slotKey, FOLDER_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL } from "../lib/index.js";
 
-const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
+// git here, or on a space's machine (`on`): plain git, which Windows runs too, with the forward-slash paths git gives.
+const gitOn = (on) => (cwd, ...args) => exec("git", ["-C", cwd, ...args], ...(on ? [{ on }] : []));
 
 // The live run's orchestrator for a ticket, or null. Start becomes View while one is going. Runs on different
 // tickets can go at once, even in one repo: each has its own worktree.
@@ -91,22 +92,71 @@ export async function reconnectRuns(cx) {
   return reapplyRuns({ terminals: terminals(), slot: (id) => shared(slotKey(id)), spaces: spaces(), panes: panes(), show: (a) => app("terminal.show", a) });
 }
 
+// The roles whose agents spawn starts (on the run's machine); the orchestrator and an easy ticket's one agent start here.
+const SPAWNED = ["worker", "reviewer", "investigator"];
+
 // Each role's agent as a command. An agent that isn't on this computer stops the run before anything changes.
-async function resolveAgents(workflow, runDir) {
+// runDir: the run folder the agent may read (--add-dir). host: the run's machine, or null: then the spawned roles run the
+// machine's own program (remoteProgram: on its PATH, else ~/.local/bin, .exe on Windows) with runDir there, and a custom
+// command goes through Git Bash on Windows; localDir is this computer's run folder, for the orchestrator.
+async function resolveAgents(workflow, runDir, host = null, localDir = runDir) {
   const known = await knownAgents().catch(() => []);
   const argv = {};
+  const programs = new Map(); // agent -> its program on the host, asked once
   for (const role of [...ROLES, "solo"]) {
     const settings = workflow[role === "solo" ? "worker" : role] ?? blank()[role === "solo" ? "worker" : role]; // an easy ticket's one agent runs on the worker's settings // a workflow from before investigators has none: the defaults
+    if (host && SPAWNED.includes(role)) {
+      if (settings.agent === "custom") {
+        if (!settings.command) throw new Error(`The workflow's ${role} needs the command that opens its agent.`);
+        argv[role] = hostArgv(agentArgv(role, settings, [], runDir), host);
+        continue;
+      }
+      if (!programs.has(settings.agent)) programs.set(settings.agent, await remoteProgram(exec, host, settings.agent));
+      const program = programs.get(settings.agent);
+      if (!program) throw new Error(`The workflow's ${role} runs ${settings.agent}, which isn't on ${host.on} (not on its PATH, nor in ${host.home}/.local/bin).`);
+      argv[role] = hostArgv(agentArgv(role, settings, [program], runDir), host, program);
+      continue;
+    }
+    const dir = host ? localDir : runDir; // the orchestrator (and solo) always run here, beside the spawn and merge scripts
     if (settings.agent === "custom") {
       if (!settings.command) throw new Error(`The workflow's ${role} needs the command that opens its agent.`);
-      argv[role] = agentArgv(role, settings, [], runDir);
+      argv[role] = agentArgv(role, settings, [], dir);
       continue;
     }
     const entry = known.find((a) => a.key === settings.agent);
     if (entry && !entry.installed) throw new Error(`The workflow's ${role} runs ${entry.name}, which isn't installed on this computer.`);
-    argv[role] = agentArgv(role, settings, entry?.run, runDir);
+    argv[role] = agentArgv(role, settings, entry?.run, dir);
   }
   return argv;
+}
+
+// A run on another machine has two run folders. On the machine (parts.runDir): what its agents read (the role prompts and the
+// ticket). Here (localDir): what the Task Orchestrator reads and runs, which stays on this computer (orchestrator.md, ticket.md,
+// spawn and merge, and later pane.json). The scripts are not copied to the machine: they only run here, and a copy there could
+// be mistaken for one that works. hc file write makes missing folders, but a folder is made first anyway, as for a local run.
+async function writeRemoteRunFolder(id, parts, argv, host, localDir) {
+  const { runDir, workDir, branch } = parts;
+  const remote = await shOn({ exec }, host.on, 'mkdir -p "$1"', [runDir]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+  if (remote.code !== 0) throw new Error(`Couldn't make ${runDir} on ${host.on}: ${out(remote)}`);
+  const local = await exec("mkdir", ["-p", localDir]);
+  if (local.code !== 0) throw new Error(`Couldn't make ${localDir}: ${out(local)}`);
+  const there = (name, text) => writeTextFile(`${runDir}/${name}`, text, null, { on: host.on });
+  const here = (name, text) => writeTextFile(`${localDir}/${name}`, text, null);
+  const ticket = ticketFile(parts.ticket, parts.repo);
+  const orchestrator = orchestratorPrompt({ ...parts, id, on: host.on, scriptsDir: localDir });
+  await Promise.all([
+    there("worker.md", workerPrompt(parts)),
+    there("reviewer.md", reviewerPrompt(parts)),
+    there("investigator.md", investigatorPrompt(parts)),
+    there("ticket.md", ticket),
+    there("orchestrator.md", orchestrator), // for whoever looks there; the Task Orchestrator reads its copy here
+    here("orchestrator.md", orchestrator),
+    here("ticket.md", ticket),
+    here("spawn", spawnScript({ id, runDir, workDir, branch, argv, host })),
+    here("merge", mergeScript({ id, workDir, branch, number: parts.ticket?.number, runDir: localDir, host })),
+  ]);
+  const chmod = await exec("chmod", ["+x", `${localDir}/spawn`, `${localDir}/merge`]);
+  if (chmod.code !== 0) throw new Error(`Couldn't make the spawn and merge scripts runnable: ${out(chmod)}`);
 }
 
 async function writeRunFolder(id, parts, argv) {
@@ -139,8 +189,11 @@ async function paneOf(made, cx) {
 
 // Starts it. ticket: as GitHub holds it. Throws with a message for the person; nothing is left running then,
 // though the ticket's worktree and branch, once made, stay for the next try. Returns { resumed } when the run was already going.
+// A space on another machine (where.on) runs there: the ticket's worktrees, the run folder its agents read and the agents
+// themselves are on that machine (asked what it runs first: probeMachine), while the Task Orchestrator, its spawn and merge
+// scripts and pane.json stay on this computer. The orchestrator starts in this computer's run folder, which also roots the
+// ticket's space here, since the worktree's path means nothing on this computer.
 export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
-  if (where?.on) throw new Error(`This space is on ${where.on}. Workflows only run on this computer for now.`);
   if (!where?.cwd) throw new Error("This space has no folder to work in.");
 
   const key = ticketKey(repo, ticket);
@@ -153,19 +206,30 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   // The board query has no body. Read the whole ticket before anything is prepared or written; a failure keeps its reason.
   ticket = await freshTicket(ticket, (listed) => loadTask(gh, repo, listed, where));
 
+  const host = where.on ? await hostOf({ exec }, where.on) : null; // { on, os, home }: before anything changes
+  const git = gitOn(host?.on);
   const repoRoot = await mainCheckout(git, where.cwd); // the main checkout, even when Start is used from one of its worktrees
 
-  const solo = isEasy(ticket); // the easy label: the worker does the whole ticket alone, in the orchestrator's place
+  // the easy label: the worker does the whole ticket alone, in the orchestrator's place. Not on another machine: that agent
+  // writes the code, and it would start here, away from the worktree, so such a run gets an orchestrator and a worker there.
+  const solo = isEasy(ticket) && !host;
   const id = runId(ticket);
-  const runDir = runDirFor(home(), id);
-  const argv = await resolveAgents(workflow, runDir); // before the worktree: this fails without changing anything
+  const localDir = runDirFor(home(), id);
+  const runDir = host ? runDirFor(host.home, id) : localDir; // what the agents read, where they run
+  const argv = await resolveAgents(workflow, runDir, host, localDir); // before the worktree: this fails without changing anything
   const branch = branchName(ticket);
-  const workDir = await prepareWorktree(git, repoRoot, branch, worktreePath(repoRoot, branch, home()));
-  await writeRunFolder(id, { solo, workflow, ticket, repo, runDir, workDir, repoRoot, branch }, argv);
+  const workDir = await prepareWorktree(git, repoRoot, branch, worktreePath(repoRoot, branch, host?.home ?? home()));
+  const parts = { solo, workflow, ticket, repo, runDir, workDir, repoRoot, branch };
+  if (host) await writeRemoteRunFolder(id, parts, argv, host, localDir);
+  else await writeRunFolder(id, parts, argv);
+  const folder = host ? localDir : workDir; // where the orchestrator starts and the ticket's space is rooted, on this computer
 
   const name = ticketName(ticket);
   const props = {
-    role: "run", id, orchestrator: null, title: name, workflow: workflow.name, branch, folder: workDir,
+    role: "run", id, orchestrator: null, title: name, workflow: workflow.name, branch, folder,
+    // A run on another machine: the machine, what it runs, the ticket worktree and the agents' run folder there. The run page's Merge
+    // runs its git and gh there and removes both run folders (run-page.js); View finds the ticket's space here by `folder`.
+    ...(host ? { on: host.on, os: host.os, worktree: workDir, remoteRunDir: runDir } : {}),
     repoRoot, ticket: { number: ticket.number ?? null, key: ticket.key ?? null, status: ticket.status ?? null }, // status: what it is now, so a launch never moves it back
     projectId: board.project?.id ?? null, statusField: board.statusField ?? null,
     // What a new orchestrator needs if this one ends and the person presses the red Merge button (bgrun.js restartOrchestrator).
@@ -175,13 +239,14 @@ export async function startRun(workflow, ticket, repo, where, cx, board = {}) {
   // a whole: from the moment it exists View and Start see it, and the tab is opened here, not by them (bgrun.js launchRun).
   // The run goes in the ticket's space: the one an earlier run of this ticket left (a failed or ended run), else a new one at
   // the worktree, which is taken down again if the start fails (closeTab).
-  const space = viewTarget({ spaces: spaces(), panes: panes(), folder: workDir, repoRoot });
+  const space = viewTarget({ spaces: spaces(), panes: panes(), folder, repoRoot });
   let created = null; // the space this Start made
   const launched = await guarded(connecting, id, () => launchRun({
     hc, writePaneJson: (p) => writeTextFile(runPanePath(home(), id), JSON.stringify(p), null),
-    connect: async (p) => { const slot = await connect({ id, orchestrator: p.orchestrator, title: p.title, space, folder: workDir, props: p }, cx); created = slot.created ? slot.space : null; return slot; },
+    connect: async (p) => { const slot = await connect({ id, orchestrator: p.orchestrator, title: p.title, space, folder, props: p }, cx); created = slot.created ? slot.space : null; return slot; },
     closeTab: () => { undoRunTab({ created, part: runTabOf(id), run: (n, a) => run(n, a) }); created = null; setShared(slotKey(id), null); },
-  }, { id, key, workDir, argv: solo ? argv.solo : argv.orchestrator, task: `Read ${runDir}/orchestrator.md and follow it.`, props }));
+    // workDir here is the orchestrator's --cwd and folder label (bgrun.js orchestratorRunArgs): this computer's run folder for a run elsewhere
+  }, { id, key, workDir: folder, argv: solo ? argv.solo : argv.orchestrator, task: `Read ${localDir}/orchestrator.md and follow it.`, props }));
   if (launched.problems.length) notify({ title: "The workflow started, with a problem", body: launched.problems.join(" "), level: "warning" });
   return { resumed: false };
 }

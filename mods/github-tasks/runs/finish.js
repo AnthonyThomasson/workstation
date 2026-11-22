@@ -4,6 +4,7 @@
 import { sameStatus, STATUSES } from "../lib/index.js";
 import { STATUS_MUTATION } from "../github/index.js";
 import { runIdFromDir } from "../workflow/index.js";
+import { shArgv } from "./remote.js";
 
 export const STAGES = [STATUSES.inProgress, STATUSES.inReview, STATUSES.done]; // what a ticket becomes as the run goes on, in order (Done is set by Merge)
 
@@ -42,7 +43,8 @@ export const statusArgs = ({ projectId, itemId, fieldId, optionId }) =>
 export const worktreeArgs = (workDir) => ["-C", workDir, "rev-parse", "--git-dir"];
 export const branchArgs = (repoRoot, branch) => ["-C", repoRoot, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`];
 
-// Merge as a list of steps, in order. A step is { name, cmd, args, cwd?, fail, done?, dirty?, warn? }:
+// Merge as a list of steps, in order. A step is { name, cmd, args, cwd?, on?, fail, done?, dirty?, warn? }:
+//   on     the machine it runs on (a run whose worktree is on another machine), else this computer
 //   fail   what to say when it fails; done  what to call it once it has happened ("Already done: ...")
 //   dirty  stop with this when its output is not empty (a check)    warn  not run: runSteps passes this on as a warning
 // Merge goes through the ticket's pull request and never runs git in the main checkout's working tree: no switch, no local
@@ -66,22 +68,30 @@ export const statusStep = (status) => status.warn ? { name: "status", warn: stat
 
 // What Merge ends with whichever way the work got in: remove the worktree (or forget a folder already gone), delete the
 // branch (-D: a squash leaves it looking unmerged) and the run folder. workDirExists / branchExists: see mergeSteps.
-export function cleanupSteps({ repoRoot, workDir, branch, runDir, workDirExists = true, branchExists = true }) {
-  const git = (args) => ({ cmd: "git", args });
+// host: { on, os } when the worktree is on another machine: its git runs there, and remoteRunDir, the run folder its agents read
+// there, is removed too (through Git Bash on Windows). runDir is always this computer's.
+export function cleanupSteps({ repoRoot, workDir, branch, runDir, workDirExists = true, branchExists = true, host = null, remoteRunDir = null }) {
+  const at = host?.on ? { on: host.on } : {};
+  const git = (args) => ({ cmd: "git", args, ...at });
+  const [rmCmd, rmArgs] = host?.on ? shArgv(host.os, 'rm -rf "$1"', [remoteRunDir]) : [];
   return [
     ...(workDirExists ? [{ name: "remove-worktree", ...git(["-C", repoRoot, "worktree", "remove", workDir]), fail: `Couldn't remove the worktree ${workDir}.`, done: `removed the worktree ${workDir}` }]
       : [{ name: "prune-worktrees", ...git(["-C", repoRoot, "worktree", "prune"]), fail: `Couldn't clear the removed worktree ${workDir} from git's list.` }]),
     ...(branchExists ? [{ name: "delete-branch", ...git(["-C", repoRoot, "branch", "-D", branch]), fail: `Couldn't delete the branch ${branch}.`, done: `deleted ${branch}` }] : []),
     ...(safeRunDir(runDir) ? [{ name: "remove-run-files", cmd: "rm", args: ["-rf", runDir], fail: `Couldn't remove the run files ${runDir}.`, done: `removed the run files ${runDir}` }] : []),
+    ...(host?.on && safeRunDir(remoteRunDir) ? [{ name: "remove-run-files", cmd: rmCmd, args: rmArgs, on: host.on, fail: `Couldn't remove the run files ${remoteRunDir} on ${host.on}.`, done: `removed the run files ${remoteRunDir} on ${host.on}` }] : []),
   ];
 }
 
-export function mergeSteps({ repoRoot, workDir, branch, number, prMerged = false, headOid, status, runDir, workDirExists = true, branchExists = true }) {
+// host, remoteRunDir: as for cleanupSteps; on another machine git and gh run there (gh signed in there), and the fix hints say so.
+export function mergeSteps({ repoRoot, workDir, branch, number, prMerged = false, headOid, status, runDir, workDirExists = true, branchExists = true, host = null, remoteRunDir = null }) {
   if (!prMerged && !number) throw new Error("Merge needs the pull request, and this run has none.");
-  const git = (args) => ({ cmd: "git", args });
+  const at = host?.on ? { on: host.on } : {};
+  const git = (args) => ({ cmd: "git", args, ...at });
+  const gitCmd = host?.on ? `hc exec --on ${host.on} -- git` : "git";
   const inTree = workDirExists ? workDir : repoRoot; // where the remote is asked: the ticket worktree, else the repo's git dir (no checkout is touched)
   const remote = `origin/${branch}`;
-  const push = `git -C ${inTree} push origin ${branch}`;
+  const push = `${gitCmd} -C ${inTree} push origin ${branch}`;
   return [
     ...(workDirExists ? [{ name: "tree-status", ...git(["-C", workDir, "status", "--porcelain"]), fail: `Couldn't look at ${workDir}.`,
       dirty: `${workDir} has uncommitted changes. Commit or discard them (and push, so the pull request has them), then press Merge again.` }] : []),
@@ -97,11 +107,11 @@ export function mergeSteps({ repoRoot, workDir, branch, number, prMerged = false
     ...(branchExists && prMerged && headOid ? [
       ...(number ? [{ name: "fetch-pr-head", ...git(["-C", inTree, "fetch", "origin", `+refs/pull/${number}/head`]), fail: `Couldn't fetch the merged pull request #${number} from origin, so can't tell whether ${branch} has commits it doesn't. Nothing was cleaned up; press Merge again once origin can be reached.` }] : []),
       { name: "not-in-pr", ...git(["-C", inTree, "rev-list", `${headOid}..${branch}`]), fail: `Couldn't compare ${branch} with the merged pull request (${headOid.slice(0, 8)}).`,
-        dirty: `${branch} has commits that the merged pull request doesn't. Don't clean up yet: open a new pull request for them, or drop them with \`git -C ${inTree} reset --hard ${headOid.slice(0, 8)}\`, then press Merge again.` },
+        dirty: `${branch} has commits that the merged pull request doesn't. Don't clean up yet: open a new pull request for them, or drop them with \`${gitCmd} -C ${inTree} reset --hard ${headOid.slice(0, 8)}\`, then press Merge again.` },
     ] : []),
-    ...(prMerged ? [] : [{ name: "pr-merge", cmd: "gh", args: ["pr", "merge", String(number), "--squash"], cwd: inTree, fail: `GitHub didn't merge pull request #${number}.`, done: `merged pull request #${number}` }]),
+    ...(prMerged ? [] : [{ name: "pr-merge", cmd: "gh", args: ["pr", "merge", String(number), "--squash"], cwd: inTree, ...at, fail: `GitHub didn't merge pull request #${number}.`, done: `merged pull request #${number}` }]),
     ...(status ? [statusStep(status)] : []),
-    ...cleanupSteps({ repoRoot, workDir, branch, runDir, workDirExists, branchExists }),
+    ...cleanupSteps({ repoRoot, workDir, branch, runDir, workDirExists, branchExists, host, remoteRunDir }),
   ];
 }
 
@@ -125,7 +135,8 @@ export async function runSteps(steps, exec) {
   const go = async (list) => {
     for (const st of list) {
       if (st.warn) { warnings.push(st.warn); continue; }
-      const r = await exec(st.cmd, st.args, st.cwd ? { cwd: st.cwd } : undefined);
+      const opts = { ...(st.cwd ? { cwd: st.cwd } : {}), ...(st.on ? { on: st.on } : {}) };
+      const r = await exec(st.cmd, st.args, Object.keys(opts).length ? opts : undefined);
       if (st.check) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim(), st); const bad = st.check(String(r.stdout ?? "")); if (bad) stop(bad, st, { found: true }); continue; } // check: stdout -> what to stop with, or null
       if (st.dirty) { if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim(), st); if (String(r.stdout ?? "").trim()) stop(st.dirty, st, { found: true }); continue; }
       if (r.code !== 0) stop(`${st.fail} ${text(r)}`.trim(), st);

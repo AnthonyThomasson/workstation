@@ -157,9 +157,11 @@ test("every change tells the view to redraw", async () => {
   assert.ok(n - before >= 3);
 });
 
-test("a space on another machine, or with no folder, can't start a workflow, and says why", () => {
+test("a space with no folder can't start a workflow, and says why; a space on another machine can", () => {
   assert.equal(cantStartHere({ cwd: "/r", on: undefined }), null);
-  assert.equal(cantStartHere({ cwd: "/r", on: "dev" }), "This space is on dev. Workflows only run on this computer for now.");
+  assert.equal(cantStartHere({ cwd: "/r", on: "dev" }), null);
+  assert.equal(cantStartHere({ cwd: "C:/Users/me/app", on: "desktop" }), null);
+  assert.equal(cantStartHere({ cwd: undefined, on: "dev" }), "This space has no folder to work in.");
   assert.equal(cantStartHere({ cwd: undefined }), "This space has no folder to work in.");
   assert.equal(cantStartHere(undefined), "This space has no folder to work in.");
 });

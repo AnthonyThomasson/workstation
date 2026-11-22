@@ -5,18 +5,25 @@
 // The first line of a command's output, trimmed, as a path; null if it printed nothing.
 export const firstLine = (text) => String(text ?? "").split("\n").map((l) => l.trim()).find(Boolean) ?? null;
 
+// A folder as these paths are built from it, and as two names of one folder are compared: forward slashes, no trailing slash.
+// A Windows path (C:\Users\me, \\server\share, as Node's path.join makes on Windows) has its backslashes turned to slashes (C:/Users/me, as git prints it and Git Bash reads it);
+// any other path keeps its backslashes, which on a Unix machine are part of a name.
+const WINDOWS_PATH = /^(?:[A-Za-z]:[\\/]|\\\\)/;
+const slashes = (path) => (WINDOWS_PATH.test(path) ? path.replace(/\\/g, "/") : path);
+export const posixFolder = (path) => slashes(String(path ?? "")).replace(/\/+$/, "");
+
 // A repo's folder of workflows, and the global one: the workflows folder of the Herdr home
 // (~/.config/herdr-app, or $HERDR_APP_HOME), whatever else is or is not on the machine.
 // The same for any kind's folder name ("workflows" or "refactors", see kinds.js).
-export const repoKindDir = (repoRoot, folder) => `${repoRoot}/.herdr/${folder}`;
-export const globalKindDir = (appHome, folder) => `${String(appHome).replace(/\/+$/, "")}/${folder}`;
+export const repoKindDir = (repoRoot, folder) => `${posixFolder(repoRoot)}/.herdr/${folder}`;
+export const globalKindDir = (appHome, folder) => `${posixFolder(appHome)}/${folder}`;
 export const repoWorkflowsDir = (repoRoot) => repoKindDir(repoRoot, "workflows");
 export const globalWorkflowsDir = (appHome) => globalKindDir(appHome, "workflows");
 export const repoRefactorsDir = (repoRoot) => repoKindDir(repoRoot, "refactors");
 export const globalRefactorsDir = (appHome) => globalKindDir(appHome, "refactors");
 
 // Project buttons on run and investigation pages come from this file in the ticket worktree.
-export const projectConfigPath = (folder) => `${String(folder).replace(/\/+$/, "")}/.herdr/config.yaml`;
+export const projectConfigPath = (folder) => `${posixFolder(folder)}/.herdr/config.yaml`;
 
 // A path as people write it: under the home folder it starts with ~.
 export const tildePath = (path, home) => (path === home ? "~" : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path);
@@ -30,12 +37,12 @@ export const workflowDirs = (appHome, repoRoot = null) => kindDirs(appHome, repo
 export const refactorDirs = (appHome, repoRoot = null) => kindDirs(appHome, repoRoot, "refactors");
 
 // A run's folder, <home>/.herdr/workflow-runs/<id>, and the pane.json Start writes and View reads there.
-export const runDir = (home, id) => `${home}/.herdr/workflow-runs/${id}`;
+export const runDir = (home, id) => `${posixFolder(home)}/.herdr/workflow-runs/${id}`;
 export const runPanePath = (home, id) => `${runDir(home, id)}/pane.json`;
 
 // The command line's mailbox (cli/): herdr-tasks drops a request in requests/ and the Tasks sidebar's bridge (cli-ui/bridge.js) writes
 // the reply into replies/. `home` is passed in to keep this pure.
-export const cliDir = (home) => `${String(home).replace(/\/+$/, "")}/.herdr/tasks-cli`;
+export const cliDir = (home) => `${posixFolder(home)}/.herdr/tasks-cli`;
 export const cliRequestsDir = (home) => `${cliDir(home)}/requests`;
 export const cliRepliesDir = (home) => `${cliDir(home)}/replies`;
 
@@ -43,7 +50,8 @@ export const cliRepliesDir = (home) => `${cliDir(home)}/replies`;
 // reached through a run id containing traversal; Merge builds this path from home() and the run id.
 // The child's id, or null when the path is not safe to remove.
 export const runIdFromDir = (path) => {
-  const id = typeof path === "string" ? path.match(/^\/(?:.*\/)?\.herdr\/workflow-runs\/([^/]+)$/)?.[1] : null;
+  // an absolute path: /… here or on a Unix machine, C:/… or C:\… on a Windows one (a run's folder there, removed by Merge)
+  const id = typeof path === "string" ? slashes(path).match(/^(?:[A-Za-z]:)?\/(?:.*\/)?\.herdr\/workflow-runs\/([^/]+)$/)?.[1] : null;
   return id && id !== "." && !id.includes("..") ? id : null;
 };
 
@@ -52,15 +60,15 @@ export const runIdFromDir = (path) => {
 // the mod's own (runs of anything but letters, digits, . _ - become one -, none at the ends), so "workflow/12-fix" is
 // "workflow-12-fix". The jobs' worktrees are this path plus `--<job>`. `home` is passed in to keep this pure.
 export const worktreePath = (repoRoot, branch, home) => {
-  const repo = repoRoot.replace(/\/+$/, "").split("/").pop();
+  const repo = posixFolder(repoRoot).split("/").pop();
   const slug = branch.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
-  return `${home.replace(/\/+$/, "")}/.herdr/worktrees/${repo}/${slug}`;
+  return `${posixFolder(home)}/.herdr/worktrees/${repo}/${slug}`;
 };
 
 // An Investigation's session folder, ~/.herdr/investigations/<id>/, which holds its spawn script and prompts: null unless the id is an
 // investigation's own (inv-<base 36>), so nothing outside ~/.herdr/investigations can ever be named. The one helper for the folder: the
 // start path writes it (and takes it back if the start fails) and Done removes it. `home` is passed in to keep this pure.
 export function sessionFolder(home, id) {
-  if (!/^inv-[a-z0-9]+$/.test(String(id ?? "")) || !String(home ?? "").replace(/\/+$/, "")) return null;
-  return `${String(home).replace(/\/+$/, "")}/.herdr/investigations/${id}`;
+  if (!/^inv-[a-z0-9]+$/.test(String(id ?? "")) || !posixFolder(home)) return null;
+  return `${posixFolder(home)}/.herdr/investigations/${id}`;
 }

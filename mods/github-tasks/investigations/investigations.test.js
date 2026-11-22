@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -381,6 +381,8 @@ const git = async (cwd, ...args) => {
   const r = spawnSync("git", ["-C", cwd, ...args], { encoding: "utf8" });
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 };
+// A path in forward slashes on Windows, where Node's join writes C:\… and the mod's paths (workflow/places.js) C:/….
+const slashes = (p) => (process.platform === "win32" ? String(p).replace(/\\/g, "/") : p);
 async function scratch() {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), "inv-")));
   const repo = join(dir, "app");
@@ -415,7 +417,10 @@ function fakeDone(s, { killed = { code: 0, stdout: "", stderr: "" }, stillLive =
       return a[1] === "t1" ? killed : { code: 0, stdout: "", stderr: "" };
     },
     terminals: () => [...(stillLive ? [{ address: "t1", state: "live" }] : []), ...terms.filter((k) => !ended.includes(k.address))],
-    home: s.home, removeDir: async (path) => { log.push(`rm ${path.replace(s.home, "<home>")}`); const r = spawnSync("rm", ["-rf", path]); return { code: r.status, stdout: "", stderr: String(r.stderr) }; },
+    home: s.home, removeDir: async (path) => {
+      log.push(`rm ${slashes(path).replace(slashes(s.home), "<home>")}`);
+      try { rmSync(path, { recursive: true, force: true }); return { code: 0, stdout: "", stderr: "" }; } catch (e) { return { code: 1, stdout: "", stderr: e.message }; }
+    },
     spaces: () => spaces, panes: () => panes, slot: () => slot,
     git: async (cwd, ...args) => { log.push(`git ${args.join(" ")}`.replace(s.workDir, "<wt>")); return git(cwd, ...args); },
     run: (name, args) => log.push(`${name} ${JSON.stringify(args)}`),
@@ -542,7 +547,7 @@ test("Done on an agent that is already gone goes on: a failed kill of a terminal
 
 test("Done can be pressed again after the worktree went by hand: the branch is deleted and the rest finishes", async () => {
   const s = await scratch();
-  execFileSync("rm", ["-rf", s.workDir]);
+  rmSync(s.workDir, { recursive: true, force: true });
   const f = fakeDone(s);
   const got = await endInvestigation(f.deps, entryOf(s));
   assert.equal(got.done, true);
@@ -647,7 +652,7 @@ test("Done removes every prototype worktree and every <branch>--* branch, leavin
 test("Done deletes a prototype branch whose worktree is already gone, and one that never had a worktree", async () => {
   const s = await scratch();
   await prototype(s, "api");
-  execFileSync("rm", ["-rf", `${s.workDir}--api`]);
+  rmSync(`${s.workDir}--api`, { recursive: true, force: true });
   sh(s.repo, "branch", `${s.branch}--lonely`);
   const f = fakeDone(s);
   assert.equal((await endInvestigation(f.deps, entryOf(s))).done, true);
@@ -704,7 +709,9 @@ test("prototype worktrees are found when the entry's folder is a symlink to the 
   const s = await scratch();
   await prototype(s, "api");
   const link = join(s.dir, "link");
-  symlinkSync(s.workDir, link);
+  // "junction": on Windows a folder link that needs neither Developer Mode nor admin (a plain symlink is EPERM without them);
+  // macOS and Linux ignore the type and make an ordinary symlink.
+  symlinkSync(s.workDir, link, "junction");
   const got = await prototypesOf(git, { ...entryOf(s), workDir: link });
   assert.equal(got.refused, null);
   assert.deepEqual(got.worktrees, [`${s.workDir}--api`]);
@@ -760,7 +767,7 @@ test("Done removes the session folder, ~/.herdr/investigations/<id>/, with what 
 
 test("Done with the session folder already gone goes on; one that can't be removed is said, with the rest kept for another try", async () => {
   const s = await scratch();
-  execFileSync("rm", ["-rf", s.folder]);
+  rmSync(s.folder, { recursive: true, force: true });
   assert.equal((await endInvestigation(fakeDone(s).deps, entryOf(s))).done, true, "gone counts as done");
   const t = await scratch();
   await prototype(t, "api");
@@ -784,9 +791,17 @@ test("removeWorktree and deleteBranch treat what is already gone as done", async
   assert.equal(await deleteBranch(git, s.repo, s.branch), null, "again: it is gone");
 });
 
+test("Done knows the main checkout on Windows whichever slashes name it: git says C:/…, a folder may come as C:\\…", async () => {
+  const git = async () => ({ code: 0, stdout: "worktree C:/src/app\nHEAD abc\nbranch refs/heads/main\n\n", stderr: "" });
+  const entry = { repoRoot: "C:/src/app", branch: "investigate/x-1" };
+  assert.match(await unsafeToRemove(git, { ...entry, workDir: "C:\\src\\app" }) ?? "", /main checkout/);
+  assert.match(await unsafeToRemove(git, { ...entry, repoRoot: "C:\\src\\app\\", workDir: "C:/src/app" }) ?? "", /main checkout/);
+  assert.equal(await unsafeToRemove(git, { ...entry, workDir: "C:/h/.herdr/worktrees/app/investigate-x-1" }), null);
+});
+
 test("the real helpers work on a worktree started from a ticket's worktree (the main checkout is found)", async () => {
   const s = await scratch();
-  assert.equal(await mainCheckout(git, s.workDir), s.repo);
+  assert.equal(slashes(await mainCheckout(git, s.workDir)), slashes(s.repo)); // git says C:/… on Windows, join C:\…
 });
 
 test("slots are kept per investigation id, like a run's", () => {

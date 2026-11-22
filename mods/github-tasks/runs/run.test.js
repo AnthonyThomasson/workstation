@@ -4,10 +4,26 @@ import { ASK_WITH_TOOL } from "../lib/index.js";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { soloPrompt, agentArgv, branchName, freshTicket, investigatorPrompt, jobRoom, mergeScript, nameRoom, orchestratorPrompt, readOnlyArgv, reopenProps, reviewerPrompt, runId, shQuote, spawnScript, ticketFile, ticketKey, workerPrompt } from "./run.js";
 import { loadTask } from "../github/index.js";
 import { worktreePath } from "../workflow/index.js";
+import { GIT_BASH } from "./remote.js";
+
+// Scripts run for real. Here a #! file runs by its #! line and sh is on the PATH; Windows has neither, so there both go through Git Bash.
+// A script gets only PATH (bin first) and `extra`; on Windows also the few variables its programs need to start at all. spawnSync on
+// Windows leaves stdout and stderr unset when nothing ran: they are "" here, and stderr says why.
+const WIN = process.platform === "win32";
+const SH = WIN ? GIT_BASH : "sh";
+const WINDOWS_ENV = ["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA"];
+const envWith = (bin, extra = {}) => ({
+  ...(WIN ? Object.fromEntries(Object.entries(process.env).filter(([k]) => WINDOWS_ENV.includes(k.toUpperCase()))) : {}),
+  PATH: `${bin}${delimiter}${process.env.PATH}`, ...extra,
+});
+const settled = (r) => ({ ...r, stdout: r.stdout ?? "", stderr: r.stderr ?? r.error?.message ?? "" });
+const runFile = (file, args, env) => settled(WIN ? spawnSync(GIT_BASH, [file, ...args], { env, encoding: "utf8" }) : spawnSync(file, args, { env, encoding: "utf8" }));
+const runText = (script, args, env) => settled(spawnSync(SH, ["-c", script, ...args], { env, encoding: "utf8" }));
+const ident = ["-c", "user.name=t", "-c", "user.email=t@t"];
 
 const ticket = { number: 12, title: "Fix the login!", body: "It breaks.", labels: ["bug"], status: "Todo", url: "https://github.test/12" };
 const role = (extra = {}) => ({ prompt: "", agent: "claude", command: "", model: "", effort: "medium", ...extra });
@@ -357,7 +373,7 @@ test("a reviewer is only told about git commands its allowlist permits, and how 
 });
 
 test("shQuote survives quotes", () => {
-  const out = execFileSync("sh", ["-c", `printf %s ${shQuote(`it's "x" $HOME`)}`]).toString();
+  const out = execFileSync(SH, ["-c", `printf %s ${shQuote(`it's "x" $HOME`)}`]).toString();
   assert.equal(out, `it's "x" $HOME`);
 });
 
@@ -383,15 +399,29 @@ function scratch() {
 // Where a job's worktree and branch are: beside the ticket's worktree, on a branch off the ticket's own.
 const jobAt = (ticketDir, ticketBranch, name) => ({ path: `${ticketDir}--${name}`, branch: `${ticketBranch}--${name}` });
 
-function runSpawn(args, { failSend = false, setup = () => {}, workDir } = {}) {
+// A fake hc for a run on another machine: `exec --on m ... -- <cmd>` runs <cmd> here (Git Bash standing for bash, with -c so no
+// login profile prints into what git says), and `run --json` answers with the address the machine gave the terminal.
+const remoteHc = (log, { failSend = false, address = "desktop/t9" } = {}) => `#!/bin/sh
+for a in "$@"; do printf '[%s]' "$a" >> ${shQuote(log)}; done; echo >> ${shQuote(log)}
+case "$1" in
+  exec) shift; while [ "$1" != -- ]; do shift; done; shift
+    if [ "$1" = ${shQuote(GIT_BASH)} ]; then shift; shift; set -- bash -c "$@"; fi
+    exec "$@" ;;
+  run) ${address ? `echo '{"address": "${address}", "name": "x"}'` : "echo '{}'"} ;;
+  send) ${failSend ? "exit 1" : "exit 0"} ;;
+esac
+exit 0
+`;
+
+function runSpawn(args, { failSend = false, setup = () => {}, workDir, host = null, address } = {}) {
   const w = scratch();
-  writeFileSync(join(w.bin, "hc"), `#!/bin/sh\nfor a in "$@"; do printf '[%s]' "$a" >> ${shQuote(w.log)}; done; echo >> ${shQuote(w.log)}\n${failSend ? 'case "$1" in send) exit 1 ;; esac\n' : ""}exit 0\n`);
+  writeFileSync(join(w.bin, "hc"), host ? remoteHc(w.log, { failSend, address }) : `#!/bin/sh\nfor a in "$@"; do printf '[%s]' "$a" >> ${shQuote(w.log)}; done; echo >> ${shQuote(w.log)}\n${failSend ? 'case "$1" in send) exit 1 ;; esac\n' : ""}exit 0\n`);
   chmodSync(join(w.bin, "hc"), 0o755);
   setup(w);
   const script = join(w.dir, "spawn");
-  writeFileSync(script, spawnScript({ id: "12-abc", runDir: "/runs/it's", workDir: workDir?.(w) ?? w.ticketDir, branch: w.branch, argv: { worker: ["claude", "--model", "a b"], reviewer: ["codex"], investigator: ["claude", "--effort", "low"] } }));
+  writeFileSync(script, spawnScript({ id: "12-abc", runDir: "/runs/it's", workDir: workDir?.(w) ?? w.ticketDir, branch: w.branch, argv: { worker: ["claude", "--model", "a b"], reviewer: ["codex"], investigator: ["claude", "--effort", "low"] }, host }));
   chmodSync(script, 0o755);
-  const r = spawnSync(script, args, { env: { PATH: `${w.bin}:${process.env.PATH}`, HC_TERMINAL_ID: "t7" }, encoding: "utf8" });
+  const r = runFile(script, args, envWith(w.bin, { HC_TERMINAL_ID: "t7" }));
   let calls = [];
   try { calls = readFileSync(w.log, "utf8").trim().split("\n"); } catch { /* it never called hc */ }
   return { ...r, calls, ...w, jobDir: jobAt(w.ticketDir, w.branch, "auth").path };
@@ -511,7 +541,7 @@ test("spawn investigator takes exactly a name and a brief, and names its usage",
 });
 
 test("spawn investigator won't work in a ticket worktree that is gone", () => {
-  const r = runSpawn(["investigator", "x", "y"], { setup: (w) => execFileSync("rm", ["-rf", w.ticketDir]) });
+  const r = runSpawn(["investigator", "x", "y"], { setup: (w) => rmSync(w.ticketDir, { recursive: true, force: true }) });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /worktree .* is gone/);
   assert.deepEqual(r.calls, []);
@@ -526,7 +556,7 @@ test("spawn refuses what it can't start", () => {
 });
 
 test("spawn won't work in a ticket worktree that is gone", () => {
-  const r = runSpawn(["worker", "auth", "y"], { setup: (w) => execFileSync("rm", ["-rf", w.ticketDir]) });
+  const r = runSpawn(["worker", "auth", "y"], { setup: (w) => rmSync(w.ticketDir, { recursive: true, force: true }) });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /worktree .* is gone/);
 });
@@ -565,7 +595,7 @@ test("spawn cleans a job's name into the folder and branch: runs collapse, ends 
 test("spawn builds a job's folder from the ticket worktree it was given, even when that isn't the usual place", () => {
   const r = runSpawn(["worker", "auth", "y"], {
     workDir: (w) => join(w.dir, "somewhere else"),
-    setup: (w) => { git(w.ticketDir, "worktree", "move", w.ticketDir, join(w.dir, "somewhere else")); },
+    setup: (w) => { git(w.repo, "worktree", "move", w.ticketDir, join(w.dir, "somewhere else")); }, // from outside it: Windows can't move a folder git is in
   });
   assert.equal(r.status, 0, r.stderr);
   const at = jobAt(join(r.dir, "somewhere else"), r.branch, "auth");
@@ -590,7 +620,7 @@ test("a reopened run pane falls back to the partial props when nothing usable wa
 
 // merge: the same scratch repo, with a ticket worktree and a job whose worker has done some work. hc is a stand-in
 // that logs its calls; `hc ls --label …` answers from the terminals it is given, filtering the way hc does.
-function runMerge(args, { terminals = [], setup = () => {}, number = 12, failKill = false, lsRaw } = {}) {
+function runMerge(args, { terminals = [], setup = () => {}, number = 12, failKill = false, lsRaw, host = null } = {}) {
   const w = scratch();
   const jobs = jobAt(w.ticketDir, w.branch, "auth");
   const commit = (cwd, msg) => git(cwd, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", msg);
@@ -605,6 +635,12 @@ function runMerge(args, { terminals = [], setup = () => {}, number = 12, failKil
 const { appendFileSync, readFileSync } = require("node:fs");
 const argv = process.argv.slice(2);
 appendFileSync(${JSON.stringify(w.log)}, argv.map((a) => "[" + a + "]").join("") + "\\n");
+if (argv[0] === "exec") { // a run on another machine: what follows -- runs here (Git Bash as bash -c)
+  let cmd = argv.slice(argv.indexOf("--") + 1);
+  if (cmd[0] === ${JSON.stringify(GIT_BASH)}) cmd = ["bash", "-c", ...cmd.slice(2)];
+  const r = require("node:child_process").spawnSync(cmd[0], cmd.slice(1), { stdio: "inherit" });
+  process.exit(r.status ?? 1);
+}
 if (argv[0] === "ls") {
   const want = []; for (let i = 0; i < argv.length; i++) if (argv[i] === "--label") want.push(argv[++i]);
   const all = JSON.parse(readFileSync(${JSON.stringify(fixtures)}, "utf8"));
@@ -617,10 +653,10 @@ if (argv[0] === "kill" && ${failKill}) process.exit(1);
   chmodSync(join(w.bin, "hc"), 0o755);
   setup({ ...w, job: jobs, addJob, commit });
   const script = join(w.dir, "merge");
-  writeFileSync(script, mergeScript({ id: "12-abc", workDir: w.ticketDir, branch: w.branch, number, runDir: "/runs/12-abc" }));
+  writeFileSync(script, mergeScript({ id: "12-abc", workDir: w.ticketDir, branch: w.branch, number, runDir: "/runs/12-abc", host }));
   chmodSync(script, 0o755);
-  const env = { PATH: `${w.bin}:${process.env.PATH}`, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
-  const r = spawnSync(script, args, { env, encoding: "utf8" });
+  const env = envWith(w.bin, { GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" });
+  const r = runFile(script, args, env);
   let calls = [];
   try { calls = readFileSync(w.log, "utf8").trim().split("\n"); } catch { /* it never called hc */ }
   return { ...r, calls, ...w, job: jobs };
@@ -715,9 +751,9 @@ test("merge: a second run after the worker settled the conflict goes through", (
       const j = w.addJob();
       writeFileSync(join(w.ticketDir, "shared.txt"), "ticket\n"); git(w.ticketDir, "add", "shared.txt"); w.commit(w.ticketDir, "ticket side");
       writeFileSync(join(j.path, "shared.txt"), "ticket\njob\n"); git(j.path, "add", "shared.txt"); w.commit(j.path, "job side");
-      spawnSync("git", ["-C", j.path, "rebase", w.branch], { encoding: "utf8" }); // stops on the conflict, as the worker would see
+      spawnSync("git", ["-C", j.path, ...ident, "rebase", w.branch], { encoding: "utf8" }); // stops on the conflict, as the worker would see
       writeFileSync(join(j.path, "shared.txt"), "ticket'+BS+'njob'+BS+'n"); git(j.path, "add", "shared.txt");
-      execFileSync("git", ["-C", j.path, "rebase", "--continue"], { env: { ...process.env, GIT_EDITOR: "true" }, stdio: "ignore" });
+      execFileSync("git", ["-C", j.path, ...ident, "rebase", "--continue"], { env: { ...process.env, GIT_EDITOR: "true" }, stdio: "ignore" });
     },
   });
   assert.equal(r.status, 0, r.stderr);
@@ -757,7 +793,7 @@ test("merge: a job worktree in the middle of a rebase is left to its worker", ()
       const j = w.addJob();
       writeFileSync(join(w.ticketDir, "s.txt"), "t\n"); git(w.ticketDir, "add", "s.txt"); w.commit(w.ticketDir, "t");
       writeFileSync(join(j.path, "s.txt"), "j\n"); git(j.path, "add", "s.txt"); w.commit(j.path, "j");
-      spawnSync("git", ["-C", j.path, "rebase", w.branch], { encoding: "utf8" }); // stops on the conflict
+      spawnSync("git", ["-C", j.path, ...ident, "rebase", w.branch], { encoding: "utf8" }); // stops on the conflict
     },
   });
   assert.equal(r.status, 1);
@@ -799,7 +835,7 @@ test("merge: when a terminal can't be ended, the merge stays done and the job is
   assert.ok(git(r.ticketDir, "worktree", "list").includes("--auth"));
   // a second run: nothing new to merge, and the cleanup is done
   writeFileSync(join(r.bin, "hc"), "#!/bin/sh\necho '{\"terminals\":[]}'\n");
-  const again = spawnSync(join(r.dir, "merge"), ["auth"], { env: { PATH: `${r.bin}:${process.env.PATH}` }, encoding: "utf8" });
+  const again = runFile(join(r.dir, "merge"), ["auth"], envWith(r.bin));
   assert.equal(again.status, 0, again.stderr);
   assert.match(again.stdout, /had nothing new/);
   assert.ok(!git(r.ticketDir, "worktree", "list").includes("--auth"));
@@ -813,7 +849,7 @@ test("merge cleans a job's name as spawn does, whatever is in the arguments", ()
   const folder = spawned.calls[0].match(/\[--cwd\]\[([^\]]*)\]/)[1];
   const script = mergeScript({ id: "12-abc", workDir: spawned.ticketDir, branch: spawned.branch });
   writeFileSync(join(spawned.bin, "hc"), "#!/bin/sh\necho '{\"terminals\":[]}'\n");
-  const m = spawnSync("sh", ["-c", script, "merge", long], { env: { PATH: `${spawned.bin}:${process.env.PATH}` }, encoding: "utf8" });
+  const m = runText(script, ["merge", long], envWith(spawned.bin));
   assert.equal(m.status, 0, m.stderr); // found the same worktree and branch spawn made
   assert.ok(!existsSync(folder));
 });
@@ -822,7 +858,7 @@ test("the merge script quotes whatever is in the paths and ids", () => {
   const text = mergeScript({ id: "12-abc", workDir: "/src/it's here", branch: "workflow/12-fix", number: 12 });
   assert.ok(text.includes(`ticket_dir=${shQuote("/src/it's here")}`));
   assert.ok(text.startsWith("#!/bin/sh\n"));
-  const syntax = spawnSync("sh", ["-n"], { input: text, encoding: "utf8" });
+  const syntax = settled(spawnSync(SH, ["-n"], { input: text, encoding: "utf8" }));
   assert.equal(syntax.status, 0, syntax.stderr);
 });
 
@@ -840,7 +876,7 @@ test("merge: with another job worktree still open, it does not say the final rev
 
 test("merge: a failing worktree check does not fail a merge that is done", () => {
   const text = mergeScript({ id: "12-abc", workDir: "/src/app", branch: "workflow/12-fix", runDir: "/runs/12-abc" });
-  assert.match(text, /if listed=\$\(git -C "\$ticket_dir" worktree list --porcelain 2>\/dev\/null\); then/);
+  assert.match(text, /if listed=\$\(rgit -C "\$ticket_dir" worktree list --porcelain 2>\/dev\/null\); then/);
   assert.ok(text.trimEnd().endsWith("exit 0"));
 });
 
@@ -934,4 +970,117 @@ test("the easy ticket's agent runs with a worker's permissions and may start its
   assert.match(allowed, /Bash\(\/run\/1\/spawn:\*\)/);
   assert.doesNotMatch(allowed, /merge/);
   assert.equal(argv[argv.indexOf("--permission-mode") + 1], "auto");
+});
+
+// A run on another machine: the scripts still run here, beside the Task Orchestrator, but their git and path checks go through
+// `hc exec --on` (Git Bash on Windows) and their agents start there with `hc run --on`. remoteHc runs the exec'd commands here.
+const UNIX_HOST = { on: "vps", os: "unix" }, WINDOWS_HOST = { on: "desktop", os: "windows" };
+
+for (const host of [UNIX_HOST, WINDOWS_HOST]) {
+  test(`spawn worker on a ${host.os} machine makes the job's worktree there and starts the worker there, by its address`, () => {
+    const r = runSpawn(["worker", "Auth!", "do it"], { host });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stdout.trim(), "desktop/t9"); // the address, which the orchestrator uses with hc send, read and kill
+    const job = jobAt(r.ticketDir, r.branch, "auth");
+    assert.equal(git(job.path, "branch", "--show-current"), "workflow/12-fix--auth");
+    const execs = r.calls.filter((c) => c.startsWith("[exec]"));
+    assert.ok(execs.length >= 3, r.calls.join("\n")); // the ticket worktree check, the job's checks and git worktree add
+    for (const c of execs) {
+      assert.ok(c.startsWith(`[exec][--on][${host.on}][--timeout][600][--]`), c);
+      if (host.os === "windows") assert.ok(c.includes(`[${GIT_BASH}][-lc]`), c);
+      else assert.ok(c.includes("[sh][-c]"), c);
+    }
+    assert.ok(execs.some((c) => c.includes("[worktree][add][-b][workflow/12-fix--auth]")), execs.join("\n"));
+    const start = r.calls.find((c) => c.startsWith("[run]"));
+    assert.ok(start.startsWith(`[run][--bg][--json][--on][${host.on}][--name][12-abc-auth][--cwd][${job.path}]`), start);
+    assert.ok(start.endsWith("[--][claude][--model][a b]"), start);
+    assert.ok(r.calls.some((c) => c.startsWith("[wait][desktop/t9]")));
+    assert.ok(r.calls.some((c) => c.startsWith("[send][desktop/t9]") && c.includes("/runs/it's/worker.md")));
+  });
+}
+
+test("spawn on another machine: a ticket worktree gone there is said, and nothing starts", () => {
+  const r = runSpawn(["worker", "auth", "x"], { host: WINDOWS_HOST, workDir: (w) => `${w.ticketDir}-gone` });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /the ticket's worktree .*-gone is gone/);
+  assert.ok(r.calls.every((c) => !c.startsWith("[run]")));
+});
+
+test("spawn on another machine: hc run giving no address is a failure, and no brief is sent", () => {
+  const r = runSpawn(["reviewer", "final-review", "final", "x"], { host: UNIX_HOST, address: "" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /hc run gave no address/);
+  assert.ok(r.calls.every((c) => !c.startsWith("[send]")));
+});
+
+test("spawn here is unchanged: no hc exec, no --on, no --json, and it prints the terminal's name", () => {
+  const r = runSpawn(["worker", "auth", "x"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), "12-abc-auth");
+  assert.ok(r.calls.every((c) => !c.startsWith("[exec]") && !c.includes("[--on]") && !c.includes("[--json]")));
+});
+
+for (const host of [UNIX_HOST, WINDOWS_HOST]) {
+  test(`merge on a ${host.os} machine: its git runs there through hc exec, and the job is merged and removed`, () => {
+    const r = runMerge(["auth"], { host, terminals: [term("desktop/t9", "12-abc-auth", "FOLDER")], setup: (w) => {
+      aJob(w);
+      const fix = join(w.dir, "terminals.json");
+      writeFileSync(fix, readFileSync(fix, "utf8").replaceAll("FOLDER", w.job.path));
+    } });
+    assert.equal(r.status, 0, r.stderr + r.stdout);
+    assert.deepEqual(git(r.ticketDir, "log", "--format=%s").split("\n").slice(0, 2), ["Job auth: commit what was left in the worktree (ticket #12)", "add auth"]);
+    const execs = r.calls.filter((c) => c.startsWith("[exec]"));
+    assert.ok(execs.length > 5, r.calls.join("\n"));
+    for (const c of execs) assert.ok(c.startsWith(`[exec][--on][${host.on}][--timeout][600][--][${host.os === "windows" ? GIT_BASH : "sh"}]`), c);
+    assert.deepEqual(r.calls.filter((c) => c.startsWith("[kill]")), ["[kill][desktop/t9]"]);
+    assert.equal(git(r.ticketDir, "worktree", "list").includes("--auth"), false);
+    assert.match(r.stdout, /start the final review now with: \/runs\/12-abc\/spawn reviewer final-review final/); // this computer's spawn
+  });
+}
+
+test("merge on another machine: a conflict there is aborted and named, as here", () => {
+  const r = runMerge(["auth"], { host: WINDOWS_HOST, setup: (w) => {
+    const j = w.addJob();
+    writeFileSync(join(j.path, "same.txt"), "job\n"); git(j.path, "add", "same.txt"); w.commit(j.path, "job side");
+    writeFileSync(join(w.ticketDir, "same.txt"), "ticket\n"); git(w.ticketDir, "add", "same.txt"); w.commit(w.ticketDir, "ticket side");
+  } });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /conflicts with workflow\/12-fix in:\n {2}same\.txt/);
+  assert.equal(git(r.job.path, "status", "--porcelain"), ""); // the rebase was aborted
+});
+
+test("the scripts for another machine say which machine, and only Windows names Git Bash", () => {
+  const argv = { worker: ["claude"], reviewer: ["claude"], investigator: ["claude"] };
+  const s = (host) => spawnScript({ id: "12-abc", runDir: "C:/Users/me/.herdr/workflow-runs/12-abc", workDir: "C:/Users/me/w", branch: "b", argv, host });
+  const m = (host) => mergeScript({ id: "12-abc", workDir: "C:/Users/me/w", branch: "b", number: 12, runDir: "/r", host });
+  for (const text of [s(WINDOWS_HOST), m(WINDOWS_HOST)]) {
+    assert.match(text, /^machine='desktop'$/m);
+    assert.ok(text.includes(`-- '${GIT_BASH}' -lc "$s" github-tasks "$@"`));
+    const body = text.split("\n").filter((l) => !/^(rgit|exists|on_machine)\(\)/.test(l)).join("\n"); // all but the helpers themselves
+    assert.ok(!/(^|[\s;(])git -C/m.test(body), "every git call goes through rgit");
+    assert.ok(!body.includes("[ -e") && !body.includes("[ ! -e"), "every path check goes through exists");
+  }
+  for (const text of [s(UNIX_HOST), m(UNIX_HOST)]) { assert.match(text, /^machine='vps'$/m); assert.ok(!text.includes(GIT_BASH)); }
+  for (const text of [s(null), m(null)]) { assert.ok(!text.includes("machine=") && !text.includes("hc exec")); assert.ok(text.includes('rgit() { git "$@"; }')); }
+  assert.ok(s(WINDOWS_HOST).includes("run_dir='C:/Users/me/.herdr/workflow-runs/12-abc'")); // what the agents read is there
+});
+
+test("the orchestrator of a run on another machine is told where things are, and to run git there through hc exec", () => {
+  const text = orchestratorPrompt({ workflow: workflow(), id: "12-abc", ...place, runDir: "C:/Users/me/.herdr/workflow-runs/1", workDir: "C:/Users/me/w", on: "desktop", scriptsDir: "/Users/me/.herdr/workflow-runs/1" });
+  assert.ok(text.includes("are on the machine desktop, while you and your scripts in /Users/me/.herdr/workflow-runs/1 are on this computer"));
+  assert.ok(text.includes("`hc file read --on desktop <path>`"));
+  assert.ok(text.includes("use the address `spawn` prints (desktop/tN)"));
+  assert.ok(text.includes("`/Users/me/.herdr/workflow-runs/1/spawn worker <job> '<brief>'`"));
+  assert.ok(text.includes("`/Users/me/.herdr/workflow-runs/1/merge <job>`"));
+  assert.ok(text.includes("described in /Users/me/.herdr/workflow-runs/1/ticket.md"));
+  assert.ok(text.includes("`hc exec --on desktop -- git -C C:/Users/me/w fetch origin`"));
+  assert.ok(text.includes("`hc exec --on desktop -- git -C C:/Users/me/w push origin workflow/12-fix-the-login`"));
+  assert.equal(bodyOf(text).match(/[.!?](\s|$)/g).length, 3); // still three sentences
+});
+
+test("the orchestrator of a run here is told nothing about another machine", () => {
+  const text = prompt("orchestrator");
+  assert.ok(!text.includes("hc exec") && !text.includes("the machine"));
+  assert.ok(text.includes("`git -C /src/app-12-fix-the-login fetch origin`"));
+  assert.ok(text.includes("`/runs/1/spawn worker <job> '<brief>'`"));
 });

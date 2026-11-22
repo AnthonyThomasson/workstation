@@ -9,7 +9,7 @@
 // workflow's agents, beside its orchestrator (runs-ui/run-page.js); "investigation", a New Task session's Done button, beside its agent (investigations-ui/investigation-page.js); "new-task", the small dialog the + opens to describe the ticket (investigations-ui/new-task.js); "start", the Start dialog a row's Start opens when several workflows match or none (runs-ui/start-dialog-view.js); "prompt", one read-only agent prompt (prompts-page.js); "agent-bar", the bar over a peeked agent's terminal in its popup (widgets/agent-bar.js); "agent-backdrop", the dim around that popup, a press on which closes it (widgets/agent-backdrop.js).
 import { View, div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, spaces, focused, notify, shared, setShared, terminals, playSound, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
+import { run, exec, spaces, focused, notify, shared, setShared, terminals, playSound, theme, layout, nextCommand, openOverlay, props as blockProps } from "herdr";
 import { BACK_AFTER, CLI_ACTION, modCommand, Shakes, bellFirst, bellTip, bellToast, waitingAgents, INVESTIGATION_LABEL, RUN_LABEL, normalizeItems, groupTickets, groupByStage, projectOrdered, planMove, applyMove, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload, CHANGED, AGENT_KEY, DOCTOR_KEY } from "./lib/index.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField, moveTicket, setupProject, setupNote } from "./github/index.js";
 import { installedAgents, investigationsHere, reconnectInvestigations, viewInvestigation, InvestigationPage, NewTaskPage, RefactorPage } from "./investigations-ui/index.js";
@@ -17,7 +17,7 @@ import { S, icon, stop, note, iconButton, action, gh, later, AgentBar, AgentBack
 import { Auth, REFRESH, LOGIN } from "./github-ui/index.js";
 import { TaskEditor } from "./editor/index.js";
 import { readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen } from "./runs-ui/index.js";
-import { statusColor, statusLabel, cantStartHere, startOverlay, startProps } from "./runs/index.js";
+import { statusColor, statusLabel, cantStartHere, startOverlay, startProps, shOn } from "./runs/index.js";
 import { TaskSettings } from "./settings/index.js";
 import { matchWorkflows, REFACTOR } from "./workflow/index.js";
 import { WorkflowEditor, WorkflowList, loadWorkflows } from "./workflow-ui/index.js";
@@ -89,7 +89,7 @@ export default class GitHubTasks extends View {
       return;
     }
     this.handle = cx.focus_handle();
-    this.auth = new Auth();
+    this.auth = new Auth((on, script, args, opts) => shOn({ exec }, on, script, args, opts));
     this.changedAt = shared(CHANGED) ?? null; // a save in an editor refreshes the list
     this.lastCwd = new Map();
     this.lists = new SpaceLists(); // each space's last list, shown at once when the space is selected again

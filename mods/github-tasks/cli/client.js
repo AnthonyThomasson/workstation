@@ -19,18 +19,24 @@ export const CLAIM_WAIT = 10000; // how long a request may wait for the sidebar 
 export const POKE_FAILED_WAIT = 3000; // the same once `herdr-app do` has failed (no window open, say)
 const TICK = 100;
 
+// A path the command line was given, resolved from base (the cwd): as a POSIX path when base is one (any Unix, and the tests'
+// made-up /repo on Windows too), else as this machine's (C:\Users\… on Windows).
+const resolveFrom = (base, p) => (String(base).startsWith("/") ? path.posix : path).resolve(base, p);
+// A file in the mailbox: its folders come from workflow/places.js in forward slashes (C:/Users/… on Windows, which Node reads too).
+const inBox = (dir, name) => `${dir}/${name}`;
+
 // The texts of --body-file (a file, or "-" for what is piped in), read here so the request carries the text itself.
 function withFiles(args, io) {
   if (args.bodyFile === undefined) return args;
   const { bodyFile, ...rest } = args;
-  const text = bodyFile === "-" ? io.stdin() : io.read(path.resolve(io.cwd(), bodyFile));
+  const text = bodyFile === "-" ? io.stdin() : io.read(resolveFrom(io.cwd(), bodyFile));
   if (text === null) throw new Error(`Can't read ${bodyFile}.`);
   return { ...rest, body: text };
 }
 
 // Waits for the reply to request id. { reply } or { error } (Herdr didn't take it, or didn't answer in time).
 async function waitForReply(id, { requests, replies, deadline, poked, started }, io) {
-  const waiting = path.join(requests, fileName(id)), claimed = path.join(requests, claimedName(id)), answer = path.join(replies, fileName(id));
+  const waiting = inBox(requests, fileName(id)), claimed = inBox(requests, claimedName(id)), answer = inBox(replies, fileName(id));
   for (;;) {
     const text = io.read(answer);
     if (text !== null) {
@@ -66,11 +72,11 @@ export async function main(argv, io) {
   try { args = withFiles(parsed.args, io); } catch (e) { io.err(`herdr-tasks: ${e.message}`); return EXIT.usage; }
   const requests = cliRequestsDir(io.home()), replies = cliRepliesDir(io.home());
   const started = io.now(), id = requestId(started, io.random());
-  const request = makeRequest({ id, op, args, where: { cwd: path.resolve(io.cwd(), global.cwd ?? "."), on: global.on }, project: global.project, at: started, timeout: global.timeout });
+  const request = makeRequest({ id, op, args, where: { cwd: resolveFrom(io.cwd(), global.cwd ?? "."), on: global.on }, project: global.project, at: started, timeout: global.timeout });
   try {
     io.mkdir(requests);
     io.mkdir(replies);
-    io.write(path.join(requests, fileName(id)), `${JSON.stringify(request)}\n`);
+    io.write(inBox(requests, fileName(id)), `${JSON.stringify(request)}\n`);
   } catch (e) {
     io.err(`herdr-tasks: can't write the request into ${requests}: ${e.message}`);
     return EXIT.failed;

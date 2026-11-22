@@ -12,10 +12,11 @@ import { START, START_SCRIPT, ALIVE, SWEEP, JOB_MINUTES, lastLine } from "./mode
 //   run(args, { on, cwd }): one exec of `skillshare args` in cwd (home when null). Short reads only.
 //   job(args, { on, cwd, script, sleep }): `skillshare args`, or with `script` a script of ours
 //     given args, run detached. Resolves when it ends to { code, stdout, stderr }; a job that
-//     dies without an exit code, or runs past JOB_MINUTES, resolves with code 1 and the reason.
+//     dies without an exit code, or runs past its budget, resolves with code 1 and the reason.
 //     `sleep(ms)` waits between polls (a Herdr view passes cx.sleep).
+//   budgetMs: how long a job may take, in wall time from its start (JOB_MINUTES by default); now() reads the clock.
 // The first job on each machine also removes job folders that a closed panel never collected.
-export function createRunner({ exec, readText, pollMs = 500, aliveEvery = 10, budgetMs = JOB_MINUTES * 60 * 1000 }) {
+export function createRunner({ exec, readText, pollMs = 500, aliveEvery = 10, budgetMs = JOB_MINUTES * 60 * 1000, now = Date.now }) {
   const swept = new Set();
   const read = (path, on) => Promise.resolve().then(() => readText(path, on)).catch(() => null);
   const sh = (script, args = [], on = null) => exec(script, args, on);
@@ -24,12 +25,12 @@ export function createRunner({ exec, readText, pollMs = 500, aliveEvery = 10, bu
 
   async function job(args, { on = null, cwd = null, script = null, sleep }) {
     if (!swept.has(on ?? "")) { swept.add(on ?? ""); sh(SWEEP, [], on); }
+    const until = now() + budgetMs;
     const s = script ? await sh(START_SCRIPT, [cwd ?? "", script, ...args], on) : await sh(START, [cwd ?? "", ...args], on);
-    const d = s.stdout.trim();
+    const d = lastLine(s.stdout); // the folder is START's last line, whatever a shell's startup printed before it
     if (s.code !== 0 || !d) return { code: s.code || 1, stdout: "", stderr: s.stderr || "Could not start skillshare" };
     const done = async (result) => { sh('rm -rf "$1"', [d], on); return result; };
-    const polls = Math.ceil(budgetMs / pollMs);
-    for (let i = 1; i <= polls; i++) {
+    for (let i = 1; now() < until; i++) {
       await sleep(pollMs);
       const code = await read(`${d}/code`, on);
       if (code !== null && code.trim() !== "") {
@@ -42,7 +43,9 @@ export function createRunner({ exec, readText, pollMs = 500, aliveEvery = 10, bu
         return done({ code: 1, stdout: "", stderr: lastLine(err) || "skillshare stopped before it finished" });
       }
     }
-    return { code: 1, stdout: "", stderr: `skillshare took longer than ${JOB_MINUTES} minutes` };
+    const minutes = budgetMs / 60000;
+    const said = lastLine(await read(`${d}/err`, on));
+    return { code: 1, stdout: "", stderr: `skillshare took longer than ${minutes} minute${minutes === 1 ? "" : "s"}${said ? `; it last said: ${said}` : ""}` };
   }
 
   return { sh, run, job };

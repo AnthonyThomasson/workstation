@@ -3,16 +3,29 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import {
   NEW_TASK_PLUMBING, investigationSpawnScript, newTaskAgentArgv, newTaskInvestigatorPrompt, newTaskWorkerPrompt, refactorAgentArgv, sessionFiles, subAgentArgv,
 } from "./investigation-spawn.js";
 import { beginInvestigation, investigationRunArgs } from "./investigations.js";
-import { shQuote } from "../runs/index.js";
+import { GIT_BASH, shQuote } from "../runs/index.js";
 import { worktreePath } from "../workflow/index.js";
 import { newTaskPrompt, refactorPrompt, ASK_WITH_TOOL } from "../lib/index.js";
 
 const DIR = "/home/me/.herdr/investigations/inv-x";
+
+// Scripts run for real. Here a #! file runs by its #! line and sh is on the PATH; Windows has neither, so there both go through Git Bash.
+// A script gets only PATH (bin first) and `extra`; on Windows also the few variables its programs need to start at all. spawnSync on
+// Windows leaves stdout and stderr unset when nothing ran: they are "" here, and stderr says why.
+const WIN = process.platform === "win32";
+const SH = WIN ? GIT_BASH : "sh";
+const WINDOWS_ENV = ["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA"];
+const envWith = (bin, extra = {}) => ({
+  ...(WIN ? Object.fromEntries(Object.entries(process.env).filter(([k]) => WINDOWS_ENV.includes(k.toUpperCase()))) : {}),
+  PATH: `${bin}${delimiter}${process.env.PATH}`, ...extra,
+});
+const settled = (r) => ({ ...r, stdout: r.stdout ?? "", stderr: r.stderr ?? r.error?.message ?? "" });
+const runFile = (file, args, env) => settled(WIN ? spawnSync(GIT_BASH, [file, ...args], { env, encoding: "utf8" }) : spawnSync(file, args, { env, encoding: "utf8" }));
 // The values of a flag that takes any number of them, up to the next flag.
 const values = (argv, flag) => {
   const from = argv.indexOf(flag) + 1;
@@ -163,7 +176,7 @@ function runSpawn(args, { failSend = false, setup = () => {}, id = ID, remove = 
   const script = join(w.dir, "spawn");
   writeFileSync(script, investigationSpawnScript({ id, dir: "/sessions/it's", workDir: w.workDir, branch: w.branch, argv: { investigator: ["claude", "--effort", "low"], worker: ["claude", "--model", "a b"] } }));
   chmodSync(script, 0o755);
-  const r = spawnSync(script, args, { env: { PATH: `${w.bin}:${process.env.PATH}`, HC_TERMINAL_ID: "t7" }, encoding: "utf8" });
+  const r = runFile(script, args, envWith(w.bin, { HC_TERMINAL_ID: "t7" }));
   let calls = [];
   try { calls = readFileSync(w.log, "utf8").trim().split("\n"); } catch { /* it never called hc */ }
   return { ...r, calls, ...w, jobDir: `${w.workDir}--auth` };
@@ -272,7 +285,7 @@ test("the script is safe to read back: an id, folder or branch with quotes and s
   assert.ok(text.includes(`work_dir=${shQuote(`/w/${nasty}`)}`));
   assert.ok(text.includes(`session_branch=${shQuote(`investigate/${nasty}`)}`));
   assert.ok(text.includes(`set -- ${shQuote("claude")} ${shQuote(nasty)}`));
-  assert.equal(spawnSync("sh", ["-n"], { input: text }).status, 0, "it parses");
+  assert.equal(spawnSync(SH, ["-n"], { input: text }).status, 0, "it parses");
 });
 
 // ---- The session folder's files ----------------------------------------------------------------------

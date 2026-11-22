@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   firstLine, projectConfigPath, repoWorkflowsDir, globalWorkflowsDir, tildePath, workflowDirs, refactorDirs, kindDirs, repoRefactorsDir, globalRefactorsDir,
-  runDir, runPanePath, runIdFromDir, worktreePath, sessionFolder, cliDir, cliRequestsDir, cliRepliesDir,
+  runDir, runPanePath, runIdFromDir, worktreePath, sessionFolder, cliDir, cliRequestsDir, cliRepliesDir, posixFolder,
 } from "./places.js";
 
 test("firstLine takes the first non-empty line, trimmed", () => {
@@ -59,11 +59,42 @@ test("a run folder and its pane.json live under the home's workflow-runs folder"
 test("the run-folder guard accepts only one safe child of workflow-runs", () => {
   assert.equal(runIdFromDir("/home/me/.herdr/workflow-runs/12-abc"), "12-abc");
   assert.equal(runIdFromDir(runDir("/home/me", "12-abc")), "12-abc");
+  assert.equal(runIdFromDir(runDir("C:/Users/me", "12-abc")), "12-abc"); // a run's folder on a Windows machine
   for (const path of [
+    "C:/Users/me/.herdr/workflow-runs", "C:/Users/me/.herdr/workflow-runs/..", "C:relative/.herdr/workflow-runs/9-abc",
+    "CD:/x/.herdr/workflow-runs/9-abc", "C:\\Users\\me\\.herdr\\workflow-runs", "C:\\Users\\me\\.herdr\\workflow-runs\\..",
+    "C:\\Users\\me\\.herdr\\workflow-runs\\9-abc\\extra", "C:relative\\.herdr\\workflow-runs\\9-abc",
     "/home/me/.herdr/workflow-runs", "/home/me/.herdr/workflow-runs/", "/home/me/.herdr/workflow-runs/.",
     "/home/me/.herdr/workflow-runs/..", "/home/me/.herdr/workflow-runs/9..abc", "/home/me/.herdr/workflow-runs/9-abc/extra",
     "relative/.herdr/workflow-runs/9-abc", null,
   ]) assert.equal(runIdFromDir(path), null, String(path));
+});
+
+test("on Windows the guard takes a run's folder in either slash style, as path.join and git write it", () => {
+  assert.equal(runIdFromDir("C:\\Users\\me\\.herdr\\workflow-runs\\9-abc"), "9-abc");
+  assert.equal(runIdFromDir("C:/Users/me/.herdr/workflow-runs/9-abc"), "9-abc");
+  assert.equal(runIdFromDir(runDir("C:\\Users\\me", "9-abc")), "9-abc");
+  assert.equal(runIdFromDir("/home/me/.herdr/workflow-runs/9\\abc"), "9\\abc", "on Unix a backslash is part of a name");
+});
+
+test("a Windows home or repo builds the same forward-slash paths in either slash style", () => {
+  assert.equal(runDir("C:\\Users\\me", "12-abc"), "C:/Users/me/.herdr/workflow-runs/12-abc");
+  assert.equal(runDir("C:/Users/me/", "12-abc"), "C:/Users/me/.herdr/workflow-runs/12-abc");
+  assert.equal(runPanePath("C:\\Users\\me\\", "12-abc"), "C:/Users/me/.herdr/workflow-runs/12-abc/pane.json");
+  assert.equal(cliDir("C:\\Users\\me"), "C:/Users/me/.herdr/tasks-cli");
+  assert.equal(sessionFolder("C:\\Users\\me", "inv-x"), "C:/Users/me/.herdr/investigations/inv-x");
+  assert.equal(repoWorkflowsDir("C:\\src\\app"), "C:/src/app/.herdr/workflows");
+  assert.equal(globalWorkflowsDir("C:\\Users\\me\\.config\\herdr-app\\"), "C:/Users/me/.config/herdr-app/workflows");
+  assert.equal(projectConfigPath("C:\\code\\ticket\\"), "C:/code/ticket/.herdr/config.yaml");
+  assert.equal(projectConfigPath("\\\\server\\share\\ticket"), "//server/share/ticket/.herdr/config.yaml");
+});
+
+test("posixFolder names one folder one way: no trailing slash, and a Windows path in forward slashes", () => {
+  assert.equal(posixFolder("/src/app/"), "/src/app");
+  assert.equal(posixFolder("C:\\src\\app\\"), "C:/src/app");
+  assert.equal(posixFolder("C:/src/app"), "C:/src/app");
+  assert.equal(posixFolder("/src/a\\b"), "/src/a\\b", "on Unix a backslash is part of a name");
+  assert.equal(posixFolder(null), "");
 });
 
 test("a ticket's worktree is where Herdr's worktree mod puts that branch", () => {
@@ -72,6 +103,18 @@ test("a ticket's worktree is where Herdr's worktree mod puts that branch", () =>
 
 test("the worktree folder is named for the main checkout, whatever else is passed", () => {
   assert.equal(worktreePath("/src/my app/", "workflow/3-x", "/h/"), "/h/.herdr/worktrees/my app/workflow-3-x");
+});
+
+test("on Windows the worktree folder is named for the repo whichever slashes its path and the home use", () => {
+  const want = "C:/Users/me/.herdr/worktrees/my app/workflow-3-x";
+  assert.equal(worktreePath("C:\\Users\\me\\src\\my app", "workflow/3-x", "C:\\Users\\me"), want);
+  assert.equal(worktreePath("C:/Users/me/src/my app/", "workflow/3-x", "C:/Users/me/"), want);
+  assert.equal(worktreePath("C:\\Users\\me\\src\\my app\\", "workflow/3-x", "C:/Users/me"), want);
+});
+
+test("on Unix a backslash in a folder's name is part of the name", () => {
+  assert.equal(worktreePath("/src/a\\b", "workflow/3-x", "/h"), "/h/.herdr/worktrees/a\\b/workflow-3-x");
+  assert.equal(runDir("/home/a\\b", "1-x"), "/home/a\\b/.herdr/workflow-runs/1-x");
 });
 
 test("odd branch names are slugged the way Herdr's worktree mod does", () => {

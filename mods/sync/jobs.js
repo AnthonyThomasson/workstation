@@ -10,10 +10,14 @@
 // and exit. The job writes its own pid once detached, and the starter waits for it (up to 5 s) so it
 // is not ended before then. Herdr also hangs up programs that carry the exec's HC_SCOPE once the exec
 // returns (git died with exit 129), so the job drops it.
-const DETACH = 'unset HC_SCOPE; if command -v setsid >/dev/null 2>&1; then bg() { exec setsid "$@"; }; else set -m; bg() { exec "$@"; }; fi';
+// Git Bash and Cygwin have no setsid, and job control stays off there: a job in a background process group that starts a Windows
+// program (git.exe, skillshare.exe) can be stopped by the console it shares, and then never writes its exit code.
+const DETACH = 'unset HC_SCOPE; if command -v setsid >/dev/null 2>&1; then bg() { exec setsid "$@"; }; else case "${OSTYPE:-}" in msys*|cygwin*) ;; *) set -m ;; esac; bg() { exec "$@"; }; fi';
 // Named so SWEEP can tell our job folders from anything else in the temp folder.
 const TEMP = 'd=$(mktemp -d "${TMPDIR:-/tmp}/sync-mod-job.XXXXXX")';
-const READY = 'i=0; while [ ! -s "$d/pid" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done; printf %s "$d"';
+// Then prints the folder as the machine itself names it, so readText finds it: cygpath -m on Git Bash, MSYS2 or Cygwin (/tmp/x is
+// C:/Users/…/Temp/x there, which Windows programs read; /c/Users/… they can't), the path as it is elsewhere.
+const READY = 'i=0; while [ ! -s "$d/pid" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done; if command -v cygpath >/dev/null 2>&1; then cygpath -m "$d"; else printf %s "$d"; fi';
 
 // sh -c START <name> <script> <args...>: runs our script given <args...>; prints the temp folder.
 export const START = `${DETACH}; ${TEMP}; script=$1; shift
@@ -36,6 +40,10 @@ export const SWEEP = `for d in "\${TMPDIR:-/tmp}"/sync-mod-job.*; do
   rm -rf "$d"
 done; exit 0`;
 
+// How long a budget is, as the message says it: "15 minutes", "1 minute", "0.1 seconds".
+export const spellBudget = (ms) => (ms >= 60000 && ms % 60000 === 0
+  ? `${ms / 60000} minute${ms === 60000 ? "" : "s"}` : `${ms / 1000} second${ms === 1000 ? "" : "s"}`);
+
 const lastLine = (text) => String(text ?? "").trim().split("\n").filter((l) => l.trim()).pop()?.trim() ?? "";
 
 // createRunner({ exec, readText }):
@@ -45,22 +53,23 @@ const lastLine = (text) => String(text ?? "").trim().split("\n").filter((l) => l
 // The returned runner:
 //   sh(script, args, on): one exec of a script of ours. Short reads only.
 //   job(args, { on, script, sleep }): our `script` given args, run detached. Resolves when it ends to { code, stdout, stderr }; a job that
-//     dies without an exit code, or runs past JOB_MINUTES, resolves with code 1 and the reason.
+//     dies without an exit code, or runs past its budget, resolves with code 1 and the reason.
 //     `sleep(ms)` waits between polls (a Herdr view passes cx.sleep).
+//   budgetMs: how long a job may take, in wall time from its start (JOB_MINUTES by default); now() reads the clock.
 // The first job on each machine also removes job folders that a closed view never collected.
-export function createRunner({ exec, readText, pollMs = 500, aliveEvery = 10, budgetMs = JOB_MINUTES * 60 * 1000 }) {
+export function createRunner({ exec, readText, pollMs = 500, aliveEvery = 10, budgetMs = JOB_MINUTES * 60 * 1000, now = Date.now }) {
   const swept = new Set();
   const read = (path, on) => Promise.resolve().then(() => readText(path, on)).catch(() => null);
   const sh = (script, args = [], on = null) => exec(script, args, on);
 
   async function job(args, { on = null, script, sleep }) {
     if (!swept.has(on ?? "")) { swept.add(on ?? ""); sh(SWEEP, [], on); }
+    const until = now() + budgetMs;
     const s = await sh(START, [script, ...args], on);
-    const d = s.stdout.trim();
+    const d = lastLine(s.stdout); // the folder is START's last line, whatever a shell's startup printed before it
     if (s.code !== 0 || !d) return { code: s.code || 1, stdout: "", stderr: s.stderr || "Could not start the job" };
     const done = async (result) => { await sh('rm -rf "$1"', [d], on); return result; };
-    const polls = Math.ceil(budgetMs / pollMs);
-    for (let i = 1; i <= polls; i++) {
+    for (let i = 1; now() < until; i++) {
       await sleep(pollMs);
       const code = await read(`${d}/code`, on);
       if (code !== null && code.trim() !== "") {
@@ -73,7 +82,8 @@ export function createRunner({ exec, readText, pollMs = 500, aliveEvery = 10, bu
         return done({ code: 1, stdout: "", stderr: lastLine(err) || "The job stopped before it finished" });
       }
     }
-    return { code: 1, stdout: "", stderr: `The job took longer than ${JOB_MINUTES} minutes` };
+    const said = lastLine(await read(`${d}/err`, on));
+    return { code: 1, stdout: "", stderr: `The job took longer than ${spellBudget(budgetMs)}${said ? `; it last said: ${said}` : ""}` };
   }
 
   return { sh, job };
