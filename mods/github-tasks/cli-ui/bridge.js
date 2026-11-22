@@ -5,7 +5,7 @@
 // request is taken by renaming it, so a second copy (another layout's sidebar) that tries as well finds it gone.
 import { exec, home, readTextFile, watchFolder, writeTextFile } from "herdr";
 import { cliRepliesDir, cliRequestsDir } from "../workflow/index.js";
-import { checkRequest, claimedName, failReply, fileName, okReply, partName, waitingId } from "../cli/index.js";
+import { Answer, checkRequest, claimedName, failReply, fileName, okReply, partName, waitingId } from "../cli/index.js";
 import { HANDLERS, explain } from "./handlers.js";
 
 const START_AFTER = 2000; // a copy that only lives for a moment (herdr-app check renders the mod once) never takes a request
@@ -73,8 +73,10 @@ export class Bridge {
     let reply = null;
     if (checked.request) {
       const req = checked.request;
-      try { reply = okReply(id, await HANDLERS[req.op](req, cx)); }
-      catch (e) { reply = failReply(id, explain(e, req), { code: e?.code ?? null, data: e?.data ?? null }); }
+      try {
+        const answer = await HANDLERS[req.op](req, cx);
+        reply = answer instanceof Answer ? okReply(id, answer.data, answer) : okReply(id, answer);
+      } catch (e) { reply = failReply(id, explain(e, req), { code: e?.code ?? null, data: e?.data ?? null, notes: e?.notes }); }
     } else if (!checked.expired) {
       reply = failReply(checked.id ?? id, checked.error);
     }

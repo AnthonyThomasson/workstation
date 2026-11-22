@@ -6,7 +6,8 @@
 export const VERSION = 1;
 
 // What herdr-tasks exits with.
-export const EXIT = { ok: 0, failed: 1, usage: 2, choose: 3, noAnswer: 4 };
+// 5: the Test device isn't bound or can't be used; 6: it is busy with another run.
+export const EXIT = { ok: 0, failed: 1, usage: 2, choose: 3, noAnswer: 4, notReady: 5, busy: 6 };
 
 // Every operation the bridge answers (commands.js names the command each comes from).
 export const OPS = [
@@ -14,6 +15,7 @@ export const OPS = [
   "start", "view", "runs", "merge",
   "new-task", "refactor", "investigations", "investigation-view", "investigation-done",
   "projects", "project-use", "project-create", "workflows", "doctor", "refresh",
+  "device", "device-check", "device-run",
 ];
 
 // A request's id: its time and a random part, both base 36, so the names sort by time and never hold a path.
@@ -61,20 +63,42 @@ export function checkRequest(text, now = Date.now()) {
 }
 
 // The replies. code: a word client.js turns into an exit code ("choose": a choice is needed; data then holds the choices).
-export const okReply = (id, data = {}) => ({ v: VERSION, id, ok: true, data });
-export const failReply = (id, error, { code = null, data = null } = {}) => ({ v: VERSION, id, ok: false, error: String(error ?? "It failed."), code, data });
+// exit: the status to exit with when it isn't the reply's own (a device run whose command failed is an answer, with exit 1); notes:
+// lines for stderr (what the command line says besides the answer).
+const extras = ({ exit, notes } = {}) => ({ ...(Number.isInteger(exit) && exit > 0 ? { exit } : {}), ...(notes?.length ? { notes: notes.map(String) } : {}) });
+export const okReply = (id, data = {}, more) => ({ v: VERSION, id, ok: true, data, ...extras(more) });
+export const failReply = (id, error, { code = null, data = null, notes } = {}) => ({ v: VERSION, id, ok: false, error: String(error ?? "It failed."), code, data, ...extras({ notes }) });
 
 // A failure with a reply code and data, thrown by a handler and turned into a failReply by the bridge.
 export class CliError extends Error {
-  constructor(message, { code = null, data = null } = {}) {
+  constructor(message, { code = null, data = null, notes = [] } = {}) {
     super(message);
     this.code = code;
     this.data = data;
+    this.notes = notes;
+  }
+}
+
+// What a handler returns for an answer that carries more than data: an exit status other than 0 and notes for stderr.
+export class Answer {
+  constructor(data, { exit = 0, notes = [] } = {}) {
+    this.data = data;
+    this.exit = exit;
+    this.notes = notes;
   }
 }
 
 // The exit code for a reply.
-export const exitFor = (reply) => (reply?.ok ? EXIT.ok : reply?.code === "choose" ? EXIT.choose : EXIT.failed);
+export function exitFor(reply) {
+  if (reply?.ok) return Number.isInteger(reply.exit) ? reply.exit : EXIT.ok;
+  switch (reply?.code) {
+    case "choose": return EXIT.choose;
+    case "usage": return EXIT.usage;
+    case "not-ready": return EXIT.notReady;
+    case "busy": return EXIT.busy;
+    default: return EXIT.failed;
+  }
+}
 
 // ---- Finding what was typed ------------------------------------------------------------------------------------------
 

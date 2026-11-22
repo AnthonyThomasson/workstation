@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CliError, EXIT, OPS, VERSION, checkRequest, claimedName, exitFor, failReply, fileName, findNamed, findTicket, isId, makeRequest, okReply, partName, pickProject, requestId, waitingId } from "./protocol.js";
+import { Answer, CliError, EXIT, OPS, VERSION, checkRequest, claimedName, exitFor, failReply, fileName, findNamed, findTicket, isId, makeRequest, okReply, partName, pickProject, requestId, waitingId } from "./protocol.js";
 
 const NOW = 1_800_000_000_000;
 const request = (over = {}) => ({ ...makeRequest({ id: "abc-12345678", op: "list", args: {}, where: { cwd: "/repo", on: null }, project: null, at: NOW, timeout: 120 }), ...over });
@@ -116,4 +116,19 @@ test("the project is the one named, else the sidebar's pick, else there is none 
   assert.equal(pickProject(projects, "P2", projects[0]).project.id, "P2");
   assert.match(pickProject(projects, "Other", projects[0]).error, /no project linked to this repo "Other"/);
   assert.match(pickProject([], null, null).error, /project create/);
+});
+
+test("a reply can carry an exit status and notes; a device's codes map to exits 5 and 6", () => {
+  assert.deepEqual(okReply("a-b", { x: 1 }, { exit: 0, notes: [] }), okReply("a-b", { x: 1 }));
+  const failed = okReply("a-b", { exitCode: 1 }, { exit: 1, notes: ["Uncommitted changes aren't sent."] });
+  assert.equal(failed.exit, 1);
+  assert.deepEqual(failed.notes, ["Uncommitted changes aren't sent."]);
+  assert.equal(exitFor(failed), EXIT.failed);
+  assert.equal(exitFor(failReply("a-b", "x", { code: "not-ready" })), 5);
+  assert.equal(exitFor(failReply("a-b", "x", { code: "busy" })), 6);
+  assert.equal(exitFor(failReply("a-b", "x", { code: "usage" })), 2);
+  assert.deepEqual(failReply("a-b", "x", { code: "busy", notes: ["n"] }).notes, ["n"]);
+  assert.equal(new CliError("x", { code: "busy", notes: ["n"] }).notes[0], "n");
+  assert.deepEqual({ ...new Answer({ a: 1 }, { exit: 1, notes: ["n"] }) }, { data: { a: 1 }, exit: 1, notes: ["n"] });
+  assert.deepEqual([EXIT.notReady, EXIT.busy], [5, 6]);
 });

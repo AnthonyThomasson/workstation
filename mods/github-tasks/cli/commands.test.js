@@ -104,3 +104,54 @@ test("the help names every global option", () => {
   for (const name of Object.keys(GLOBAL_FLAGS)) assert.ok(text.includes(`--${name}`), name);
   assert.match(text, /Exit codes: 0 done, 1 failed, 2 usage, 3 a choice is needed/);
 });
+
+test("device and device check take nothing; device check waits longer than the usual 120s", () => {
+  const d = parse(["device"]);
+  assert.equal(d.op, "device");
+  assert.deepEqual(d.args, {});
+  assert.equal(d.global.timeout, 120);
+  const c = parse(["device", "check", "--json"]);
+  assert.equal(c.op, "device-check");
+  assert.equal(c.global.json, true);
+  assert.equal(c.global.timeout, 300);
+  assert.match(parse(["device", "foo"]).error, /doesn't take "foo"/);
+});
+
+test("device run takes --commit and --keep before --, and everything after -- is the command", () => {
+  const r = parse(["device", "run", "--commit", "abc123", "--keep", "--", "npm", "test", "--", "--grep", "x"]);
+  assert.equal(r.op, "device-run");
+  assert.deepEqual(r.args, { commit: "abc123", keep: true, command: ["npm", "test", "--", "--grep", "x"] });
+  assert.deepEqual(parse(["device", "run", "--commit=HEAD~1", "--", "git", "log"]).args, { commit: "HEAD~1", command: ["git", "log"] });
+  assert.deepEqual(parse(["--cwd", "/repo", "device", "run", "--", "make"]).args, { command: ["make"] });
+  assert.equal(parse(["--cwd", "/repo", "device", "run", "--", "make"]).global.cwd, "/repo");
+  // a command's own flags and words are never read as ours, even when they look like options or command names
+  assert.deepEqual(parse(["device", "run", "--", "--keep", "device", "run", "--json"]).args, { command: ["--keep", "device", "run", "--json"] });
+  assert.equal(parse(["device", "run", "--", "--json"]).global.json, false);
+  // one argument is a shell line, as the runner takes it
+  assert.deepEqual(parse(["device", "run", "--", "npm test && echo ok"]).args.command, ["npm test && echo ok"]);
+});
+
+test("device run needs a command after --", () => {
+  for (const argv of [["device", "run"], ["device", "run", "--"], ["device", "run", "--keep"], ["device", "run", "npm", "test"], ["device", "run", "--commit", "x", "--"]]) {
+    const r = parse(argv);
+    assert.match(r.error, /device run needs a command after --/, argv.join(" "));
+    assert.equal(r.command.op, "device-run");
+  }
+  assert.match(parse(["device", "run", "--nope", "--", "ls"]).error, /Unknown option --nope/);
+  assert.match(parse(["device", "run", "--commit"]).error, /--commit needs a value/);
+  assert.match(parse(["device", "run", "--help"]).help, /^Usage: herdr-tasks device run \[--commit <rev>\] \[--keep\] -- <command\.\.\.>/);
+});
+
+test("device run waits 720s by default (the 600s cap plus transfer and cleanup), and --timeout changes it", () => {
+  assert.equal(parse(["device", "run", "--", "ls"]).global.timeout, 720);
+  assert.equal(parse(["device", "run", "--timeout", "30", "--", "ls"]).global.timeout, 30);
+  assert.equal(parse(["device", "run", "--", "--timeout", "30"]).global.timeout, 720);
+});
+
+test("the help lists the Test device group and exit codes 5 and 6", () => {
+  const text = usage();
+  assert.match(text, /\nTest device\n/);
+  for (const u of ["device", "device check", "device run [--commit <rev>] [--keep] -- <command...>"]) assert.ok(text.includes(`  ${u}\n`), u);
+  assert.match(text, /Exit codes: 0 done, 1 failed, 2 usage, 3 a choice is needed[^\n]*4 Herdr didn't answer,\n5 the test device isn't bound or can't be reached[^\n]*6 the test device is busy/);
+  assert.match(text, /720 for device run/);
+});

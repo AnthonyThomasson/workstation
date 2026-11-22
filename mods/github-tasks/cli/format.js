@@ -98,6 +98,36 @@ function projects(d) {
   return [d.repo, ...d.projects.map((p) => `${p.chosen ? "*" : " "} ${p.title}  ${p.url}  (${p.id})`)].join("\n");
 }
 
+// The Test device: its machine and light, then each problem with its fix.
+const LIGHT = { green: "green", yellow: "yellow", red: "red" };
+const problems = (health) => (health?.checks ?? []).filter((c) => c.level !== "green").map((c) => `  ! ${c.message}${c.fix ? `\n      fix: ${c.fix}` : ""}`);
+const checkedAt = (at) => (Number.isFinite(at) ? new Date(at).toISOString().replace(/\.\d+Z$/, "Z") : "never");
+
+function device(d) {
+  const lines = [`Test device: ${d.machine} (${d.os}) · ${LIGHT[d.light?.level] ?? "unknown"}`];
+  lines.push(`  Repo folder for ${d.repo ?? "this repo"}: ${d.repoRoot ?? "not set (Task settings, Test device)"}`);
+  lines.push(`  Starts on the device: ${d.startHere?.[d.repo] ? "on" : "off"}`);
+  lines.push(`  Last deep check: ${checkedAt(d.light?.checkedAt)}`);
+  lines.push(...problems(d.light));
+  return lines.join("\n");
+}
+
+function deviceCheck(d) {
+  const lines = [`Test device ${d.machine}: ${LIGHT[d.health?.level] ?? "unknown"} (checked ${checkedAt(d.health?.at)})`];
+  for (const c of d.health?.checks ?? []) {
+    lines.push(`  ${c.level === "green" ? "ok" : c.level === "red" ? "RED" : "yellow"}  ${c.message}${c.level !== "green" && c.fix ? `\n      fix: ${c.fix}` : ""}`);
+  }
+  return lines.join("\n");
+}
+
+// The run's log as it came (a trailing newline is the printer's), then where --keep left things.
+function deviceRun(d) {
+  const log = String(d.log ?? "").replace(/\r?\n$/, "");
+  const lines = [log];
+  if (d.kept) lines.push(`Kept on ${d.device}: worktree ${d.kept.worktree}, log ${d.kept.log}`);
+  return lines.join("\n");
+}
+
 const FORMATS = {
   list,
   show,
@@ -123,6 +153,9 @@ const FORMATS = {
   doctor: (d) => (!d.found ? "The doctor hasn't looked at this place yet." : d.issues.length ? d.issues.map((i) => `! ${i.message}`).join("\n") : "The doctor found nothing wrong.")
     + (d.place?.cwd ? `\n(for ${d.place.cwd}, the folder the Tasks sidebar shows)` : ""),
   refresh: () => "The Tasks sidebar is reloading.",
+  device,
+  "device-check": deviceCheck,
+  "device-run": deviceRun,
 };
 
 // The text for a reply to op: its data's lines, or the error, with the choices when a choice is needed.

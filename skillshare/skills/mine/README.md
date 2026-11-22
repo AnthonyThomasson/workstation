@@ -19,5 +19,6 @@ Each skill in `skillshare/skills/mine/` installs by URL (add `-g` for the global
 | Skill | What it does | Install |
 | --- | --- | --- |
 | `add-own-skill` | Add a personal skill to this workstation's Skillshare source. | `skillshare install github.com/AnthonyThomasson/workstation/skillshare/skills/mine/add-own-skill` |
+| `test-device` | Run a command or a repo's tests on the Test device bound in Task settings with `herdr-tasks device`: check it, send a commit, read the exit code and log. | `skillshare install github.com/AnthonyThomasson/workstation/skillshare/skills/mine/test-device` |
 
 When you add a skill to `mine/`, add a row here with its one-line description and its install command (`skillshare install github.com/AnthonyThomasson/workstation/skillshare/skills/mine/<name>`). The `add-own-skill` skill does this as one of its steps.

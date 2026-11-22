@@ -2,4 +2,4 @@
 // and imported by nothing (it uses node's own modules, which the mod can't).
 export { COMMANDS, parseArgv, usage } from "./commands.js";
 export { formatReply } from "./format.js";
-export { CliError, EXIT, OPS, VERSION, checkRequest, claimedName, failReply, fileName, findNamed, findTicket, isId, okReply, partName, pickProject, waitingId } from "./protocol.js";
+export { Answer, CliError, EXIT, OPS, VERSION, checkRequest, claimedName, failReply, fileName, findNamed, findTicket, isId, okReply, partName, pickProject, waitingId } from "./protocol.js";

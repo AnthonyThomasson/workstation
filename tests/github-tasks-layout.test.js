@@ -49,7 +49,7 @@ export const LAYOUT = {
     ["editor", "doctor"],
     ["investigations-ui"],
     ["investigations"],
-    ["runs-ui"],
+    ["runs-ui", "devices-ui"],
     ["devices"],
     ["runs"],
     ["workflow-ui"],

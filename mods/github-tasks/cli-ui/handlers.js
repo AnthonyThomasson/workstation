@@ -14,7 +14,9 @@ import { finishInvestigation, investigationsHere, loadTypes, startTask, viewInve
 import { investigationRow, newTaskProps, pickKey, pickValue } from "../investigations/index.js";
 import { doctorFor } from "../doctor/index.js";
 import { gh } from "../widgets/index.js";
-import { CliError, findNamed, findTicket, pickProject } from "../cli/index.js";
+import { Answer, CliError, findNamed, findTicket, pickProject } from "../cli/index.js";
+import { checkDevice, deviceExec, listMachines, readBinding } from "../devices-ui/index.js";
+import { cheapFor, cheapHealth, checkView, deviceView, runOnDevice, runView } from "../devices/index.js";
 
 // The place a request acts from, as the sidebar's `where`: { cwd, on }.
 const placeOf = (req) => ({ cwd: req.where.cwd, on: req.where.on ?? undefined });
@@ -101,6 +103,17 @@ function relabel(labels, add = [], remove = []) {
 
 const SECTION_NAMES = { next: "Up Next", backlog: "Backlog" };
 const NOT_SAVED = (status) => (sameStatus(status, STATUSES.wontDo) ? "Won't Do is set with herdr-tasks wontdo, which also closes the issue." : null);
+
+// `hc machine ls --json`, or the reason it couldn't be read (the device can't be judged then: not ready).
+async function machinesOrFail() {
+  try { return await listMachines(); } catch (e) { throw new CliError(`Couldn't read hc machine ls: ${e.message}`, { code: "not-ready" }); }
+}
+
+// A devices/device-cli.js view as an answer (data, exit status, notes) or the failure the bridge turns into a reply code.
+function viewAnswer(view) {
+  if (!view.ok) throw new CliError(view.message, { code: view.code, data: view.data ?? null, notes: view.notes ?? [] });
+  return new Answer(view.data, { exit: view.exit ?? 0, notes: view.notes ?? [] });
+}
 
 export const HANDLERS = {
   // The sidebar's list: Investigations, Up Next, Backlog, In Progress and In Review, in its order.
@@ -375,6 +388,36 @@ export const HANDLERS = {
     const place = shared(PLACE) ?? null;
     const found = doctorFor(shared(DOCTOR_KEY), place);
     return { place, found: Boolean(found), issues: (found?.issues ?? []).map((i) => ({ kind: i.kind, message: i.message })) };
+  },
+
+  // The Test device card, as words: the binding, its light (from `hc machine ls` alone: nothing runs on the device) and the cached checks.
+  async device(req) {
+    const repo = await findRepo(gh, placeOf(req));
+    return viewAnswer(deviceView({ repo, binding: readBinding(), machines: await machinesOrFail(), now: Date.now() }));
+  },
+
+  // The card's Check: the deep check, one script on the device (a desktop spawn can take a minute).
+  async "device-check"(req) {
+    const where = placeOf(req);
+    const repo = await findRepo(gh, where);
+    const binding = readBinding();
+    if (!binding) return viewAnswer(checkView({ repo, binding: null }));
+    // A machine that is gone or not connected is red from the machine list: nothing is run on it (and nothing waits for it).
+    const machines = await machinesOrFail();
+    if (cheapHealth(binding, machines).checks.some((c) => c.id === "machine" || c.id === "connected")) return viewAnswer(deviceView({ repo, binding, machines }));
+    return viewAnswer(checkView({ repo, binding: await checkDevice({ repo, cwd: where.cwd }) }));
+  },
+
+  // `device run`: a command on the device against a commit of this computer's repo (devices/test-run.js does the steps).
+  async "device-run"(req) {
+    if (req.where.on) throw new CliError("device run packs a repo on this computer: leave out --on.", { code: "usage" });
+    const { commit, keep, command } = req.args;
+    if (!Array.isArray(command) || !command.length) throw new CliError("device run needs a command after --.", { code: "usage" });
+    const where = placeOf(req);
+    const repo = await findRepo(gh, where);
+    const binding = readBinding();
+    const cheap = binding ? cheapFor(cheapHealth(binding, await machinesOrFail())) : null;
+    return viewAnswer(runView(await runOnDevice({ exec: deviceExec }, { repo, binding, cheap, cwd: where.cwd, commit: commit || undefined, keep: Boolean(keep), command })));
   },
 
   // The sidebar's Refresh.
