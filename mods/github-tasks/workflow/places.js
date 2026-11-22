@@ -72,3 +72,16 @@ export function sessionFolder(home, id) {
   if (!/^inv-[a-z0-9]+$/.test(String(id ?? "")) || !posixFolder(home)) return null;
   return `${posixFolder(home)}/.herdr/investigations/${id}`;
 }
+
+// The test device's runs (devices/test-run.js): each `herdr-tasks device run` gets <home>/.herdr/test-runs/<id>/ (a git worktree),
+// beside <id>.bundle, <id>.log and <id>.code, and one .lock folder per device. `home` is the device's own home (passed in to keep
+// this pure). The id's own helpers return null unless it is a plain run id (lowercase letters and digits), so traversal such as
+// "..", "a/b" or "" can never name a path outside test-runs, which the run's cleanup and the 24h sweep remove from.
+export const testRunsDir = (home) => `${posixFolder(home)}/.herdr/test-runs`;
+export const testRunLockDir = (home) => `${testRunsDir(home)}/.lock`;
+export const testRunId = (id) => (/^[a-z0-9]{1,40}$/.test(String(id ?? "")) ? String(id) : null);
+const testRunChild = (home, id, suffix) => (testRunId(id) && posixFolder(home) ? `${testRunsDir(home)}/${id}${suffix}` : null);
+export const testRunFolder = (home, id) => testRunChild(home, id, "");
+export const testRunBundle = (home, id) => testRunChild(home, id, ".bundle");
+export const testRunLog = (home, id) => testRunChild(home, id, ".log");
+export const testRunCode = (home, id) => testRunChild(home, id, ".code");
