@@ -19,6 +19,7 @@ import { TaskEditor } from "./editor/index.js";
 import { readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen } from "./runs-ui/index.js";
 import { statusColor, statusLabel, cantStartHere, startOverlay, startProps, shOn } from "./runs/index.js";
 import { TaskSettings } from "./settings/index.js";
+import { Machines, deviceDot } from "./devices-ui/index.js";
 import { matchWorkflows, REFACTOR } from "./workflow/index.js";
 import { WorkflowEditor, WorkflowList, loadWorkflows } from "./workflow-ui/index.js";
 import { PromptPage } from "./prompts-page.js";
@@ -105,6 +106,8 @@ export default class GitHubTasks extends View {
     this.waiting = new Map(); // row id -> the agents of its run or session that need the person (blocked or in error), as of the last draw
     this.agents = []; // installed agents New Task can use
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
+    this.machines = new Machines(); // hc machine ls, for the Test device's light beside the gear: asked by refresh, never on its own timer
+    this.machines.load(cx);
     this.doctor = startDoctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
     this.bridge = new Bridge(cx); // herdr-tasks, the command line: its requests are answered here, by the same calls the buttons make
     cx.timer.every(POLL, (cx) => this.refresh(cx));
@@ -141,9 +144,10 @@ export default class GitHubTasks extends View {
     return { space: space.id, on: space.machine ?? undefined, folder: this.lastCwd.get(space.id) ?? (space.folder || undefined) };
   }
 
-  // quiet: a background look (the 3-second poll), which doesn't spin the Refresh button. fresh: the person pressed Refresh,
+  // quiet: a background look (the 60-second poll), which doesn't spin the Refresh button. fresh: the person pressed Refresh,
   // so the place's repo is looked for again too.
   refresh(cx, { quiet = false, fresh = false } = {}) {
+    this.machines.ensure(cx, { fresh }); // hc machine ls is local to herdr-core; asked again when old, changed, or the person pressed Refresh
     const ctx = this.ctx;
     if (!ctx || this.writing || (this.loading && !(this.quiet && !quiet))) return; // a load now could read GitHub before a write lands
     if (this.loading) this.token++; // a person's refresh replaces a quiet one still going
@@ -254,12 +258,15 @@ export default class GitHubTasks extends View {
     if (ctx && (newSpace || newFolder)) later(cx, (cx) => this.refresh(cx));
 
     const problems = doctorFor(shared(DOCTOR_KEY), shared(PLACE))?.issues?.length ?? 0; // only an answer for the place shown
+    this.machines.ensure(cx); // a machine added or removed shows in the dot's list without waiting for the next refresh
+    const dot = deviceDot(t, this.machines, () => showSettings()); // the Test device's light, only while one is bound
     return v_flex().id("github-tasks").track_focus(this.handle).size_full().min_h(0).border_t(1).border_color(t.border)
       .text_color(t.foreground).text_size(S().body)
       .on_mouse_up("left", (_e, cx) => this.endDrag(cx)) // a release on anything that isn't a drop target drops nothing
       .child(h_flex().h(36).flex_none().pl(14).pr(8).gap(2).items_center()
         .child(div().flex_1().text_size(S().label).font_semibold().text_color(t.muted).child("Tasks"))
         .when(Boolean(ctx), (el) => el.child(this.newTaskButton(t)).child(this.refactorButton(t)))
+        .when(Boolean(dot), (el) => el.child(dot))
         .child(iconButton("settings", "settings", t, () => showSettings(), false, problems ? `Task settings (${problems} ${problems === 1 ? "problem" : "problems"} found)` : "Task settings", undefined, problems ? t.ansi1 : undefined))
         .when(Boolean(ctx), (el) => el.child(iconButton("refresh", this.loading && !this.quiet ? "ring" : "sync", t, (_e, cx) => this.refresh(cx, { fresh: true }), this.loading && !this.quiet, "Refresh"))))
       .when(this.projects.length > 1, (el) => el.child(this.renderContext(t)))

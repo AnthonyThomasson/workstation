@@ -1,4 +1,4 @@
-// The Tasks settings page: the agent sections in two groups, Orchestrators and Agents (settings-model.js), each group and entry
+// The Tasks settings page: the Test device card (devices-ui/), then the agent sections in two groups, Orchestrators and Agents (settings-model.js), each group and entry
 // collapsing and remembering its state, each entry with a read-only prompt tab, then the workflows and refactors
 // (workflow-list.js), which main.js builds once so they keep their place between renders. The agent controls are
 // global; the prompt tabs carry a snapshot of the current repo/project/status spellings. Not a View of its own:
@@ -10,7 +10,8 @@ import { markdownLiteral, normalizeGroomer, normalizeSubAgent, GROOMER_KEY, INVE
 import { CLAUDE_MODELS } from "../workflow/index.js";
 import { installedAgents } from "../investigations-ui/index.js";
 import { loadStatusField } from "../github/index.js";
-import { normalizeSettingsSections, SETTINGS_GROUPS, groupKey, promptTitle } from "./settings-model.js";
+import { TestDeviceCard } from "../devices-ui/index.js";
+import { normalizeSettingsSections, SETTINGS_GROUPS, SETTINGS_BLOCKS, groupKey, promptTitle } from "./settings-model.js";
 import { fixPrompt, doctorFor } from "../doctor/index.js";
 import { S, stop, note, icon, iconButton, action, gh } from "../widgets/index.js";
 
@@ -30,6 +31,7 @@ export class TaskSettings {
     this.where = props?.where ?? {};
     this.options = []; // the project's Status field options, for spelling the prompt's statuses; empty with no project
     this.agents = []; // installed agents New Task can use
+    this.device = new TestDeviceCard({ repo: this.repo, where: this.where }, cx); // the Test device card above the groups
     this.doctorOpen = false; // the doctor's popover
     this.copied = false; // the prompt was just copied
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
@@ -90,7 +92,7 @@ export class TaskSettings {
         .when(Boolean(this.onClose), (el) => el.child(iconButton("settings-close", "close", t, () => this.onClose(), false, "Close"))))
       .child(div().id("task-settings-body").flex_1().min_h(0).overflow_y_scrollbar()
         .child(v_flex().px(20).py(16).gap(16)
-          .children(SETTINGS_GROUPS.map((group) => this.group(t, group)))
+          .children(SETTINGS_BLOCKS.map((block) => (block === "testDevice" ? this.device.render(t, cx) : this.group(t, SETTINGS_GROUPS.find((g) => g.key === block)))))
           .when(Boolean(this.workflows), (el) => el.child(this.workflows.render(cx)))
           .when(Boolean(this.refactors), (el) => el.child(this.refactors.render(cx)))));
   }
