@@ -2,9 +2,10 @@
 // binding, `hc machine ls`, and the calls that bind and check a machine. The decisions are in devices/ (test-device.js,
 // deep-check.js); this only gives them Herdr's exec and state. Nothing here runs on an interval.
 import { exec, hc, readTextFile, setShared, shared } from "herdr";
-import { TEST_DEVICE, projectConfigPath } from "../lib/index.js";
+import { TEST_DEVICE } from "../lib/index.js";
 import { bindMachine, machinesFrom, normalizeBinding, repoRootFor, requiresFromConfig, runDeepCheck, withHealth } from "../devices/index.js";
 import { hostOf } from "../runs/index.js";
+import { projectConfigPath } from "../workflow/index.js";
 
 // Herdr's exec as the devices/ code takes it: resolves { code, stdout, stderr } and never rejects (a call that can't run is code 1).
 export const deviceExec = (cmd, args, opts) => exec(cmd, args, opts)

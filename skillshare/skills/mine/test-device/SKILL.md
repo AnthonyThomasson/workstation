@@ -22,7 +22,7 @@ Don't use it for GUI or interactive tests (commands run headless), for runs long
 herdr-tasks device
 ```
 
-Prints the bound machine, its light, the repo's folder on it and each failing check with a fix. Green: go. Yellow: usable, and the lines say what is degraded (for example the machine's `gh` can't reach the project). Red, or nothing bound: it exits 5 (below), and what to fix is printed. `--json` gives the binding (`machine`, `os`, `repoRoots`, `light`, ...), so a script reads the device name from there.
+Prints the bound machine, its light, the repo's folder on it and each failing check with a fix. Green: go. Yellow: usable, and the lines say what is degraded (for example the machine's `gh` can't reach the project). Red, or nothing bound: it exits 5 (below), and what to fix is printed. `--json` gives the binding (`machine`, `os`, `repoRoots`, `light`, ...), so a script reads the device name from there. When nothing is bound or the light is red, `--json` prints the error wrapper instead (`{ "error": …, "code": "not-ready", "data": { …the binding and light… } }`) and exits 5, so read the binding from `.data` there, and `.data.machine` is null when nothing is bound. The same wrapper comes with `device check --json` and `device run --json` for exits 5 and 6.
 
 The light is cheap (it only asks Herdr which machines are connected). To look on the device itself, run `herdr-tasks device check`: one script there, a minute on a slow machine. Run it when the light is yellow "Not checked yet", after the machine changed, or when a run said something is wrong with it. Don't run it in a loop.
 
