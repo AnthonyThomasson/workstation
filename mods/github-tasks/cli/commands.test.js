@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { COMMANDS, GLOBAL_FLAGS, parseArgv, usage } from "./commands.js";
 import { OPS } from "./protocol.js";
+import { DEEP_TIMEOUT_MS, DEEP_WAIT_MARGIN_S, DEEP_WAIT_S } from "../lib/index.js";
 
 const parse = (line) => parseArgv(line);
 
@@ -113,7 +114,7 @@ test("device and device check take nothing; device check waits longer than the u
   const c = parse(["device", "check", "--json"]);
   assert.equal(c.op, "device-check");
   assert.equal(c.global.json, true);
-  assert.equal(c.global.timeout, 300);
+  assert.equal(c.global.timeout, DEEP_WAIT_S);
   assert.match(parse(["device", "foo"]).error, /doesn't take "foo"/);
 });
 
@@ -146,6 +147,13 @@ test("device run waits 720s by default (the 600s cap plus transfer and cleanup),
   assert.equal(parse(["device", "run", "--", "ls"]).global.timeout, 720);
   assert.equal(parse(["device", "run", "--timeout", "30", "--", "ls"]).global.timeout, 30);
   assert.equal(parse(["device", "run", "--", "--timeout", "30"]).global.timeout, 720);
+});
+
+test("device check waits longer than the deep check's own timeout, derived from it", () => {
+  assert.ok(DEEP_WAIT_S * 1000 > DEEP_TIMEOUT_MS + 10000, "a margin past the deep timeout, so the two don't race at the limit");
+  assert.equal(DEEP_WAIT_S, DEEP_TIMEOUT_MS / 1000 + DEEP_WAIT_MARGIN_S);
+  assert.equal(parse(["device", "check"]).global.timeout, DEEP_WAIT_S);
+  assert.match(usage(), new RegExp(`${DEEP_WAIT_S} for device check`));
 });
 
 test("the help lists the Test device group and exit codes 5 and 6", () => {

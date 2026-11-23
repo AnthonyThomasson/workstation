@@ -8,7 +8,7 @@ import { GitHubError, createProject, createTicket, findProjects, findRepo, loadI
 import { CHANGED, DOCTOR_KEY, FOLDER_LABEL, INVESTIGATION_LABEL, PLACE, ROLE_LABEL, RUN_LABEL, STATUSES, TICKET_LABEL, chooseProject, editorOverlay, groupByStage, groupTickets, normalizeItems, pickableStatuses, planMove, projectKey, sameStatus, sectionOf, sectionPlan, waitingAgents } from "../lib/index.js";
 import { RunPage, liveRunFor, readPlace, runProps, startChosen, viewRun } from "../runs-ui/index.js";
 import { cantStartHere, orchestratorOf, rowDetail, ticketKey } from "../runs/index.js";
-import { matchWorkflows, runPanePath } from "../workflow/index.js";
+import { matchWorkflows, runPanePath, testRunsDir } from "../workflow/index.js";
 import { loadRefactors, loadWorkflows } from "../workflow-ui/index.js";
 import { finishInvestigation, investigationsHere, loadTypes, startTask, viewInvestigation } from "../investigations-ui/index.js";
 import { investigationRow, newTaskProps, pickKey, pickValue } from "../investigations/index.js";
@@ -419,7 +419,7 @@ export const HANDLERS = {
     const repo = await findRepo(gh, where);
     const binding = readBinding();
     const cheap = binding ? cheapFor(cheapHealth(binding, await machinesOrFail())) : null;
-    return viewAnswer(runView(await runOnDevice({ exec: deviceExec }, { repo, binding, cheap, cwd: where.cwd, commit: commit || undefined, keep: Boolean(keep), command })));
+    return viewAnswer(runView(await runOnDevice({ exec: deviceExec }, { repo, binding, cheap, cwd: where.cwd, tmpDir: testRunsDir(home()), commit: commit || undefined, keep: Boolean(keep), command })));
   },
 
   // The sidebar's Refresh.

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agoText, cardView, headerDot, lightColor, machineNames, machinesChanged, parseMachineList, signInFor, spaceFolders, startToggle, tooltipOf } from "./card-model.js";
+import { agoText, cardView, headerDot, lightColor, machinesChanged, machinesDue, namesKey, signInFor, spaceFolders, startToggle, tooltipOf } from "./card-model.js";
 import { normalizeBinding, healthOf } from "./test-device.js";
 import { LOGIN, REFRESH } from "../lib/index.js";
 
@@ -28,12 +28,6 @@ test("agoText: just now, minutes, hours, days", () => {
 test("the light's colour is the theme's green, yellow or red", () => {
   assert.deepEqual(["green", "yellow", "red"].map(lightColor), ["ansi2", "ansi3", "ansi1"]);
   assert.equal(lightColor("nonsense"), "ansi1");
-});
-
-test("machineNames lists hc machine ls --json machines by name, from the object or a bare list", () => {
-  assert.deepEqual(machineNames({ machines: [{ name: "desktop" }, { name: "" }, { host: "x" }, { name: "laptop" }] }), ["desktop", "laptop"]);
-  assert.deepEqual(machineNames([{ name: "a" }]), ["a"]);
-  assert.deepEqual(machineNames(null), []);
 });
 
 test("an unbound card offers the machines to pick, or Add a machine when there are none", () => {
@@ -137,13 +131,6 @@ test("spaceFolders: the folders of the spaces on a machine, each once", () => {
   assert.deepEqual(spaceFolders(null, "desktop"), []);
 });
 
-test("parseMachineList reads hc machine ls --json; anything unreadable is null, never an empty list", () => {
-  assert.deepEqual(parseMachineList('{"machines":[{"name":"desktop","state":"connected"}]}'), [{ name: "desktop", state: "connected" }]);
-  assert.deepEqual(parseMachineList('{"machines":[]}'), []);
-  assert.deepEqual(parseMachineList("[{\"name\":\"a\"}]"), [{ name: "a" }]);
-  for (const bad of ["", "not json", "{}", "null", '{"machines":"x"}', undefined]) assert.equal(parseMachineList(bad), null, String(bad));
-});
-
 test("the picker lists only connected machines; a list of only disconnected ones says so instead of offering Add a machine", () => {
   const list = [{ name: "desktop", state: "connected" }, { name: "old", state: "disconnected" }, { name: "away", state: "connecting" }];
   const v = cardView({ binding: null, machines: list, repo: REPO, now: NOW });
@@ -189,4 +176,27 @@ test("the Start toggle is offered only with a repo folder, off by default, and s
   const v = cardView({ binding: bound({ startHere: { [REPO]: true } }), machines: connected, repo: REPO, now: NOW });
   assert.equal(v.startToggle.on, true);
   assert.equal(cardView({ binding: bound(), machines: null, repo: REPO, now: NOW }).startToggle.offered, true); // still loading: the same
+});
+
+test("machinesDue: stale asks; a changed set of live names asks once, not every 2s, when the names never agree", () => {
+  const list = [{ name: "desktop" }, { name: "laptop" }];
+  const base = { now: 100000, at: 99000 - 3000 + 1000, loading: false, live: [{ name: "desktop" }, { name: "laptop" }], list, askedFor: null };
+  assert.equal(machinesDue(base), false, "agree and fresh: no");
+  assert.equal(machinesDue({ ...base, loading: true, at: 0 }), false, "never while a load runs");
+  assert.equal(machinesDue({ ...base, at: 100000 - 20001 }), true, "20s old: stale");
+  assert.equal(machinesDue({ ...base, at: 100000 - 20000 }), false, "exactly 20s is not yet stale");
+
+  const live = [{ name: "desktop" }]; // machine ls says desktop and laptop, herdr's machines() only desktop: they never agree
+  assert.equal(machinesDue({ ...base, live }), true, "a new set of live names: ask");
+  assert.equal(machinesDue({ ...base, live, at: 100000 - 1500 }), false, "not faster than the minimum gap");
+  assert.equal(machinesDue({ ...base, live, askedFor: namesKey(live) }), false, "already asked for this set: not again every 2s");
+  // simulate a page re-rendering every 2s for a minute
+  let at = 0, asks = 0, askedFor = null;
+  for (let now = 2500; now <= 60000; now += 2500) {
+    if (machinesDue({ now, at, loading: false, live, list, askedFor })) { asks += 1; at = now; askedFor = namesKey(live); }
+  }
+  assert.ok(asks <= 4, `3 stale asks at most in a minute, got ${asks}`);
+  assert.equal(machinesDue({ ...base, live: [{ name: "desktop" }, { name: "new" }], askedFor: namesKey(live) }), true, "the live names changing again asks again");
+  assert.equal(machinesDue({ ...base, live: [{ name: "desktop" }], list: null }), false, "no list yet: the first load is already on its way");
+  assert.equal(namesKey([{ name: "b" }, { name: "a" }, { name: "a" }, { name: "t", temporary: true }, { name: null }]), "a\nb");
 });

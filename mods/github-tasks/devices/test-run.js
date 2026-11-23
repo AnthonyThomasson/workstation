@@ -166,7 +166,8 @@ const gitHere = (exec, cwd) => (...args) => exec("git", ["-C", cwd, ...args], {}
 // Runs a command on the test device against a commit. Never rejects; the cleanup runs on both sides whatever happens.
 //   deps: { exec, now = Date.now, random = Math.random }
 //   input: { repo, binding, cheap, cwd (a folder of the repo on this computer), commit = "HEAD", keep = false, command: [string],
-//            tmpDir (a folder here for the local bundle) }
+//            tmpDir (a folder here for the local bundle: made if missing; the handler gives one under this computer's .herdr, as the
+//            mod has no os.tmpdir, and nothing hard-codes /tmp) }
 // -> { code, result?, message?, notes: [stderr lines], kept?: { worktree, log } } where result is
 //    { device, commit, exitCode, log, durationMs, timedOut }; `code` is the process exit status (0, 1, 2, 5 or 6).
 export async function runOnDevice(deps, input) {
@@ -176,6 +177,7 @@ export async function runOnDevice(deps, input) {
   if (blocked) return { ...blocked, notes };
 
   const { binding, cwd, command, keep = false, tmpDir } = input;
+  if (!tmpDir) return { code: EXIT.USAGE, message: "device run needs a folder here for the bundle (tmpDir).", notes };
   const machine = binding.machine;
   const home = posixFolder(binding.home);
   const root = binding.repoRoots[input.repo];
@@ -183,7 +185,7 @@ export async function runOnDevice(deps, input) {
   const dir = testRunsDir(home), lockDir = testRunLockDir(home), folder = testRunFolder(home, id);
   const bundle = testRunBundle(home, id), log = testRunLog(home, id), codeFile = testRunCode(home, id);
   const ref = testRunRef(id);
-  const localBundle = `${posixFolder(tmpDir || "/tmp")}/herdr-test-${id}.bundle`;
+  const localBundle = tmpDir ? `${posixFolder(tmpDir)}/herdr-test-${id}.bundle` : null;
   // The device's host is known from the binding (probed once when it was bound), so no probe is made here.
   const remote = { exec, seen: new Map([[machine, { on: machine, os: binding.os, home }]]) };
   const local = { exec };
@@ -216,6 +218,7 @@ export async function runOnDevice(deps, input) {
     if (state.took_over) notes.push(`Took over a stale lock from run ${state.took_over}.`);
 
     // 3. pack, here: a private ref at the commit, bundled thin against the base when the device has it, else whole.
+    await shOn(local, null, 'mkdir -p "$1"', [posixFolder(tmpDir)]).catch(() => {}); // a missing folder shows as the bundle failing below
     const made = await here("update-ref", ref, commit);
     if (made.code !== 0) throw new Step(EXIT.USAGE, `Couldn't make ${ref} here: ${said(made)}`);
     refMade = true;

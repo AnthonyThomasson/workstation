@@ -3,10 +3,10 @@
 // check`, never on an interval.
 //   deps: { exec, probe?, seen? } as runs/remote.js's hostOf and shOn take them
 import { hostOf, shOn } from "../runs/index.js";
+import { DEEP_TIMEOUT_MS } from "../lib/index.js";
 import { DEEP_SCRIPT, deepArgs, deepChecks, healthOf, probeFailure } from "./test-device.js";
 
-// A desktop spawn costs 4-24s (95s seen), and the cap Herdr allows is 600s: generous, not unbounded.
-export const DEEP_TIMEOUT_MS = 300000;
+export { DEEP_TIMEOUT_MS };
 
 // -> { host: { on, os, home } | null, health: { level, checks, at } }. Never rejects: a probe or exec that fails is a red check.
 //   input: { machine, repo, repoRoot, requires, now, host }. host: the binding's cached { os, home } (or a full host), so a check after

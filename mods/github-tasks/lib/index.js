@@ -13,6 +13,7 @@ export { applyMove, dropAfterId, moveStatus, planMove, projectOrdered, sectionOf
 export { initialOpen, investigationsAlone, sectionPlan } from "./sections.js";
 export { SpaceLists, applyPlace, applyProject, applyRepo, clearTickets, doneReload, failReload, forgetRepo, resetList, spaceKey } from "./space-lists.js";
 export { groupByStage, pickableStatuses, sameStatus, spelled, STATUSES, wontDoOption } from "./statuses.js";
+export { DEEP_TIMEOUT_MS, DEEP_WAIT_MARGIN_S, DEEP_WAIT_S } from "./device-timeouts.js";
 export { changes, checkTask, isDirty, snapshot } from "./task-diff.js";
 export { FINAL_LABEL, FOLDER_LABEL, INVESTIGATION_LABEL, NAME_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL } from "./terminal-labels.js";
 export { chooseProject, groupTickets, middleEllipsis, normalizeItems } from "./tickets.js";

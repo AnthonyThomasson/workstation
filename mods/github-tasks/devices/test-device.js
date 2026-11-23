@@ -26,7 +26,8 @@ export const isRepoKey = (key) => /^[\w.-]+\/[\w.-]+$/.test(String(key ?? ""));
 
 function normalizeCheck(c) {
   if (!isObject(c) || !text(c.id) || !isLevel(c.level) || typeof c.message !== "string") return null;
-  return { id: text(c.id), level: c.level, message: c.message, ...(text(c.fix) ? { fix: text(c.fix) } : {}) };
+  const fix = withoutUserinfo(text(c.fix));
+  return { id: text(c.id), level: c.level, message: withoutUserinfo(c.message), ...(fix ? { fix } : {}) };
 }
 
 // The last deep check: { level, checks, at } (at: ms since the epoch); null when there is none or it is malformed.
@@ -113,6 +114,29 @@ export function repoSlug(remote) {
   const m = String(remote ?? "").trim().match(/github\.com[:/]+([^/\s:]+)\/([^/\s]+?)(?:\.git)?\/?$/i);
   return m ? `${m[1]}/${m[2]}` : null;
 }
+
+// The binding's cached host for `machine` as runs/remote.js's hostOf keeps one ({ on, os, home }), so a shell on the device doesn't
+// probe it again; null when the binding is for another machine or has no os or home.
+export const cachedHost = (binding, machine) => (binding?.machine && binding.machine === machine && binding.os && binding.home
+  ? { on: machine, os: binding.os, home: binding.home } : null);
+
+// A remote URL as it may be shown or saved: never with its userinfo (user@ or user:token@), which a clone URL can carry and
+// shared.json must not. A GitHub remote shows as owner/name; any other keeps its host and path only; unreadable text shows as "a remote".
+export function safeRemote(remote) {
+  const raw = String(remote ?? "").trim();
+  if (!raw) return "";
+  const slug = repoSlug(raw);
+  if (slug) return slug;
+  const url = raw.match(/^[a-z][a-z0-9+.-]*:\/\/(?:[^/@\s]*@)?([^/\s]+)(\/\S*)?$/i); // scheme://[userinfo@]host[/path]
+  if (url) return `${url[1]}${url[2] ?? ""}`;
+  const scp = raw.match(/^(?:[^/@\s]+@)?([^/@\s:]+):(\S*)$/); // [user@]host:path
+  if (scp && !/^[a-z]:[\\/]/i.test(raw)) return `${scp[1]}:${scp[2]}`;
+  return /@/.test(raw) ? "a remote" : raw;
+}
+
+// Text with any URL userinfo removed (scheme://user:token@host -> scheme://host): the last guard on what a check says, since
+// checks are saved in shared.json.
+export const withoutUserinfo = (t) => String(t ?? "").replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]*@/gi, "$1");
 
 // The commands the repo's config says the device needs (test_device.requires in its .herdr/config.yaml, text given): [] when none.
 export function requiresFromConfig(configText) {
@@ -236,7 +260,7 @@ export function deepChecks({ machine, repo, repoRoot, requires = [] }, run) {
   else if (p.repo === "missing") add("repo-folder", "red", `${folder} doesn't exist on \`${machine}\`.`, `Clone ${repo ?? "the repo"} there, or ${set.charAt(0).toLowerCase()}${set.slice(1)}`);
   else if (p.main === false) add("repo-main", "red", `${folder} on \`${machine}\` isn't the main checkout (a worktree, a subfolder or not a repo).`, `Point "Repo folder on ${machine}" at the repo's main checkout (the folder with the .git directory).`);
   else if (repo && p.git !== false && repoSlug(p.origin)?.toLowerCase() !== repo.toLowerCase()) {
-    add("repo-origin", "red", p.origin ? `${folder}'s origin on \`${machine}\` is ${p.origin}, not ${repo}.` : `${folder} on \`${machine}\` has no origin remote.`, `Point "Repo folder on ${machine}" at a clone of ${repo}.`);
+    add("repo-origin", "red", p.origin ? `${folder}'s origin on \`${machine}\` is ${safeRemote(p.origin)}, not ${repo}.` : `${folder} on \`${machine}\` has no origin remote.`, `Point "Repo folder on ${machine}" at a clone of ${repo}.`);
   } else add("repo", "green", `${folder} is the main checkout of ${repo ?? "the repo"}.`);
 
   // red: git

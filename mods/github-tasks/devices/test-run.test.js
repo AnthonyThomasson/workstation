@@ -36,6 +36,7 @@ function stepOf({ cmd, args }) {
   if (script === READ_BACK) return "read";
   if (script === CLEANUP) return "cleanup";
   if (script === 'rm -f "$1"') return "rm-local";
+  if (script === 'mkdir -p "$1"') return "mkdir-local";
   return `other ${cmd}`;
 }
 
@@ -51,7 +52,7 @@ function world(at = {}) {
     run: () => ok(),
     read: () => ok("code=0\n---\nall green\n"),
     cleanup: () => ok("done=1\n"),
-    "rm-local": () => ok(),
+    "rm-local": () => ok(), "mkdir-local": () => ok(),
   };
   const exec = async (cmd, args, opts) => {
     const call = { cmd, args, opts, step: null };
@@ -109,7 +110,7 @@ test("the steps run in order: pack, send, checkout, run, read, cleanup (prepare 
   const w = world();
   const r = await run(w);
   assert.equal(r.code, 0);
-  assert.deepEqual(w.steps(), ["resolve", "status", "resolve", "resolve", "prepare", "ref", "pack", "send", "checkout", "run", "read", "unref", "cleanup", "rm-local"]);
+  assert.deepEqual(w.steps(), ["resolve", "status", "resolve", "resolve", "prepare", "mkdir-local", "ref", "pack", "send", "checkout", "run", "read", "unref", "cleanup", "rm-local"]);
   assert.equal(r.result.device, "desktop");
   assert.equal(r.result.commit, SHA);
   assert.equal(r.result.exitCode, 0);
@@ -184,6 +185,25 @@ test("the send is hc's raw stdin into cat on the device, run by the local sh, wi
   assert.deepEqual(rest.slice(0, 2), ["-c", 'cat > "$1"']);
   assert.match(rest.at(-1), /^\/home\/me\/\.herdr\/test-runs\/r\w+\.bundle$/);
   assert.doesNotMatch(send.args[1], /base64/);
+});
+
+test("the local bundle goes in the tmpDir the caller gives, made first, never a hard-coded /tmp", async () => {
+  const w = world();
+  await run(w, { tmpDir: "/Users/me/.herdr/test-runs" });
+  const mk = w.calls.find((c) => c.step === "mkdir-local");
+  assert.equal(mk.args.at(-1), "/Users/me/.herdr/test-runs");
+  assert.ok(w.calls.indexOf(mk) < w.calls.findIndex((c) => c.step === "pack"), "made before the bundle");
+  const bundles = w.calls.filter((c) => c.step === "pack").map((c) => c.args.find((a) => a.endsWith(".bundle")));
+  assert.ok(bundles.length && bundles.every((b) => /^\/Users\/me\/\.herdr\/test-runs\/herdr-test-r\w+\.bundle$/.test(b)), bundles.join());
+  assert.ok(!w.calls.some((c) => c.args.some((a) => String(a).startsWith("/tmp/"))), "no /tmp anywhere");
+});
+
+test("without a tmpDir the run stops before packing instead of falling back to /tmp", async () => {
+  const w = world();
+  const r = await run(w, { tmpDir: undefined });
+  assert.notEqual(r.code, 0);
+  assert.ok(!w.calls.some((c) => c.step === "pack" || c.step === "send"));
+  assert.ok(!w.calls.some((c) => c.args.some((a) => String(a).startsWith("/tmp/"))));
 });
 
 test("on Windows every remote script goes through Git Bash -lc, on Unix through sh -c", async () => {

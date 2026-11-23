@@ -2,6 +2,8 @@
 // request's { op, args } (protocol.js). Pure: client.js reads files and the mailbox. Each command does what a button of the Tasks UI
 // does, so the help names the button.
 
+import { DEEP_WAIT_S } from "../lib/index.js";
+
 const SECTIONS = ["next", "backlog", "progress", "review", "investigations"];
 const MOVE_TO = ["next", "backlog"];
 const LONG_OPS = ["start", "merge", "new-task", "refactor", "project-create", "investigation-done"]; // these wait longer by default
@@ -12,7 +14,7 @@ export const GLOBAL_FLAGS = {
   on: { type: "string", about: "the machine that folder is on (`hc machine ls`; default: this computer)" },
   project: { type: "string", about: "the GitHub Project, by id or title (default: the one the sidebar picked for the repo)" },
   json: { type: "bool", about: "print the answer as JSON" },
-  timeout: { type: "string", about: "seconds to wait for Herdr (default: 120; 600 for start, merge, new-task, refactor; 300 for device check; 720 for device run)" },
+  timeout: { type: "string", about: `seconds to wait for Herdr (default: 120; 600 for start, merge, new-task, refactor; ${DEEP_WAIT_S} for device check; 720 for device run)` },
   help: { type: "bool", about: "show help" },
 };
 
@@ -64,7 +66,7 @@ export const COMMANDS = [
   { group: "Test device" },
   { words: ["device"], op: "device", usage: "device",
     about: "The Test device bound in Task settings: its machine, its light (green, yellow or red) and what each failing check says. Exits 5 when none is bound or the light is red. --json gives the binding and the light." },
-  { words: ["device", "check"], op: "device-check", wait: 300, usage: "device check",
+  { words: ["device", "check"], op: "device-check", wait: DEEP_WAIT_S, usage: "device check",
     about: "The card's Check: runs the deep check on the device (one script there; a desktop spawn can take a minute) and prints each check. Exits 5 when none is bound or a check is red." },
   { words: ["device", "run"], op: "device-run", dash: "command", wait: 720, flags: { commit: "string", keep: "bool" }, usage: "device run [--commit <rev>] [--keep] -- <command...>",
     about: "Runs a command on the Test device against a commit (default HEAD; uncommitted changes aren't sent): sends it as a git bundle (nothing is pushed, no branch is made), checks it out in a worktree there, runs the command (one argument is a shell line, several are an argv; ended after 600s), prints the log, and cleans up. Exits 0 when the command passed, 1 when it failed or timed out, 5 when the device can't be used, 6 when another run is on it. --keep leaves the worktree and log there. --json gives { device, commit, exitCode, log, durationMs, timedOut }." },

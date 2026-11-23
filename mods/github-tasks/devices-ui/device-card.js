@@ -1,11 +1,11 @@
 // The Test device card at the top of Task settings: pick a Herdr machine to bind (or Add a machine), then its name, OS and light, the
 // repo's folder on it, Check, Unbind, and what is failing with one line of fix each. What it shows is devices/card-model.js's; the
 // light is the cheap one (hc machine ls only), and a deep check runs only from the buttons here. No timer: the machine list is
-// asked again when the page is built, or drawn after a while (Machines.stale), and after each button.
+// asked again when the page is built, or drawn after a while (Machines.due), and after each button.
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { run } from "herdr";
-import { cardView, tooltipOf, withRepoRoot, withStartHere } from "../devices/index.js";
+import { cachedHost, cardView, tooltipOf, withRepoRoot, withStartHere } from "../devices/index.js";
 import { Auth } from "../github-ui/index.js";
 import { S, stop, note, action, icon } from "../widgets/index.js";
 import { Machines } from "./machines.js";
@@ -21,7 +21,13 @@ export class TestDeviceCard {
     this.busy = null; // "binding" | "checking" while a probe or deep check is running
     this.error = null; // why the last bind or check could not run
     this.token = 0; // changes on unbind and bind, so an answer that arrives late is dropped
-    this.auth = new Auth((on, script, args, opts) => shOn({ exec: deviceExec }, on, script, args, opts));
+    // Sign in on <machine> runs its shell scripts through the binding's cached host (os, home), so it doesn't probe the machine again.
+    this.seen = new Map();
+    this.auth = new Auth((on, script, args, opts) => {
+      const host = this.seen.has(on) ? null : cachedHost(readBinding(), on);
+      if (host) this.seen.set(on, host);
+      return shOn({ exec: deviceExec, seen: this.seen }, on, script, args, opts);
+    });
     const saved = this.repo && readBinding()?.repoRoots?.[this.repo];
     this.folder = InputState.new({ value: saved || "", placeholder: "Folder of the repo's main checkout" });
     this.folder.on("change", (_e, cx2) => { this.saveFolder(this.folder.value().trim()); cx2.notify(); });

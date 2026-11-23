@@ -8,8 +8,8 @@ import * as model from "./test-device.js";
 import * as deepCheck from "./deep-check.js";
 import { runDeepCheck } from "./deep-check.js";
 import {
-  DEEP_SCRIPT, MIN_FREE_KB, STALE_AFTER_MS, bindMachine, cheapHealth, deepArgs, deepChecks, failing, healthOf, normalizeBinding, parseDeep,
-  pickRepoFolder, probeFailure, repoRootFor, repoSlug, requiresFromConfig, rollup, startsHere, withHealth, withRepoRoot, withStartHere,
+  DEEP_SCRIPT, MIN_FREE_KB, STALE_AFTER_MS, bindMachine, cachedHost, cheapHealth, deepArgs, deepChecks, failing, healthOf, normalizeBinding, parseDeep,
+  pickRepoFolder, probeFailure, repoRootFor, repoSlug, requiresFromConfig, rollup, safeRemote, startsHere, withHealth, withRepoRoot, withStartHere, withoutUserinfo,
 } from "./test-device.js";
 import { TEST_DEVICE } from "../lib/index.js";
 
@@ -240,6 +240,48 @@ test("red: no repo folder, a path that doesn't exist, a worktree, an origin that
     assert.equal(wrong["repo-origin"].level, "red", origin);
   }
   assert.match(by(deepChecks(input, run(withLine(GOOD, [`https://github.com/${REPO}.git`, ""]))))["repo-origin"].message, /has no origin/);
+});
+
+test("a clone URL's userinfo (user@ or user:token@) never reaches a check, a fix or the saved health", () => {
+  const SECRET = "ghp_SECRET123";
+  const origins = [
+    `https://me:${SECRET}@github.com/someone/else.git`, `https://${SECRET}@github.com/someone/else.git`, `ssh://git:${SECRET}@github.com/someone/else.git`,
+    `https://me:${SECRET}@git.example.com/team/app.git`, `https://${SECRET}@git.example.com:8443/team/app.git`, `deploy:${SECRET}@git.example.com:team/app.git`,
+    `ssh://${SECRET}@192.168.1.5/srv/git/app.git`,
+  ];
+  for (const origin of origins) {
+    const checks = deepChecks(input, run(withLine(GOOD, [`dc.origin=https://github.com/${REPO}.git`, `dc.origin=${origin}`])));
+    const health = normalizeBinding({ machine: "desktop", os: "windows", home: "C:/Users/me", health: healthOf(checks, NOW) }).health;
+    assert.equal(by(checks)["repo-origin"].level, "red", origin);
+    const saved = JSON.stringify(health);
+    assert.ok(!saved.includes(SECRET), `${origin} leaked into ${saved}`);
+    assert.ok(!/(?:\/\/|^|\s)[^/\s]*@/.test(by(checks)["repo-origin"].message), by(checks)["repo-origin"].message);
+  }
+  // a GitHub clone shows as owner/name; another host keeps its host and path
+  assert.match(by(deepChecks(input, run(withLine(GOOD, [`dc.origin=https://github.com/${REPO}.git`, `dc.origin=https://me:${SECRET}@github.com/someone/else.git`]))))["repo-origin"].message, /is someone\/else, not AnthonyThomasson\/workstation/);
+  assert.match(by(deepChecks(input, run(withLine(GOOD, [`dc.origin=https://github.com/${REPO}.git`, `dc.origin=https://me:${SECRET}@git.example.com/team/app.git`]))))["repo-origin"].message, /is git\.example\.com\/team\/app\.git, not/);
+});
+
+test("cachedHost gives the bound machine's os and home so a shell on it need not probe, and nothing for any other", () => {
+  const b = bound();
+  assert.deepEqual(cachedHost(b, "desktop"), { on: "desktop", os: "windows", home: "C:/Users/me" });
+  assert.equal(cachedHost(b, "laptop"), null);
+  assert.equal(cachedHost(null, "desktop"), null);
+});
+
+test("safeRemote and withoutUserinfo", () => {
+  assert.equal(safeRemote(`https://u:t@github.com/${REPO}.git`), REPO);
+  assert.equal(safeRemote("git@github.com:o/r.git"), "o/r");
+  assert.equal(safeRemote("https://u:t@host.io/a/b.git"), "host.io/a/b.git");
+  assert.equal(safeRemote("git@host.io:a/b.git"), "host.io:a/b.git");
+  assert.equal(safeRemote("/srv/git/x.git"), "/srv/git/x.git");
+  assert.equal(safeRemote("C:/src/x"), "C:/src/x");
+  assert.equal(safeRemote(""), "");
+  assert.equal(safeRemote(null), "");
+  assert.equal(withoutUserinfo("fetch https://u:t@host.io/a failed; ssh://k@h/x too"), "fetch https://host.io/a failed; ssh://h/x too");
+  // a check read back from shared.json is scrubbed too, whatever wrote it
+  const h = model.normalizeHealth({ level: "red", at: NOW, checks: [{ id: "x", level: "red", message: "origin is https://a:b@h.io/r", fix: "use https://a:b@h.io/r" }] });
+  assert.deepEqual(h.checks[0], { id: "x", level: "red", message: "origin is https://h.io/r", fix: "use https://h.io/r" });
 });
 
 test("origin matches whatever form GitHub's URL takes, without regard to case", () => {

@@ -21,23 +21,27 @@ export function agoText(at, now = Date.now()) {
 // The theme colour (a key of Herdr's theme) a level is drawn in.
 export const lightColor = (level) => ({ green: "ansi2", yellow: "ansi3", red: "ansi1" })[level] ?? "ansi1";
 
-// `hc machine ls --json` output -> the machines list, or null when it isn't that (so a failed call is never read as "no machines").
-export function parseMachineList(stdout) {
-  let json;
-  try { json = JSON.parse(String(stdout ?? "")); } catch { return null; }
-  return Array.isArray(json) ? json : Array.isArray(json?.machines) ? json.machines : null;
-}
-
-// The Herdr machines to pick from: `hc machine ls --json` by name.
-export const machineNames = (machines) => machinesFrom(machines).map((m) => (typeof m?.name === "string" ? m.name.trim() : "")).filter(Boolean);
+// The sorted, de-duplicated machine names of a list, one string: [{ name }] -> "a\nb". --temp machines are in hc machine ls
+// (temporary: true) but not in herdr's machines(), so they are left out. Anything that isn't a list is "".
+export const namesKey = (xs) => [...new Set((Array.isArray(xs) ? xs : []).filter((m) => m?.temporary !== true).map((m) => (typeof m?.name === "string" ? m.name.trim() : "")).filter(Boolean))].sort().join("\n");
 
 // Whether herdr's live machine names (the reactive herdr machines(): [{ name }], the local one unnamed) differ from the names in the last
 // hc machine ls list, which means a machine was added or removed since and the list should be asked again. No list yet: false.
 export function machinesChanged(live, list) {
   if (list === null || list === undefined) return false;
-  // --temp machines are in hc machine ls (temporary: true) but not in machines(), so they are left out on both sides.
-  const names = (xs) => [...new Set((Array.isArray(xs) ? xs : []).filter((m) => m?.temporary !== true).map((m) => (typeof m?.name === "string" ? m.name.trim() : "")).filter(Boolean))].sort().join("\n");
-  return names(live) !== names(list);
+  return namesKey(live) !== namesKey(list);
+}
+
+// Whether `hc machine ls` should be asked again, from a render or a refresh (never a timer). Pure; devices-ui/machines.js keeps the state.
+//   s: { now, at (when it was last asked), loading, live (herdr's machines()), list (the last answer, null before any),
+//        askedFor (namesKey of the live names the last ask happened under), freshMs, minGapMs }
+// Never while a load runs. Stale (older than freshMs): yes. A change of names (live no longer matches the list): yes, but only ONCE per
+// distinct set of live names (askedFor), so names that machines() and machine ls never agree on can't re-ask every minGapMs while
+// something keeps rendering; after that only the staleness asks, or live names changing again.
+export function machinesDue({ now, at, loading, live, list, askedFor = null, freshMs = 20000, minGapMs = 2000 }) {
+  if (loading) return false;
+  if (now - at > freshMs) return true;
+  return now - at > minGapMs && machinesChanged(live, list) && namesKey(live) !== askedFor;
 }
 
 // The one-line fix button of a check: the existing device-flow sign-in (github-ui/auth.js Auth.start with `on`), with the gh args it
