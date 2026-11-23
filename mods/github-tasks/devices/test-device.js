@@ -127,16 +127,16 @@ export function safeRemote(remote) {
   if (!raw) return "";
   const slug = repoSlug(raw);
   if (slug) return slug;
-  const url = raw.match(/^[a-z][a-z0-9+.-]*:\/\/(?:[^/@\s]*@)?([^/\s]+)(\/\S*)?$/i); // scheme://[userinfo@]host[/path]
+  const url = raw.match(/^[a-z][a-z0-9+.-]*:\/\/(?:[^/\s]*@)?([^/\s]+)(\/\S*)?$/i); // scheme://[userinfo@]host[/path]; userinfo runs to the LAST @ before the first slash (a password may hold an unencoded @)
   if (url) return `${url[1]}${url[2] ?? ""}`;
-  const scp = raw.match(/^(?:[^/@\s]+@)?([^/@\s:]+):(\S*)$/); // [user@]host:path
+  const scp = raw.match(/^(?:[^/\s]*@)?([^/@\s:]+):(\S*)$/); // [user@]host:path, userinfo greedy to the last @ before a slash
   if (scp && !/^[a-z]:[\\/]/i.test(raw)) return `${scp[1]}:${scp[2]}`;
   return /@/.test(raw) ? "a remote" : raw;
 }
 
 // Text with any URL userinfo removed (scheme://user:token@host -> scheme://host): the last guard on what a check says, since
 // checks are saved in shared.json.
-export const withoutUserinfo = (t) => String(t ?? "").replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]*@/gi, "$1");
+export const withoutUserinfo = (t) => String(t ?? "").replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s]*@/gi, "$1");
 
 // The commands the repo's config says the device needs (test_device.requires in its .herdr/config.yaml, text given): [] when none.
 export function requiresFromConfig(configText) {

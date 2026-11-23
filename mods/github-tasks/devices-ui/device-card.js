@@ -71,6 +71,7 @@ export class TestDeviceCard {
 
   bind(machine, cx) {
     if (this.busy) return;
+    this.seen.clear(); // the cached host is the binding's: a new bind starts from what it saves
     this.guard(cx, "binding", () => bindDevice(machine, { repo: this.repo, cwd: this.cwd }));
   }
 
@@ -82,6 +83,7 @@ export class TestDeviceCard {
   // Clears the key. Nothing on the device is touched, and a check still running for it is dropped.
   unbind(cx) {
     this.token++;
+    this.seen.clear();
     this.busy = null;
     this.error = null;
     saveBinding(null);

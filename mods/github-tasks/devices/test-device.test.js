@@ -247,7 +247,7 @@ test("a clone URL's userinfo (user@ or user:token@) never reaches a check, a fix
   const origins = [
     `https://me:${SECRET}@github.com/someone/else.git`, `https://${SECRET}@github.com/someone/else.git`, `ssh://git:${SECRET}@github.com/someone/else.git`,
     `https://me:${SECRET}@git.example.com/team/app.git`, `https://${SECRET}@git.example.com:8443/team/app.git`, `deploy:${SECRET}@git.example.com:team/app.git`,
-    `ssh://${SECRET}@192.168.1.5/srv/git/app.git`,
+    `ssh://${SECRET}@192.168.1.5/srv/git/app.git`, `https://me:pa@${SECRET}@git.example.com/team/app.git`, `me:pa@${SECRET}@git.example.com:team/app.git`,
   ];
   for (const origin of origins) {
     const checks = deepChecks(input, run(withLine(GOOD, [`dc.origin=https://github.com/${REPO}.git`, `dc.origin=${origin}`])));
@@ -277,6 +277,12 @@ test("safeRemote and withoutUserinfo", () => {
   assert.equal(safeRemote("/srv/git/x.git"), "/srv/git/x.git");
   assert.equal(safeRemote("C:/src/x"), "C:/src/x");
   assert.equal(safeRemote(""), "");
+  // a password with an unencoded @: the userinfo runs to the last @ before the first slash, so no tail of it is shown
+  assert.equal(safeRemote("https://u:p@ss@host.com/a/b.git"), "host.com/a/b.git");
+  assert.equal(safeRemote("https://u:p@ss@github.com/o/r.git"), "o/r");
+  assert.equal(safeRemote("u:p@ss@host.io:a/b.git"), "host.io:a/b.git");
+  assert.equal(safeRemote("ssh://u:p@@ss@host.io/a"), "host.io/a");
+  assert.equal(withoutUserinfo("https://u:p@ss@host.com/a and ssh://k:x@y@h/z"), "https://host.com/a and ssh://h/z");
   assert.equal(safeRemote(null), "");
   assert.equal(withoutUserinfo("fetch https://u:t@host.io/a failed; ssh://k@h/x too"), "fetch https://host.io/a failed; ssh://h/x too");
   // a check read back from shared.json is scrubbed too, whatever wrote it

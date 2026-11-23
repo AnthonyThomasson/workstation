@@ -17,6 +17,9 @@ export const STEP_TIMEOUT_MS = 300000;
 export const STALE_LOCK_S = RUN_TIMEOUT_MS / 1000 + 300;
 // What a crash leaves behind in test-runs/ is swept after a day.
 export const SWEEP_AFTER_MIN = 24 * 60;
+// Here, before packing: make the bundle folder and sweep the bundles a crash left in it (older than SWEEP_AFTER_MIN minutes: $2).
+// Only herdr-test-*.bundle files, only directly in the folder. Never fails the run.
+export const LOCAL_PREPARE = 'mkdir -p "$1" && find "$1" -maxdepth 1 -type f -name \'herdr-test-*.bundle\' -mmin "+$2" -exec rm -f {} + 2>/dev/null; true';
 // What `timeout` and hc exec use for "ended by the time limit".
 export const TIMED_OUT_CODE = 124;
 // The most of a log that is read back (its end, where a failure is).
@@ -185,7 +188,7 @@ export async function runOnDevice(deps, input) {
   const dir = testRunsDir(home), lockDir = testRunLockDir(home), folder = testRunFolder(home, id);
   const bundle = testRunBundle(home, id), log = testRunLog(home, id), codeFile = testRunCode(home, id);
   const ref = testRunRef(id);
-  const localBundle = tmpDir ? `${posixFolder(tmpDir)}/herdr-test-${id}.bundle` : null;
+  const localBundle = `${posixFolder(tmpDir)}/herdr-test-${id}.bundle`;
   // The device's host is known from the binding (probed once when it was bound), so no probe is made here.
   const remote = { exec, seen: new Map([[machine, { on: machine, os: binding.os, home }]]) };
   const local = { exec };
@@ -218,7 +221,7 @@ export async function runOnDevice(deps, input) {
     if (state.took_over) notes.push(`Took over a stale lock from run ${state.took_over}.`);
 
     // 3. pack, here: a private ref at the commit, bundled thin against the base when the device has it, else whole.
-    await shOn(local, null, 'mkdir -p "$1"', [posixFolder(tmpDir)]).catch(() => {}); // a missing folder shows as the bundle failing below
+    await shOn(local, null, LOCAL_PREPARE, [posixFolder(tmpDir), String(SWEEP_AFTER_MIN)]).catch(() => {}); // a missing folder shows as the bundle failing below
     const made = await here("update-ref", ref, commit);
     if (made.code !== 0) throw new Step(EXIT.USAGE, `Couldn't make ${ref} here: ${said(made)}`);
     refMade = true;

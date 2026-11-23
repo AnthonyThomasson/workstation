@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import {
-  CLEANUP, CHECKOUT, EXIT, PREPARE, READ_BACK, RUN_ARGV, RUN_LINE, RUN_TIMEOUT_MS, SEND, STALE_LOCK_S, STEP_TIMEOUT_MS, SWEEP_AFTER_MIN, TIMED_OUT_CODE,
+  CLEANUP, CHECKOUT, EXIT, LOCAL_PREPARE, PREPARE, READ_BACK, RUN_ARGV, RUN_LINE, RUN_TIMEOUT_MS, SEND, STALE_LOCK_S, STEP_TIMEOUT_MS, SWEEP_AFTER_MIN, TIMED_OUT_CODE,
   exitFor, newTestRunId, parseKeyValues, parseReadBack, readiness, runOnDevice, sinceText, testRunRef,
 } from "./test-run.js";
 import { GIT_BASH } from "../runs/index.js";
@@ -36,7 +36,7 @@ function stepOf({ cmd, args }) {
   if (script === READ_BACK) return "read";
   if (script === CLEANUP) return "cleanup";
   if (script === 'rm -f "$1"') return "rm-local";
-  if (script === 'mkdir -p "$1"') return "mkdir-local";
+  if (script === LOCAL_PREPARE) return "mkdir-local";
   return `other ${cmd}`;
 }
 
@@ -191,11 +191,37 @@ test("the local bundle goes in the tmpDir the caller gives, made first, never a 
   const w = world();
   await run(w, { tmpDir: "/Users/me/.herdr/test-runs" });
   const mk = w.calls.find((c) => c.step === "mkdir-local");
-  assert.equal(mk.args.at(-1), "/Users/me/.herdr/test-runs");
+  assert.equal(mk.args.at(-2), "/Users/me/.herdr/test-runs");
   assert.ok(w.calls.indexOf(mk) < w.calls.findIndex((c) => c.step === "pack"), "made before the bundle");
   const bundles = w.calls.filter((c) => c.step === "pack").map((c) => c.args.find((a) => a.endsWith(".bundle")));
   assert.ok(bundles.length && bundles.every((b) => /^\/Users\/me\/\.herdr\/test-runs\/herdr-test-r\w+\.bundle$/.test(b)), bundles.join());
   assert.ok(!w.calls.some((c) => c.args.some((a) => String(a).startsWith("/tmp/"))), "no /tmp anywhere");
+});
+
+test("the local prepare makes the folder and sweeps only old herdr-test bundles directly in it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "local-sweep-"));
+  try {
+    const folder = join(dir, "made", "later");
+    const old = (name) => { const f = join(folder, name); writeFileSync(f, "x"); const t = new Date(Date.now() - (SWEEP_AFTER_MIN + 60) * 60000); utimesSync(f, t, t); };
+    mkdirSync(folder, { recursive: true });
+    old("herdr-test-rold.bundle"); old("keep-me.bundle"); old("herdr-test-note.txt");
+    writeFileSync(join(folder, "herdr-test-rnew.bundle"), "x"); // young: a run may be using it
+    mkdirSync(join(folder, "sub")); writeFileSync(join(folder, "sub", "herdr-test-rsub.bundle"), "x");
+    const t = new Date(Date.now() - (SWEEP_AFTER_MIN + 60) * 60000); utimesSync(join(folder, "sub", "herdr-test-rsub.bundle"), t, t);
+    const r = spawnSync("sh", ["-c", LOCAL_PREPARE, "sh", folder, String(SWEEP_AFTER_MIN)], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(readdirSync(folder).sort(), ["herdr-test-note.txt", "herdr-test-rnew.bundle", "keep-me.bundle", "sub"]);
+    assert.ok(existsSync(join(folder, "sub", "herdr-test-rsub.bundle")), "never below the folder");
+    const fresh = join(dir, "not", "there");
+    assert.equal(spawnSync("sh", ["-c", LOCAL_PREPARE, "sh", fresh, "1440"]).status, 0);
+    assert.ok(existsSync(fresh), "the folder is made");
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("the run's local prepare is given the folder and the sweep age", async () => {
+  const w = world();
+  await run(w, { tmpDir: "/Users/me/.herdr/test-runs" });
+  assert.deepEqual(w.calls.find((c) => c.step === "mkdir-local").args.slice(-2), ["/Users/me/.herdr/test-runs", String(SWEEP_AFTER_MIN)]);
 });
 
 test("without a tmpDir the run stops before packing instead of falling back to /tmp", async () => {
