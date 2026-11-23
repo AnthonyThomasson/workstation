@@ -14,7 +14,7 @@ import { Auth, REFRESH, LOGIN } from "../github-ui/index.js";
 import { matchWorkflows } from "../workflow/index.js";
 import { loadWorkflows } from "../workflow-ui/index.js";
 import { StartDialog, shOn } from "../runs/index.js";
-import { renderStartDialog, startChosen } from "../runs-ui/index.js";
+import { renderStartDialog, showPlace, startChosen } from "../runs-ui/index.js";
 
 
 const tabName = (ticket, title) => (ticket.draft ? title : `#${ticket.number} ${title}`);
@@ -307,6 +307,7 @@ export class TaskEditor {
     const dialog = this.start = new StartDialog(() => {});
     dialog.begin(labels);
     cx.notify();
+    cx.spawn(async (cx) => { await showPlace(dialog, this.repo, this.where); cx.notify(); }); // "Starts on <machine>", or why a red light stops it
     cx.spawn(async (cx) => {
       try {
         const { items, errors } = await loadWorkflows(this.where);

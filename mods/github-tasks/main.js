@@ -16,16 +16,21 @@ import { installedAgents, investigationsHere, reconnectInvestigations, viewInves
 import { S, icon, stop, note, iconButton, action, gh, later, AgentBar, AgentBackdrop } from "./widgets/index.js";
 import { Auth, REFRESH, LOGIN } from "./github-ui/index.js";
 import { TaskEditor } from "./editor/index.js";
-import { readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen } from "./runs-ui/index.js";
+import { readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen, useStartPlanner } from "./runs-ui/index.js";
 import { statusColor, statusLabel, cantStartHere, startOverlay, startProps, shOn } from "./runs/index.js";
 import { TaskSettings } from "./settings/index.js";
-import { Machines, deviceDot } from "./devices-ui/index.js";
+import { Machines, deviceDot, planStart, planStartNow } from "./devices-ui/index.js";
+import { startTip } from "./devices/index.js";
 import { matchWorkflows, REFACTOR } from "./workflow/index.js";
 import { WorkflowEditor, WorkflowList, loadWorkflows } from "./workflow-ui/index.js";
 import { PromptPage } from "./prompts-page.js";
 import { investigationRow, refactorOverlay, TOOLTIP as REFACTOR_TIP, newTaskOverlay, newTaskProps, chooseAgent } from "./investigations/index.js";
 import { startDoctor, doctorFor } from "./doctor/index.js";
 import { Bridge } from "./cli-ui/index.js";
+
+// The opt-in "Start this repo's tickets on the Test device": every Start (this sidebar, the editor's and the overlay's dialogs, herdr-tasks
+// start) asks it where to run. Registered here, at load, so every role of the mod (the Start overlay is one) has it.
+useStartPlanner(planStart);
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
@@ -562,6 +567,13 @@ export default class GitHubTasks extends View {
     });
   }
 
+  // The play button's tooltip: "Start", or, when the repo's Start opt-in puts its tickets on the Test device, "Starts on <machine>" (or why a
+  // red light will stop it). From the machine list the sidebar already holds: nothing is asked of any machine here.
+  startTip() {
+    const ctx = this.ctx;
+    return startTip(ctx ? planStartNow(this.repo, { cwd: ctx.folder, on: ctx.on }, this.machines.list) : null);
+  }
+
   // The thin drop zone under the last row of Up Next and of an expanded Backlog: last in the section. It is always in the layout at its
   // fixed height (a press must not move any row), and only while dragging does its top edge show the accent line when hovered.
   endZone(t, section) {
@@ -639,6 +651,6 @@ export default class GitHubTasks extends View {
         .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(ticket.title, max))))
       .when(Boolean(ticket.url), (el) => el.child(iconButton(`open-${ticket.key}`, "external", t, (_e, cx) => cx.open_url(ticket.url), false, "Open on GitHub")))
       .when(Boolean(running), (el) => el.child(iconButton(`view-${ticket.key}`, "eye", t, (_e, cx) => view(cx), false, "View the running agent")))
-      .when(!running, (el) => el.child(iconButton(`start-${ticket.key}`, busy ? "ring" : "play", t, (_e, cx) => this.startTicket(ticket, cx), busy, "Start")));
+      .when(!running, (el) => el.child(iconButton(`start-${ticket.key}`, busy ? "ring" : "play", t, (_e, cx) => this.startTicket(ticket, cx), busy, this.startTip())));
   }
 }

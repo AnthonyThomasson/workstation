@@ -136,7 +136,7 @@ const FORMATS = {
   move: (d) => (d.moved ? `Moved ${ref(d.ticket)} to ${d.section}${d.status ? ` (status ${d.status})` : ""}.` : `${ref(d.ticket)} is already there.`),
   wontdo: (d) => `${ref(d.ticket)} is Won't Do and closed as not planned.`,
   open: (d) => `Opened ${ref(d.ticket)} in Herdr.`,
-  start: (d) => (d.resumed ? `${ref(d.ticket)} is already running: its tab is in front.` : `Started ${d.workflow} on ${ref(d.ticket)}${d.run ? `: run ${d.run.id}, Task Orchestrator ${d.run.orchestrator}` : ""}.`),
+  start: (d) => (d.resumed ? `${ref(d.ticket)} is already running: its tab is in front.` : `Started ${d.workflow} on ${ref(d.ticket)}${d.run ? `: run ${d.run.id}, Task Orchestrator ${d.run.orchestrator}` : ""}.${d.on ? ` Its worktree and agents are on ${d.on}.` : ""}`),
   view: (d) => `${ref(d.ticket)}'s run tab is in front.`,
   runs,
   merge,

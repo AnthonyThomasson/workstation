@@ -253,10 +253,12 @@ export const HANDLERS = {
     } else {
       throw new CliError(`${matches.length} workflows match ${refOf(t)}'s labels: pick one with --workflow.${unread}`, { code: "choose", data: { choices: matches.map(workflowOf) } });
     }
-    const { resumed } = await startChosen(workflow, t, { repo: board.repo, project: board.project, where: board.where }, cx);
+    // A red Test device light stops the Start (exit 5, nothing made); a toggle that is off changes nothing.
+    const { resumed, on } = await startChosen(workflow, t, { repo: board.repo, project: board.project, where: board.where }, cx)
+      .catch((e) => { throw e?.refusal ? new CliError(e.message, { code: "not-ready" }) : e; });
     changed();
     const now = liveRunFor(board.repo, t);
-    return { ticket: plainTicket(t), resumed, workflow: workflow.name, run: now ? { id: now.labels?.[RUN_LABEL] ?? null, orchestrator: now.address } : null };
+    return { ticket: plainTicket(t), resumed, workflow: workflow.name, on: on ?? null, run: now ? { id: now.labels?.[RUN_LABEL] ?? null, orchestrator: now.address } : null };
   },
 
   // The eye button.

@@ -2,5 +2,5 @@
 export { readPlace } from "./place-env.js";
 export { ProjectButtons } from "./project-buttons.js";
 export { RunPage } from "./run-page.js";
-export { renderStartDialog, startChosen, StartPage } from "./start-dialog-view.js";
+export { planStartFor, renderStartDialog, showPlace, startChosen, StartPage, useStartPlanner } from "./start-dialog-view.js";
 export { connect, connecting, liveRunFor, reconnectRuns, runProps, viewRun } from "./start.js";

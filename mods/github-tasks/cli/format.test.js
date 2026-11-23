@@ -70,6 +70,7 @@ test("every op has words of its own", () => {
     assert.ok(text.length && !text.startsWith("{"), `${op}: ${text}`);
   }
   assert.equal(ok("start", samples.start), "Started Bug on #12: run 12-x, Task Orchestrator t4.");
+  assert.equal(ok("start", { ...samples.start, on: "desktop" }), "Started Bug on #12: run 12-x, Task Orchestrator t4. Its worktree and agents are on desktop.");
   assert.equal(ok("start", { ...samples.start, resumed: true }), "#12 is already running: its tab is in front.");
   assert.equal(ok("edit", { ticket: TICKET, changed: ["title", "labels"] }), "Saved #12: title, labels.");
   assert.equal(ok("workflows", { kind: "workflow", items: [{ id: "bug", name: "Bug", scope: "global", trigger: "Any of: bug" }], errors: ["x.yaml: bad"] }), "bug                  Bug  · global  · Any of: bug\n! can't read x.yaml: bad");

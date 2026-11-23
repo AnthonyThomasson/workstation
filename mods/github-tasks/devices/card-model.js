@@ -3,7 +3,7 @@
 // drawing it never spawns anything on the device and there is no timer here either.
 import { LOGIN, REFRESH } from "../lib/index.js";
 import { posixFolder } from "../workflow/index.js";
-import { cheapHealth, failing, machinesFrom, repoRootFor } from "./test-device.js";
+import { cheapHealth, failing, machinesFrom, repoRootFor, startsHere } from "./test-device.js";
 
 const MIN = 60 * 1000, HOUR = 60 * MIN, DAY = 24 * HOUR;
 
@@ -54,6 +54,13 @@ export function tooltipOf(machine, level, checks) {
   return [`Test device ${machine}: ${level}`, ...lines].join("\n");
 }
 
+// The per-repo opt-in: "Start this repo's tickets on <machine>". Offered only when the repo has a folder on the machine (without one
+// Start has nowhere to put the worktree), off until pressed. `offered: false` draws no toggle.
+export function startToggle(binding, repo) {
+  const offered = Boolean(binding && repo && repoRootFor(binding, repo));
+  return { offered, on: offered && startsHere(binding, repo), label: `Start this repo's tickets on ${binding?.machine ?? ""}` };
+}
+
 // What the card draws. machines: `hc machine ls --json` (or null before it has answered); repo: "owner/name" or "".
 export function cardView({ binding, machines, repo, now = Date.now() }) {
   const loading = machines === null || machines === undefined; // hc machine ls hasn't answered yet: not "no machines"
@@ -64,7 +71,7 @@ export function cardView({ binding, machines, repo, now = Date.now() }) {
   }
   if (loading) {
     return { bound: true, loading, machine: binding.machine, title: `${binding.machine} · ${binding.os}`, light: null, level: null, color: null, failing: [], checkedAgo: null,
-      folderLabel: `Repo folder on ${binding.machine}`, canSetFolder: Boolean(repo), repoFolder: (repo && repoRootFor(binding, repo)) || "" };
+      folderLabel: `Repo folder on ${binding.machine}`, canSetFolder: Boolean(repo), repoFolder: (repo && repoRootFor(binding, repo)) || "", startToggle: startToggle(binding, repo) };
   }
   const light = cheapHealth(binding, machines, now);
   const bad = failing(light);
@@ -81,6 +88,7 @@ export function cardView({ binding, machines, repo, now = Date.now() }) {
     folderLabel: `Repo folder on ${binding.machine}`,
     canSetFolder: Boolean(repo),
     repoFolder: (repo && repoRootFor(binding, repo)) || "",
+    startToggle: startToggle(binding, repo),
   };
 }
 

@@ -46,7 +46,7 @@ export const COMMANDS = [
   { words: ["open"], op: "open", args: ["ticket"], usage: "open <ticket>", about: "Opens the ticket's editor popup in Herdr, as a click on its row does." },
   { group: "Runs" },
   { words: ["start"], op: "start", args: ["ticket"], flags: { workflow: "string" }, usage: "start <ticket> [--workflow <id|name>]",
-    about: "The play button: starts the workflow the ticket's labels match (with several, --workflow picks one) and opens its run tab. A ticket whose run is going is shown instead." },
+    about: "The play button: starts the workflow the ticket's labels match (with several, --workflow picks one) and opens its run tab. A ticket whose run is going is shown instead. With the repo's Test device Start opt-in on, the worktree and agents go on the device; a red device light stops it (exit 5)." },
   { words: ["view"], op: "view", args: ["ticket"], usage: "view <ticket>", about: "The eye button: brings the ticket's run tab to the front, reopening it if it was closed." },
   { words: ["runs"], op: "runs", usage: "runs", about: "Every workflow run Herdr knows of: its ticket, orchestrator and who needs you." },
   { words: ["merge"], op: "merge", args: ["ticket"], confirm: true, usage: "merge <ticket> --yes",

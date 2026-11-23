@@ -3,7 +3,7 @@
 // (bind.js, test-device.js, deep-check.js); this only gives them Herdr's exec and state. Nothing here runs on an interval.
 import { exec, hc, readTextFile, setShared, shared, spaces } from "herdr";
 import { TEST_DEVICE } from "../lib/index.js";
-import { bindFlow, checkFlow, machinesFrom, normalizeBinding, requiresFromConfig, spaceFolders } from "../devices/index.js";
+import { bindFlow, cheapHealth, checkFlow, machinesFrom, normalizeBinding, requiresFromConfig, spaceFolders, startWhere, startsHere } from "../devices/index.js";
 import { projectConfigPath } from "../workflow/index.js";
 
 // Herdr's exec as the devices/ code takes it: resolves { code, stdout, stderr } and never rejects (a call that can't run is code 1).
@@ -52,4 +52,23 @@ export async function checkDevice({ repo, cwd }) {
   const binding = readBinding();
   if (!binding) return null;
   return saveIfStill(binding.machine, await checkFlow({ exec: deviceExec }, { binding, repo, ...(await inputs(binding.machine, cwd)) }));
+}
+
+// The opt-in Start (devices/start-where.js): where a Start from `where` ({ cwd, on }, the selected space) for `repo` runs. -> { where, on, refusal? }.
+// Toggle off (or a remote space): where comes back as it was and nothing is read. Toggle on: `hc machine ls --json` (local to herdr-core,
+// nothing spawns on the device) gives the cheap light; a red light, or a list that can't be read, is a refusal, never this computer.
+export async function planStart({ repo, where }) {
+  const binding = readBinding();
+  if (!startsHere(binding, repo) || where?.on) return { where, on: null };
+  let light = null;
+  try { light = cheapHealth(binding, await listMachines()); } catch { /* an unreadable list refuses the Start */ }
+  return startWhere({ binding, repo, where, light });
+}
+
+// The same plan for a render (the play button's tooltip), which can't wait: from the list the sidebar already holds (Machines.list). Before
+// that list has answered the light is taken as not red, so the tooltip says "Starts on <machine>"; the Start itself asks again (planStart).
+export function planStartNow(repo, where, machines) {
+  const binding = readBinding();
+  const light = machines ? cheapHealth(binding, machines) : { level: "yellow", checks: [] };
+  return startWhere({ binding, repo, where, light });
 }

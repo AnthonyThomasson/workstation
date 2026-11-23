@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { agoText, cardView, headerDot, lightColor, machineNames, machinesChanged, parseMachineList, signInFor, spaceFolders, tooltipOf } from "./card-model.js";
+import { agoText, cardView, headerDot, lightColor, machineNames, machinesChanged, parseMachineList, signInFor, spaceFolders, startToggle, tooltipOf } from "./card-model.js";
 import { normalizeBinding, healthOf } from "./test-device.js";
 import { LOGIN, REFRESH } from "../lib/index.js";
 
@@ -177,4 +177,16 @@ test("temporary machines (hc machine ls lists them, herdr's machines() doesn't) 
   const only = cardView({ binding: null, machines: [{ name: "tmp", temporary: true, state: "connected" }], repo: REPO, now: NOW });
   assert.equal(only.addMachine, true, "a sandbox alone is no machine to bind");
   assert.deepEqual(only.pick, []);
+});
+
+test("the Start toggle is offered only with a repo folder, off by default, and says which machine", () => {
+  assert.deepEqual(startToggle(bound(), REPO), { offered: true, on: false, label: "Start this repo's tickets on desktop" });
+  assert.equal(startToggle(bound({ startHere: { [REPO]: true } }), REPO).on, true);
+  assert.equal(startToggle(bound({ repoRoots: {} }), REPO).offered, false); // no folder: nothing to put the worktree in
+  assert.equal(startToggle(bound(), "other/repo").offered, false);
+  assert.equal(startToggle(bound(), "").offered, false);
+  assert.equal(startToggle(null, REPO).offered, false);
+  const v = cardView({ binding: bound({ startHere: { [REPO]: true } }), machines: connected, repo: REPO, now: NOW });
+  assert.equal(v.startToggle.on, true);
+  assert.equal(cardView({ binding: bound(), machines: null, repo: REPO, now: NOW }).startToggle.offered, true); // still loading: the same
 });

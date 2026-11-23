@@ -5,9 +5,9 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { run } from "herdr";
-import { cardView, tooltipOf, withRepoRoot } from "../devices/index.js";
+import { cardView, tooltipOf, withRepoRoot, withStartHere } from "../devices/index.js";
 import { Auth } from "../github-ui/index.js";
-import { S, stop, note, action } from "../widgets/index.js";
+import { S, stop, note, action, icon } from "../widgets/index.js";
 import { Machines } from "./machines.js";
 import { bindDevice, checkDevice, readBinding, saveBinding, deviceExec } from "./device-env.js";
 import { shOn } from "../runs/index.js";
@@ -32,6 +32,14 @@ export class TestDeviceCard {
     const binding = readBinding();
     if (!binding || !this.repo || (binding.repoRoots[this.repo] ?? "") === folder) return;
     saveBinding(withRepoRoot(binding, this.repo, folder));
+  }
+
+  // The per-repo opt-in: this repo's Starts put their worktrees on the machine (devices/start-where.js). Saved in startHere; off by default.
+  toggleStart(cx) {
+    const binding = readBinding();
+    if (!binding || !this.repo || !binding.repoRoots[this.repo]) return;
+    saveBinding(withStartHere(binding, this.repo, binding.startHere[this.repo] !== true));
+    cx.notify();
   }
 
   // The folder box follows what is saved (a prefill from a space of the machine lands there).
@@ -119,10 +127,21 @@ export class TestDeviceCard {
         .when(v.canSetFolder, (el) => el.child(div().id("test-device-folder-field").h(34).flex_none().px(10).flex().items_center().rounded(8).border_1().border_color(t.input).on_mouse_down("left", stop)
           .child(Input.new(this.folder).h_full().w_full().text_size(S().body).text_color(t.foreground))))
         .when(!v.canSetFolder, (el) => el.child(note(t, "Open a space in a GitHub repo to set its folder."))))
+      .when(v.startToggle.offered, (el) => el.child(this.startToggle(t, v.startToggle, cx)))
       .when(this.busy === "checking", (el) => el.child(note(t, `Checking ${binding.machine}…`)))
       .child(v_flex().gap(6).children(v.failing.map((c, i) => this.failure(t, c, i, binding.machine, cx))))
       .when(Boolean(v.checkedAgo), (el) => el.child(note(t, `Last checked ${v.checkedAgo}`)))
       .when(Boolean(this.auth.state), (el) => el.child(this.auth.render(t, () => { this.auth.state = null; cx.notify(); })));
+  }
+
+  // "Start this repo's tickets on <machine>": a checkbox row, only offered once the repo has a folder on the machine.
+  startToggle(t, toggle, cx) {
+    return v_flex().gap(2)
+      .child(h_flex().id("test-device-start-here").gap(8).items_center().cursor_pointer().on_mouse_down("left", stop).on_click((_e, cx2) => this.toggleStart(cx2))
+        .child(div().size(16).flex_none().flex().items_center().justify_center().rounded(4).border_1().border_color(toggle.on ? t.accent : t.border)
+          .when(toggle.on, (el) => el.bg(t.accent).child(icon("check", 12, t.solid_foreground))))
+        .child(div().flex_1().min_w(0).child(toggle.label)))
+      .child(div().pl(24).child(note(t, toggle.on ? "On: the play button, the Start dialog and herdr-tasks start run this repo's tickets there. A red light stops the Start." : "Off: tickets start on this computer.")));
   }
 
   // One failing check: its message, its one-line fix and, for gh's scope or sign-in, the existing device-flow sign-in on the machine.
