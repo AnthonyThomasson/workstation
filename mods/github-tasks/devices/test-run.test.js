@@ -410,6 +410,37 @@ test("the cap: 1.5 hours of slices, then the terminal is killed, timedOut, exit 
   assert.deepEqual(w.steps().slice(-4), ["rm", "unref", "cleanup", "rm-local"]);
 });
 
+test("a run the cap ended is a timeout whatever status it left (none, or one its kill made); only a 0 is a finish", async () => {
+  for (const code of ["missing", "137", "143", "1"]) {
+    const c = clock();
+    const w = world({ wait: stillRunning(c), read: () => ({ code: 0, stdout: `code=${code}\n---\npartial\n`, stderr: "" }) });
+    const r = await run(w, {}, { now: c.now });
+    assert.equal(r.code, 1, code);
+    assert.equal(r.result.timedOut, true, code);
+    assert.equal(r.result.exitCode, TIMED_OUT_CODE, code);
+    assert.equal(r.result.log, "partial\n");
+  }
+  const w = world({ read: () => ({ code: 0, stdout: "code=3\n---\nx", stderr: "" }) });
+  const r = await run(w);
+  assert.equal(r.result.timedOut, false, "a run that wasn't capped keeps its own status");
+  assert.equal(r.result.exitCode, 3);
+});
+
+test("a kill at the cap that failed is tried again in the cleanup, before the lock is released; one that worked is not repeated", async () => {
+  const c = clock();
+  let n = 0;
+  const w = world({ wait: stillRunning(c), read: () => ({ code: 0, stdout: "code=missing\n---\n", stderr: "" }), kill: () => (++n === 1 ? { code: 1, stdout: "", stderr: "[hc] busy" } : { code: 0, stdout: "", stderr: "" }) });
+  const r = await run(w, {}, { now: c.now });
+  assert.equal(r.result.timedOut, true);
+  const steps = w.steps();
+  assert.equal(steps.filter((x) => x === "kill").length, 2);
+  assert.ok(steps.lastIndexOf("kill") > steps.indexOf("read") && steps.lastIndexOf("kill") < steps.indexOf("cleanup"), "the second kill comes after the read and before the cleanup that frees the lock");
+  const c2 = clock();
+  const ok = world({ wait: stillRunning(c2), read: () => ({ code: 0, stdout: "code=missing\n---\n", stderr: "" }) });
+  await run(ok, {}, { now: c2.now });
+  assert.equal(ok.steps().filter((x) => x === "kill").length, 1);
+});
+
 test("a run that finishes just as the cap lands is its own result, not a timeout", async () => {
   const c = clock();
   const w = world({ wait: stillRunning(c, RUN_TIMEOUT_MS), read: () => ({ code: 0, stdout: "code=0\n---\nlast line\n", stderr: "" }) });
@@ -461,10 +492,24 @@ test("one lost line then an answer is fine, and a good answer restarts the count
   let n = 0;
   const answers = [{ code: 1, stdout: "", stderr: "blip" }, waitJson(), { code: 1, stdout: "", stderr: "blip" }, { code: 1, stdout: "", stderr: "blip" }, { code: 0, stdout: '{"ended":true,"exit_code":0}', stderr: "" }];
   const c = clock();
-  const w = world({ wait: () => { c.advance(1000); return answers[n++]; } });
+  const w = world({ wait: () => { c.advance(WAIT_SLICE_S * 1000); return answers[n++]; } }); // each slice takes its whole length
   const r = await run(w, {}, { now: c.now });
   assert.equal(r.code, 0);
   assert.equal(n, 5);
+});
+
+test("a timeout answer that came back far sooner than its slice is a bad try, so a wait that returns at once can't spin the loop", async () => {
+  const c = clock();
+  const w = world({ wait: () => { c.advance(50); return waitJson(); } });
+  const r = await run(w, {}, { now: c.now });
+  assert.equal(r.code, EXIT.NOT_READY);
+  assert.match(r.message, /Lost the run on desktop[^:]*: the wait came back after 0s of a 590s slice while the terminal was still running/);
+  assert.equal(w.calls.filter((x) => x.step === "wait").length, WAIT_RETRIES);
+  assert.equal(w.calls.filter((x) => x.step === "kill").length, 1);
+  // a slice that took most of its time is a normal check-in, and a short last slice is judged against its own length
+  const c2 = clock();
+  const hcHere = async (args) => { c2.advance(Number(args.at(-1)) * 1000 * 0.6); return waitJson(); };
+  assert.deepEqual(await waitForRun({ hcHere, address: "d/t1", now: c2.now, t0: c2.now() }), { capped: true });
 });
 
 test("a wait that keeps answering at once with a reason other than its timeout can't make a spinning loop", async () => {
@@ -649,7 +694,8 @@ test("a start that ran but whose answer named no terminal is ended by its name",
   const w = world({ start: () => ({ code: 0, stdout: "garbage", stderr: "" }) });
   await run(w);
   const name = hcArgs(w.calls.find((x) => x.step === "start"))[hcArgs(w.calls.find((x) => x.step === "start")).indexOf("--name") + 1];
-  assert.deepEqual(w.calls.filter((x) => x.step === "kill" || x.step === "rm").map(hcArgs), [["kill", `desktop/${name}`], ["rm", `desktop/${name}`]]);
+  assert.deepEqual(w.calls.filter((x) => x.step === "kill" || x.step === "rm").map(hcArgs), [["kill", name], ["rm", name]], "the bare name, which Herdr resolves; a machine prefix is only for an address");
+  assert.match(name, /^herdr-test-r[a-z0-9]+$/);
 });
 
 // ---------------------------------------------------------------- orphans a crash left

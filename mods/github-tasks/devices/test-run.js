@@ -221,10 +221,12 @@ export async function runOnDevice(deps, input) {
   const here = gitHere(exec, cwd);
 
   // The run's terminal: `started` once hc run was asked, `address` when its answer gave one, `ended` once it is known to have exited or been killed.
-  // hc kill / hc rm of the run's terminal. Never throws; "it's gone already" is expected (a run that finished) and says nothing.
+  // hc kill / hc rm of the run's terminal. Never throws; "it's gone already" is expected (a run that finished) and says nothing. -> whether it is done.
   const endTerminal = async (target, what) => {
     const r = await hcHere([what, target]);
-    if (r.code !== 0 && !/no such|not found|unknown|finished|exited|not running|already|gone/i.test(`${r.stderr}${r.stdout}`)) notes.push(`Cleanup: couldn't ${what} the terminal ${target} (${said(r)}).`);
+    if (r.code === 0 || /no such|not found|unknown|finished|exited|not running|already|gone/i.test(`${r.stderr}${r.stdout}`)) return true;
+    notes.push(`Cleanup: couldn't ${what} the terminal ${target} (${said(r)}).`);
+    return false;
   };
   let refMade = false, touched = false, started = false, address = null, ended = false;
   const hcHere = (args, timeout = STEP_TIMEOUT_MS) => shOn(local, null, HC, args, { timeout }).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
@@ -282,12 +284,12 @@ export async function runOnDevice(deps, input) {
     if (began.code !== 0 || !address) throw new Step(EXIT.NOT_READY, `Couldn't start the command on ${machine}: ${said(began) || "hc run named no terminal"}.`);
     const waited = await waitForRun({ hcHere, address, now, t0 });
     if (waited.lost) throw new Step(EXIT.NOT_READY, `Lost the run on ${machine} (${address}): ${waited.lost}.`);
-    ended = true;
-    if (waited.capped) await endTerminal(address, "kill"); // the cap: the run's own, not Herdr's. Cleanup below still runs.
+    // The cap: the run's own, not Herdr's. A kill that failed leaves `ended` false, so the cleanup below tries it again before the lock goes.
+    ended = waited.capped ? await endTerminal(address, "kill") : true;
     const durationMs = Math.max(0, now() - t0);
 
     // 7. read back. Only a run this computer ended at the cap makes a timeout; no exit status otherwise is a lost run.
-    const cut = waited.capped;
+    const cut = Boolean(waited.capped);
     let back;
     try {
       const read = await sh(READ_BACK, [codeFile, log, String(LOG_TAIL_BYTES)]);
@@ -299,7 +301,7 @@ export async function runOnDevice(deps, input) {
       back = { code: null, log: "" };
     }
     if (back.code === null && !cut) throw new Step(EXIT.NOT_READY, `The run on ${machine} ended without an exit status: ${exitedAs(waited.got) || "no answer from the device"}.`);
-    const timedOut = back.code === null;
+    const timedOut = cut && back.code !== 0; // a run the cap ended has no status, or one its kill made: only a 0 is a finish
     if (timedOut) notes.push(`The command didn't finish in ${RUN_TIMEOUT_MS / 1000}s, so its terminal was ended.`);
     const result = { device: machine, commit, exitCode: timedOut ? TIMED_OUT_CODE : back.code, log: back.log, durationMs, timedOut };
     return { code: exitFor(result), result, notes, ...(keep ? { kept: { worktree: folder, log } } : {}) };
@@ -310,7 +312,7 @@ export async function runOnDevice(deps, input) {
     const warn = (what, e) => notes.push(`Cleanup: ${what}${e ? ` (${String(e?.message ?? e)})` : ""}.`);
     // The terminal first, so nothing holds the worktree: killed unless it is known to be over, then removed. A run whose start was
     // asked but named no terminal is looked for by its name.
-    const target = address ?? (started ? `${machine}/${terminalName(id)}` : null);
+    const target = address ?? (started ? terminalName(id) : null);
     if (target && !ended) await endTerminal(target, "kill");
     if (target) await endTerminal(target, "rm");
     if (refMade) await here("update-ref", "-d", ref).then((r) => { if (r.code !== 0) warn(`couldn't delete ${ref} here`, said(r)); }, (e) => warn(`couldn't delete ${ref} here`, e));
@@ -326,20 +328,24 @@ export async function runOnDevice(deps, input) {
 // the 600s cap), until it has exited or RUN_TIMEOUT_MS has passed since t0. The wait is the local core's own, event-driven: a slice
 // that ends with the terminal still running is only the wait checking in, and nothing is spawned on the device or slept on.
 //   -> { ended: true, got } | { capped: true } | { lost: reason }. A wait that fails, or answers nothing readable, or answers "not over"
-//   for a reason other than its own timeout (which would spin), is asked again WAIT_RETRIES times in a row, then the run is lost.
+//   for a reason other than its own timeout, or with its timeout far sooner than the slice (which would spin), is asked again WAIT_RETRIES times in a row, then the run is lost.
 export async function waitForRun({ hcHere, address, now, t0 }) {
   let bad = 0, why = "";
   for (;;) {
     const left = RUN_TIMEOUT_MS - (now() - t0);
     if (left < 1000) return { capped: true };
     const slice = Math.min(WAIT_SLICE_S, Math.floor(left / 1000));
+    const asked = now();
     const r = await hcHere(["wait", address, "--json", "--timeout", String(slice)], slice * 1000 + WAIT_GRACE_MS);
+    const took = now() - asked;
     let got = null;
     try { got = JSON.parse(r.stdout); } catch { got = null; }
     if (r.code === 0 && got && typeof got === "object") {
       if (got.ended === true || got.exit_code != null) return { ended: true, got };
-      if (got.reason === "timeout") { bad = 0; continue; } // the slice ran out; the terminal is still running
-      why = `the wait answered "${got.reason ?? "nothing"}" while the terminal was still running`;
+      if (got.reason === "timeout" && took >= (slice * 1000) / 2) { bad = 0; continue; } // the slice ran out; the terminal is still running
+      why = got.reason === "timeout"
+        ? `the wait came back after ${Math.round(took / 1000)}s of a ${slice}s slice while the terminal was still running`
+        : `the wait answered "${got.reason ?? "nothing"}" while the terminal was still running`;
     } else {
       why = said(r) || (r.code === 0 ? "its answer wasn't readable" : `hc wait exited ${r.code}`);
     }
