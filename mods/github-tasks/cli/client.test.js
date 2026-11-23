@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { CLAIM_WAIT, main } from "./client.js";
 import { EXIT, checkRequest, claimedName, failReply, fileName, okReply, waitingId } from "./protocol.js";
 import { cliRepliesDir, cliRequestsDir } from "../workflow/index.js";
+import { RUN_WAIT_S } from "../lib/index.js";
 
 const HOME = "/home/me";
 const REQUESTS = cliRequestsDir(HOME), REPLIES = cliRepliesDir(HOME);
@@ -128,7 +129,10 @@ test("device run: the log is printed, notes go to stderr, and the exit is the co
   assert.equal(await main(["device", "run", "--commit", "HEAD~1", "--", "npm", "test"], passed.io), EXIT.ok);
   assert.equal(seen.op, "device-run");
   assert.deepEqual(seen.args, { commit: "HEAD~1", command: ["npm", "test"] });
-  assert.equal(seen.timeout, 720);
+  assert.equal(seen.timeout, RUN_WAIT_S);
+  // the request carries that wait as its expiry: the bridge drops it only after the client has given up, never before the run's cap
+  assert.ok(checkRequest(JSON.stringify(seen), seen.at + RUN_WAIT_S * 1000 - 1).request);
+  assert.equal(checkRequest(JSON.stringify(seen), seen.at + RUN_WAIT_S * 1000 + 1).expired, seen.id);
   assert.deepEqual(passed.out, ["all passed"]);
   assert.deepEqual(passed.err, ["Uncommitted changes aren't sent."]);
 

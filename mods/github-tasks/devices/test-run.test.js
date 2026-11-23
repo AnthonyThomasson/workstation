@@ -5,9 +5,10 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import {
-  CLEANUP, CHECKOUT, EXIT, LOCAL_PREPARE, PREPARE, READ_BACK, RUN_ARGV, RUN_LINE, RUN_TIMEOUT_MS, SEND, STALE_LOCK_S, STEP_TIMEOUT_MS, SWEEP_AFTER_MIN, TIMED_OUT_CODE,
-  exitFor, newTestRunId, parseKeyValues, parseReadBack, readiness, runOnDevice, sinceText, testRunRef,
+  CLEANUP, CHECKOUT, EXIT, HC, LOCAL_PREPARE, MAX_ORPHANS, PREPARE, READ_BACK, RUN_ARGV, RUN_LINE, RUN_TIMEOUT_MS, SEND, SEND_TIMEOUT_MS, STALE_LOCK_S, STEP_TIMEOUT_MS, SWEEP_AFTER_MIN, TERMINAL_PREFIX, TIMED_OUT_CODE, WAIT_RETRIES,
+  exitFor, exitedAs, newTestRunId, parseKeyValues, parseReadBack, readiness, runOnDevice, sinceText, terminalAddress, terminalName, testRunRef, waitForRun,
 } from "./test-run.js";
+import { EXEC_CAP_MS, WAIT_GRACE_MS, WAIT_SLICE_S } from "../lib/index.js";
 import { GIT_BASH } from "../runs/index.js";
 import { testRunId } from "../workflow/index.js";
 
@@ -29,10 +30,10 @@ function stepOf({ cmd, args }) {
     return `git ${g[0]}`;
   }
   const script = args[1];
+  if (script === HC) return { run: "start", wait: "wait", kill: "kill", rm: "rm", ls: "ls", get: "get" }[args[3]] ?? `hc ${args[3]}`;
   if (script === PREPARE) return "prepare";
   if (script === SEND) return "send";
   if (script === CHECKOUT) return "checkout";
-  if (script === RUN_LINE || script === RUN_ARGV) return "run";
   if (script === READ_BACK) return "read";
   if (script === CLEANUP) return "cleanup";
   if (script === 'rm -f "$1"') return "rm-local";
@@ -49,7 +50,10 @@ function world(at = {}) {
     status: () => ok(""),
     prepare: () => ok("lock=ok\nbase=1\ndone=1\n"),
     ref: () => ok(), unref: () => ok(), pack: () => ok(), send: () => ok(), checkout: () => ok(),
-    run: () => ok(),
+    ls: () => ok('{"machines":[],"terminals":[]}'),
+    start: () => ok('{"address":"desktop/t9","name":"herdr-test"}'),
+    wait: () => ok('{"ended":true,"exit_code":0,"reason":"exit","terminal":"desktop/t9"}'),
+    kill: () => ok(), rm: () => ok(),
     read: () => ok("code=0\n---\nall green\n"),
     cleanup: () => ok("done=1\n"),
     "rm-local": () => ok(), "mkdir-local": () => ok(),
@@ -65,6 +69,10 @@ function world(at = {}) {
   return { exec, calls, steps: () => calls.map((c) => c.step) };
 }
 const run = (w, extra = {}, deps = {}) => runOnDevice({ exec: w.exec, now: (() => { let t = 1_000_000; return () => (t += 500); })(), random: () => 0.5, ...deps }, input(extra));
+// A clock that only the test moves, for runs that last longer than the real one would: advance(ms).
+const clock = (start = 10_000_000) => { let t = start; return { now: () => t, advance: (ms) => { t += ms; } }; };
+const waitJson = (extra) => ({ code: 0, stdout: JSON.stringify({ ended: false, exit_code: null, reason: "timeout", terminal: "desktop/t9", ...extra }), stderr: "" });
+const hcArgs = (c) => c.args.slice(3); // what hc was given: sh -c <script> github-tasks <args>
 
 // ---------------------------------------------------------------- fail fast
 
@@ -106,11 +114,11 @@ test("a commit that can't be resolved is a usage error, found before the device 
 
 // ---------------------------------------------------------------- the happy path
 
-test("the steps run in order: pack, send, checkout, run, read, cleanup (prepare first, then the local tidy)", async () => {
+test("the steps run in order: pack, send, checkout, start, wait, read, cleanup (prepare first, then the local tidy)", async () => {
   const w = world();
   const r = await run(w);
   assert.equal(r.code, 0);
-  assert.deepEqual(w.steps(), ["resolve", "status", "resolve", "resolve", "prepare", "mkdir-local", "ref", "pack", "send", "checkout", "run", "read", "unref", "cleanup", "rm-local"]);
+  assert.deepEqual(w.steps(), ["resolve", "status", "resolve", "resolve", "prepare", "ls", "mkdir-local", "ref", "pack", "send", "checkout", "start", "wait", "read", "rm", "unref", "cleanup", "rm-local"]);
   assert.equal(r.result.device, "desktop");
   assert.equal(r.result.commit, SHA);
   assert.equal(r.result.exitCode, 0);
@@ -120,12 +128,14 @@ test("the steps run in order: pack, send, checkout, run, read, cleanup (prepare 
   assert.deepEqual(Object.keys(r.result).sort(), ["commit", "device", "durationMs", "exitCode", "log", "timedOut"]);
 });
 
-test("only the remote steps are spawns on the device: a handful", async () => {
+test("only the remote steps are spawns on the device: a handful, and the run itself, its waits and its terminal's end are none", async () => {
   const w = world();
   await run(w);
   const remote = w.calls.filter((c) => c.opts?.on === "desktop").map((c) => c.step);
-  assert.deepEqual(remote, ["prepare", "checkout", "run", "read", "cleanup"]);
-  assert.ok(w.calls.filter((c) => ["send"].includes(c.step)).every((c) => !c.opts?.on), "the send is a local hc exec");
+  assert.deepEqual(remote, ["prepare", "checkout", "read", "cleanup"]);
+  for (const step of ["send", "start", "wait", "rm", "ls"]) {
+    assert.ok(w.calls.filter((c) => c.step === step).every((c) => !c.opts?.on && c.cmd === "sh"), `${step} is run here, through sh, never on the device`);
+  }
 });
 
 test("the commit resolves as given, defaulting to HEAD, and a dirty tree is reported, not sent", async () => {
@@ -176,7 +186,7 @@ test("the send is hc's raw stdin into cat on the device, run by the local sh, wi
   assert.equal(send.cmd, "sh");
   assert.equal(send.args[0], "-c");
   assert.match(send.args[1], /hc exec -i --on "\$m" --timeout 600 -- "\$@" < "\$src"/);
-  assert.equal(send.opts.timeout, RUN_TIMEOUT_MS);
+  assert.equal(send.opts.timeout, SEND_TIMEOUT_MS);
   assert.equal(send.opts.on, undefined, "run here, never `on`");
   const [machine, local, cmd, ...rest] = send.args.slice(3);
   assert.equal(machine, "desktop");
@@ -236,11 +246,13 @@ test("on Windows every remote script goes through Git Bash -lc, on Unix through 
   for (const [binding, shell, flag] of [[winBinding, GIT_BASH, "-lc"], [unixBinding, "sh", "-c"]]) {
     const w = world();
     await run(w, { binding });
-    for (const c of w.calls.filter((x) => ["prepare", "checkout", "run", "read", "cleanup"].includes(x.step))) {
+    for (const c of w.calls.filter((x) => ["prepare", "checkout", "read", "cleanup"].includes(x.step))) {
       assert.equal(c.cmd, shell, c.step);
       assert.equal(c.args[0], flag, c.step);
       assert.equal(c.opts.on, "desktop");
     }
+    const start = hcArgs(w.calls.find((x) => x.step === "start"));
+    assert.deepEqual(start.slice(start.indexOf("--") + 1, start.indexOf("--") + 3), [shell, flag], "the terminal runs the command under the device's own shell");
     const send = w.calls.find((c) => c.step === "send");
     assert.equal(send.args[5], shell, "the device's own shell is what cat runs under");
     assert.equal(send.args[6], flag);
@@ -250,12 +262,16 @@ test("on Windows every remote script goes through Git Bash -lc, on Unix through 
   }
 });
 
-test("every remote step but the run has an explicit timeout above exec's 30s default, and the run has the cap", async () => {
+test("every remote step has an explicit timeout above exec's 30s default, and none passes Herdr's 600s exec cap", async () => {
   const w = world();
   await run(w);
   for (const c of w.calls.filter((x) => ["prepare", "checkout", "read", "cleanup"].includes(x.step))) assert.equal(c.opts.timeout, STEP_TIMEOUT_MS, c.step);
-  assert.ok(STEP_TIMEOUT_MS > 30000 && STEP_TIMEOUT_MS <= RUN_TIMEOUT_MS);
-  assert.equal(w.calls.find((x) => x.step === "run").opts.timeout, RUN_TIMEOUT_MS);
+  assert.ok(STEP_TIMEOUT_MS > 30000 && STEP_TIMEOUT_MS <= EXEC_CAP_MS);
+  assert.equal(w.calls.find((x) => x.step === "send").opts.timeout, SEND_TIMEOUT_MS);
+  assert.equal(SEND_TIMEOUT_MS, 600000, "the send keeps the exec cap of its own: it is not the run's 1.5 hours");
+  assert.ok(RUN_TIMEOUT_MS > EXEC_CAP_MS && SEND_TIMEOUT_MS !== RUN_TIMEOUT_MS);
+  assert.match(SEND, /--timeout 600 /);
+  for (const c of w.calls) if (c.opts?.timeout) assert.ok(c.opts.timeout <= EXEC_CAP_MS, `${c.step} asks ${c.opts.timeout}ms, past the exec cap`);
 });
 
 test("the host comes from the binding: no probe is ever made", async () => {
@@ -264,22 +280,60 @@ test("the host comes from the binding: no probe is ever made", async () => {
   assert.ok(!w.calls.some((c) => c.args.some((a) => /uname/.test(String(a)))));
 });
 
-test("the command: one argument is a shell line, several are an argv; both with the timeout of Herdr's cap", async () => {
-  let w = world();
+// `hc run --bg --json --on <m> --name herdr-test-<id> --cwd <worktree> --no-parent --no-notify -- <shell> <flag> <script> github-tasks <worktree> <log> <code> <command...>`
+const startOf = (w) => {
+  const a = hcArgs(w.calls.find((x) => x.step === "start"));
+  const at = a.indexOf("--");
+  return { before: a.slice(0, at), device: a.slice(at + 1) };
+};
+
+test("the command starts in a detached Herdr terminal on the device: hc run --bg, named for the run, no parent, no notes; the exit status goes to the code file", async () => {
+  const w = world();
   await run(w, { command: ["npm test && echo done"] });
-  let c = w.calls.find((x) => x.step === "run");
-  assert.equal(c.args[1], RUN_LINE);
-  assert.equal(c.args[6], "npm test && echo done");
-  assert.equal(c.opts.timeout, 600000);
-  assert.equal(c.opts.on, "desktop");
-  w = world();
-  await run(w, { command: ["git", "log", "-1", "--format=%H"] });
-  c = w.calls.find((x) => x.step === "run");
-  assert.equal(c.args[1], RUN_ARGV);
-  assert.deepEqual(c.args.slice(6), ["git", "log", "-1", "--format=%H"]);
-  assert.match(c.args[3], /^\/home\/me\/\.herdr\/test-runs\/r\w+$/, "the worktree");
-  assert.equal(c.args[4], `${c.args[3]}.log`);
-  assert.equal(c.args[5], `${c.args[3]}.code`);
+  const { before, device } = startOf(w);
+  const name = before[before.indexOf("--name") + 1];
+  assert.match(name, /^herdr-test-r[a-z0-9]+$/);
+  assert.deepEqual(before.slice(0, 4), ["run", "--bg", "--json", "--on"]);
+  assert.equal(before[4], "desktop");
+  assert.equal(before[before.indexOf("--cwd") + 1], `/home/me/.herdr/test-runs/${name.slice(TERMINAL_PREFIX.length)}`, "the worktree");
+  assert.ok(before.includes("--no-parent") && before.includes("--no-notify"));
+  assert.ok(!before.includes("--rm"), "removed by the run, once it is read");
+  assert.deepEqual(device.slice(0, 3), ["sh", "-c", RUN_LINE]);
+  assert.deepEqual(device.slice(3, 4), ["github-tasks"]);
+  const [folder, log, code, ...cmd] = device.slice(4);
+  assert.match(folder, /^\/home\/me\/\.herdr\/test-runs\/r\w+$/);
+  assert.equal(log, `${folder}.log`); assert.equal(code, `${folder}.code`);
+  assert.deepEqual(cmd, ["npm test && echo done"], "one argument is a shell line");
+  assert.equal(w.calls.find((x) => x.step === "start").opts.timeout, STEP_TIMEOUT_MS);
+
+  const w2 = world();
+  await run(w2, { command: ["git", "log", "-1", "--format=%H"] });
+  const s2 = startOf(w2);
+  assert.deepEqual(s2.device.slice(0, 3), ["sh", "-c", RUN_ARGV]);
+  assert.deepEqual(s2.device.slice(7), ["git", "log", "-1", "--format=%H"], "several are an argv, run as given");
+});
+
+test("the terminal's name is a valid Herdr name for any id a run makes", () => {
+  for (const id of [newTestRunId(0, () => 0), newTestRunId(Date.now(), () => 0.9999999), newTestRunId(2 ** 45, () => 0.5)]) {
+    assert.match(terminalName(id), /^[a-z0-9_-]{1,32}$/, terminalName(id));
+  }
+});
+
+test("the terminal's address is read from hc run's JSON; a bare address gets the machine, anything else is none", () => {
+  assert.equal(terminalAddress('{"address":"desktop/t7","name":"x"}', "desktop"), "desktop/t7");
+  assert.equal(terminalAddress('{"address":"t7"}', "desktop"), "desktop/t7");
+  for (const bad of ["", "not json", "{}", '{"address":""}', '{"address":"-x/t7"}', '{"address":"a b/t7"}', '{"address":["t7"]}', "null"]) assert.equal(terminalAddress(bad, "desktop"), null, bad);
+});
+
+test("a start that fails or names no terminal is exit 5 with the reason, and nothing waits", async () => {
+  for (const start of [() => ({ code: 1, stdout: "", stderr: "[hc] machine disconnected" }), () => ({ code: 0, stdout: "{}", stderr: "" }), () => { throw new Error("spawn failed"); }]) {
+    const w = world({ start });
+    const r = await run(w);
+    assert.equal(r.code, EXIT.NOT_READY);
+    assert.match(r.message, /Couldn't start the command on desktop/);
+    assert.ok(!w.steps().includes("wait"));
+    assert.ok(cleanedUp(w));
+  }
 });
 
 test("the checkout fetches the bundle into the private ref and adds a detached worktree at the commit", async () => {
@@ -310,18 +364,115 @@ test("exit 0 when the command passed, 1 when it failed, with the log and the cod
   assert.equal(r.result.timedOut, false);
 });
 
-test("a command the exec cap ended: no exit status, timedOut, exit 1, the partial log, and the cleanup still runs", async () => {
+// A run whose terminal is still going: every wait checks in (reason timeout), the clock moving by what the wait took.
+const stillRunning = (c, took = WAIT_SLICE_S * 1000) => (calls) => { c.advance(took); return waitJson(); };
+
+test("the wait is a loop of hc wait slices of at most 590s, each its own exec under the 600s cap, until the terminal exits", async () => {
+  const c = clock();
+  let n = 0;
+  const w = world({ wait: () => { c.advance(WAIT_SLICE_S * 1000); return ++n < 4 ? waitJson() : { code: 0, stdout: '{"ended":true,"exit_code":0,"reason":"exit"}', stderr: "" }; } });
+  const r = await run(w, {}, { now: c.now });
+  assert.equal(r.code, 0);
+  const waits = w.calls.filter((x) => x.step === "wait");
+  assert.equal(waits.length, 4, "three check-ins, then the exit");
+  for (const x of waits) {
+    assert.deepEqual(hcArgs(x), ["wait", "desktop/t9", "--json", "--timeout", String(WAIT_SLICE_S)]);
+    assert.equal(x.opts.timeout, WAIT_SLICE_S * 1000 + WAIT_GRACE_MS);
+    assert.ok(x.opts.timeout <= EXEC_CAP_MS, "an exec under Herdr's cap");
+    assert.equal(x.opts.on, undefined, "the local core's wait, not a spawn on the device");
+  }
+  assert.ok(!w.steps().includes("kill"), "it ended by itself: nothing to kill");
+  assert.equal(r.result.timedOut, false);
+  assert.ok(r.result.durationMs >= 3 * WAIT_SLICE_S * 1000, "the run's own time spans the slices");
+});
+
+test("the cap: 1.5 hours of slices, then the terminal is killed, timedOut, exit 1, the partial log read, and the cleanup still runs", async () => {
+  assert.equal(RUN_TIMEOUT_MS, 5400000);
+  const c = clock();
   const w = world({
-    run: () => ({ code: 124, stdout: "", stderr: "[hc] timed out after 600000 ms: ended" }),
+    wait: stillRunning(c),
     read: () => ({ code: 0, stdout: "code=missing\n---\nhalf a log\n", stderr: "" }),
   });
-  const r = await run(w);
+  const r = await run(w, {}, { now: c.now });
   assert.equal(r.code, 1);
   assert.equal(r.result.timedOut, true);
   assert.equal(r.result.exitCode, TIMED_OUT_CODE);
   assert.equal(r.result.log, "half a log\n");
-  assert.match(r.notes.join("\n"), /didn't finish in 600s/);
-  assert.deepEqual(w.steps().slice(-3), ["unref", "cleanup", "rm-local"]);
+  assert.match(r.notes.join("\n"), /didn't finish in 5400s/);
+  const waits = w.calls.filter((x) => x.step === "wait");
+  assert.equal(waits.length, Math.ceil(RUN_TIMEOUT_MS / (WAIT_SLICE_S * 1000)), "590s slices until the 5400s are used up");
+  assert.deepEqual(hcArgs(waits.at(-1)).slice(-1), [String(Math.floor((RUN_TIMEOUT_MS - 9 * WAIT_SLICE_S * 1000) / 1000))], "the last slice is only what is left");
+  assert.ok(waits.every((x) => Number(hcArgs(x).at(-1)) <= WAIT_SLICE_S));
+  const kills = w.calls.filter((x) => x.step === "kill");
+  assert.equal(kills.length, 1, "killed once");
+  assert.deepEqual(hcArgs(kills[0]), ["kill", "desktop/t9"]);
+  assert.ok(w.calls.indexOf(kills[0]) > w.calls.indexOf(waits.at(-1)) && w.calls.indexOf(kills[0]) < w.calls.findIndex((x) => x.step === "read"), "killed before the log is read");
+  assert.deepEqual(w.steps().slice(-4), ["rm", "unref", "cleanup", "rm-local"]);
+});
+
+test("a run that finishes just as the cap lands is its own result, not a timeout", async () => {
+  const c = clock();
+  const w = world({ wait: stillRunning(c, RUN_TIMEOUT_MS), read: () => ({ code: 0, stdout: "code=0\n---\nlast line\n", stderr: "" }) });
+  const r = await run(w, {}, { now: c.now });
+  assert.equal(r.code, 0);
+  assert.equal(r.result.timedOut, false);
+  assert.equal(r.result.log, "last line\n");
+});
+
+test("waitForRun on its own: slice sizes, check-ins, the exit, the cap", async () => {
+  const c = clock(); let seen = [];
+  const hcHere = async (args) => { seen.push(args); c.advance(1000 * Number(args.at(-1))); return waitJson(); };
+  const r = await waitForRun({ hcHere, address: "desktop/t9", now: c.now, t0: c.now() });
+  assert.deepEqual(r, { capped: true });
+  assert.equal(seen.length, 10);
+  assert.equal(seen.at(-1).at(-1), "90", "5400 - 9 x 590");
+  seen = [];
+  const exited = await waitForRun({ hcHere: async () => ({ code: 0, stdout: '{"ended":true,"exit_code":3,"reason":"exit"}', stderr: "" }), address: "d/t1", now: c.now, t0: c.now() });
+  assert.equal(exited.ended, true);
+  assert.equal(exitedAs(exited.got), "exit code 3, exit");
+  assert.equal(exitedAs({ exit_code: 129, reason: "killed", signal: "HUP" }), "exit code 129, signal HUP, killed");
+  assert.equal(exitedAs(null), "");
+  // an exit status that is only in exit_code (no `ended` field) still ends the wait
+  assert.equal((await waitForRun({ hcHere: async () => ({ code: 0, stdout: '{"exit_code":0}', stderr: "" }), address: "d/t1", now: c.now, t0: c.now() })).ended, true);
+});
+
+test("a lost line or a wait error is asked again a bounded number of times, then the run is exit 5 with the reason and its terminal is killed", async () => {
+  assert.equal(WAIT_RETRIES, 3);
+  for (const bad of [
+    () => ({ code: 1, stdout: "", stderr: "[hc] machine disconnected" }),
+    () => { throw new Error("spawn failed"); },
+    () => ({ code: 0, stdout: "not json", stderr: "" }),
+    () => ({ code: 124, stdout: "", stderr: "[hc] timed out" }),
+  ]) {
+    const w = world({ wait: bad });
+    const r = await run(w);
+    assert.equal(r.code, EXIT.NOT_READY);
+    assert.match(r.message, /Lost the run on desktop \(desktop\/t9\): /);
+    assert.equal(r.result, undefined);
+    assert.equal(w.calls.filter((x) => x.step === "wait").length, WAIT_RETRIES);
+    assert.equal(w.calls.filter((x) => x.step === "kill").length, 1, "killed anyway");
+    assert.deepEqual(hcArgs(w.calls.find((x) => x.step === "kill")), ["kill", "desktop/t9"]);
+    assert.ok(w.steps().includes("rm") && cleanedUp(w));
+  }
+  assert.match((await run(world({ wait: () => ({ code: 1, stdout: "", stderr: "[hc] machine disconnected" }) }))).message, /machine disconnected/);
+});
+
+test("one lost line then an answer is fine, and a good answer restarts the count", async () => {
+  let n = 0;
+  const answers = [{ code: 1, stdout: "", stderr: "blip" }, waitJson(), { code: 1, stdout: "", stderr: "blip" }, { code: 1, stdout: "", stderr: "blip" }, { code: 0, stdout: '{"ended":true,"exit_code":0}', stderr: "" }];
+  const c = clock();
+  const w = world({ wait: () => { c.advance(1000); return answers[n++]; } });
+  const r = await run(w, {}, { now: c.now });
+  assert.equal(r.code, 0);
+  assert.equal(n, 5);
+});
+
+test("a wait that keeps answering at once with a reason other than its timeout can't make a spinning loop", async () => {
+  const w = world({ wait: () => ({ code: 0, stdout: '{"ended":false,"exit_code":null,"reason":"idle","status":"idle"}', stderr: "" }) });
+  const r = await run(w);
+  assert.equal(r.code, EXIT.NOT_READY);
+  assert.match(r.message, /answered "idle" while the terminal was still running/);
+  assert.equal(w.calls.filter((x) => x.step === "wait").length, WAIT_RETRIES);
 });
 
 test("--keep tells the cleanup to keep the worktree and log, and reports their paths", async () => {
@@ -379,22 +530,23 @@ test("cleanup runs after a throw or a failure at every step, and the failing ste
   }
 });
 
-test("a run that ended with no exit status and no report of Herdr's time limit is a lost run: exit 5 with the reason, and cleanup", async () => {
-  for (const ran of [() => { throw new Error("spawn failed"); }, () => ({ code: 1, stdout: "", stderr: "[hc] machine disconnected" }), () => ({ code: 0, stdout: "", stderr: "" })]) {
-    const w = world({ run: ran, read: () => ({ code: 0, stdout: "code=missing\n---\npartial\n", stderr: "" }) });
+test("a terminal that exited with no exit status written (killed, crashed) and wasn't capped is a lost run: exit 5 with the reason, and cleanup", async () => {
+  for (const ended of ['{"ended":true,"exit_code":129,"reason":"killed","signal":"HUP"}', '{"ended":true,"exit_code":0,"reason":"exit"}']) {
+    const w = world({ wait: () => ({ code: 0, stdout: ended, stderr: "" }), read: () => ({ code: 0, stdout: "code=missing\n---\npartial\n", stderr: "" }) });
     const r = await run(w);
     assert.equal(r.code, EXIT.NOT_READY);
     assert.equal(r.result, undefined);
-    assert.match(r.message, /ended without an exit status/);
-    assert.ok(cleanedUp(w));
+    assert.match(r.message, /ended without an exit status: exit code (129, signal HUP, killed|0, exit)/);
+    assert.ok(!w.steps().includes("kill"), "it was over already");
+    assert.ok(w.steps().includes("rm") && cleanedUp(w));
   }
 });
 
 test("a read-back that fails after a timeout is still a timeout: exit 1, timedOut, and cleanup", async () => {
-  const cut = () => ({ code: 124, stdout: "", stderr: "[hc] timed out after 600000 ms: ended" });
   for (const read of [() => ({ code: 1, stdout: "", stderr: "no route" }), () => { throw new Error("spawn failed"); }, () => ({ code: 0, stdout: "garbage", stderr: "" })]) {
-    const w = world({ run: cut, read });
-    const r = await run(w);
+    const c = clock();
+    const w = world({ wait: stillRunning(c), read });
+    const r = await run(w, {}, { now: c.now });
     assert.equal(r.code, 1);
     assert.equal(r.result.timedOut, true);
     assert.equal(r.result.exitCode, TIMED_OUT_CODE);
@@ -451,6 +603,92 @@ test("a cleanup that fails is a note, never a change of the result", async () =>
   assert.match(r.notes.join("\n"), /Cleanup: the device's cleanup exited 1 \(worktree is locked\)/);
 });
 
+test("cleanup ends and removes the run's terminal on every path that started one, and none that didn't", async () => {
+  const boom = () => { throw new Error("spawn failed"); };
+  const c0 = () => clock();
+  const cases = [
+    // [what, world answers, run deps, killed?]
+    ["it passed", {}, {}, false],
+    ["it failed", { read: () => ({ code: 0, stdout: "code=2\n---\nx", stderr: "" }) }, {}, false],
+    ["the read-back threw", { read: boom }, {}, false],
+    ["the wait was lost", { wait: boom }, {}, true],
+    ["the cap", { wait: stillRunning(c0()) }, "cap", true],
+  ];
+  for (const [what, at, deps, killed] of cases) {
+    const c = clock();
+    const w = world(deps === "cap" ? { wait: stillRunning(c) } : at);
+    await run(w, {}, deps === "cap" ? { now: c.now } : {});
+    const kills = w.calls.filter((x) => x.step === "kill").map(hcArgs);
+    assert.deepEqual(kills, killed ? [["kill", "desktop/t9"]] : [], what);
+    assert.deepEqual(w.calls.filter((x) => x.step === "rm").map(hcArgs), [["rm", "desktop/t9"]], `${what}: removed`);
+    assert.ok(w.calls.findIndex((x) => x.step === "rm") < w.calls.findIndex((x) => x.step === "cleanup"), `${what}: the terminal goes before the worktree`);
+    assert.ok(cleanedUp(w), what);
+  }
+  for (const step of ["prepare", "ref", "pack", "send", "checkout"]) {
+    const w = world({ [step]: () => ({ code: 1, stdout: "", stderr: "x" }) });
+    await run(w);
+    assert.ok(!w.steps().includes("kill") && !w.steps().includes("rm"), `${step} failed before any terminal: none to end`);
+  }
+});
+
+test("a terminal that is already gone is no complaint, and one that can't be ended is a note, never a different result", async () => {
+  const quiet = world({ rm: () => ({ code: 1, stdout: "", stderr: "[hc] no such terminal desktop/t9" }) });
+  const r = await run(quiet);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.notes, []);
+  const c = clock();
+  const loud = world({ wait: stillRunning(c), read: () => ({ code: 0, stdout: "code=missing\n---\n", stderr: "" }), kill: () => ({ code: 1, stdout: "", stderr: "[hc] permission denied" }), rm: () => { throw new Error("hc exploded"); } });
+  const r2 = await run(loud, {}, { now: c.now });
+  assert.equal(r2.code, 1);
+  assert.equal(r2.result.timedOut, true);
+  assert.match(r2.notes.join("\n"), /couldn't kill the terminal desktop\/t9 \(\[hc\] permission denied\)/);
+  assert.match(r2.notes.join("\n"), /couldn't rm the terminal desktop\/t9 \(hc exploded\)/);
+});
+
+test("a start that ran but whose answer named no terminal is ended by its name", async () => {
+  const w = world({ start: () => ({ code: 0, stdout: "garbage", stderr: "" }) });
+  await run(w);
+  const name = hcArgs(w.calls.find((x) => x.step === "start"))[hcArgs(w.calls.find((x) => x.step === "start")).indexOf("--name") + 1];
+  assert.deepEqual(w.calls.filter((x) => x.step === "kill" || x.step === "rm").map(hcArgs), [["kill", `desktop/${name}`], ["rm", `desktop/${name}`]]);
+});
+
+// ---------------------------------------------------------------- orphans a crash left
+
+const orphan = (name, address, state = "live") => ({ address, name, state, agent: "zsh" });
+const lsOf = (...terminals) => () => ({ code: 0, stdout: JSON.stringify({ machines: [], terminals }), stderr: "" });
+
+test("a run first ends this machine's herdr-test-* terminals older than the stale-lock age, by hc ls and hc get on this computer", async () => {
+  const now = 1_700_000_000_000;
+  const got = { "desktop/t1": now - (STALE_LOCK_S + 60) * 1000, "desktop/t2": now - 600 * 1000, "desktop/t3": now - (STALE_LOCK_S + 1) * 1000 };
+  const w = world({
+    ls: lsOf(orphan("herdr-test-rold1", "desktop/t1"), orphan("herdr-test-rnew1", "desktop/t2"), orphan("herdr-test-rold2", "desktop/t3", "finished"),
+      orphan("herdr-test-rother", "other/t4"), orphan("my-build", "desktop/t5"), orphan(null, "desktop/t6"), orphan("herdr-test-rold3", "desktop/t7")),
+    get: (c) => ({ code: 0, stdout: JSON.stringify({ address: hcArgs(c)[1], created_ms: got[hcArgs(c)[1]] ?? now - (STALE_LOCK_S + 5) * 1000 }), stderr: "" }),
+  });
+  await run(w, {}, { now: () => now });
+  const touched = w.calls.filter((x) => ["get", "kill", "rm"].includes(x.step)).map((x) => hcArgs(x).slice(0, 2).join(" "));
+  assert.deepEqual(touched.filter((t) => !t.includes("t9")), ["get desktop/t1", "kill desktop/t1", "rm desktop/t1", "get desktop/t2", "get desktop/t7", "kill desktop/t7", "rm desktop/t7"]);
+  assert.deepEqual(hcArgs(w.calls.find((x) => x.step === "ls")), ["ls", "--json"]);
+  assert.ok(w.calls.every((x) => !x.opts?.on || ["prepare", "checkout", "read", "cleanup"].includes(x.step)), "found by the local core: nothing is spawned on the device for it");
+  assert.ok(w.calls.findIndex((x) => x.step === "ls") > w.calls.findIndex((x) => x.step === "prepare"), "after the lock is ours");
+});
+
+test("the orphan sweep is bounded, skips this run's own name, never fails the run, and is skipped when the lock is busy", async () => {
+  const many = Array.from({ length: 25 }, (_, i) => orphan(`herdr-test-ro${i}`, `desktop/t${i + 20}`));
+  const w = world({ ls: lsOf(...many), get: () => ({ code: 0, stdout: JSON.stringify({ created_ms: 1 }), stderr: "" }) });
+  await run(w, {}, { now: () => 5_000_000_000_000 });
+  assert.equal(w.calls.filter((x) => x.step === "get").length, MAX_ORPHANS);
+  for (const bad of [{ code: 1, stdout: "", stderr: "no" }, { code: 0, stdout: "junk", stderr: "" }, { code: 0, stdout: "{}", stderr: "" }]) {
+    const w2 = world({ ls: () => bad });
+    assert.equal((await run(w2)).code, 0);
+  }
+  const w3 = world({ ls: () => { throw new Error("gone"); }, get: () => { throw new Error("gone"); } });
+  assert.equal((await run(w3)).code, 0);
+  const busy = world({ prepare: () => ({ code: 0, stdout: "lock=busy\nholder=rk3\nsince=1\n", stderr: "" }) });
+  await run(busy);
+  assert.ok(!busy.steps().includes("ls"), "another run is live: not ours to sweep");
+});
+
 // ---------------------------------------------------------------- never pushes, never makes a branch
 
 test("no call anywhere pushes, makes a branch or switches one", async () => {
@@ -481,13 +719,14 @@ test("a busy device exits 6 with the holder and its start, and touches nothing o
 });
 
 test("a lock older than the cap plus five minutes is taken over, and the note says whose it was", async () => {
-  assert.equal(STALE_LOCK_S, 900);
+  assert.equal(STALE_LOCK_S, RUN_TIMEOUT_MS / 1000 + 300);
+  assert.equal(STALE_LOCK_S, 5700);
   const w = world({ prepare: () => ({ code: 0, stdout: "took_over=old1\nlock=ok\nbase=0\ndone=1\n", stderr: "" }) });
   const r = await run(w);
   assert.equal(r.code, 0);
   assert.match(r.notes.join("\n"), /Took over a stale lock from run old1/);
   const prep = w.calls.find((c) => c.step === "prepare");
-  assert.equal(prep.args[8], "900");
+  assert.equal(prep.args[8], "5700");
   assert.equal(prep.args[9], String(SWEEP_AFTER_MIN));
   assert.equal(SWEEP_AFTER_MIN, 1440);
 });
@@ -533,24 +772,47 @@ const sh = (cwd, ...cmd) => {
   return r.stdout.trim();
 };
 
-// `hc exec -i --on m --timeout N -- cmd args` stands in as exec'ing cmd args with stdin passed through.
+// A stand-in for hc that is the one machine this test has. `hc exec -i --on m --timeout N -- cmd args` execs cmd args with stdin passed
+// through. `hc run --bg --json --on m --name N --cwd C ... -- cmd args` starts cmd args in the background in C (its own process group,
+// recorded) and prints { address }; its exit status is written when it ends. `hc wait <address> --json --timeout S` polls for that for at
+// most min(S, $FAKE_HC_WAIT_CAP) seconds and answers like Herdr (`ended`, `exit_code`, or reason "timeout"). kill ends the group, rm forgets it.
 function fakeHc(dir) {
   const bin = join(dir, "bin");
   mkdirSync(bin, { recursive: true });
-  writeFileSync(join(bin, "hc"), '#!/bin/sh\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n');
+  writeFileSync(join(bin, "hc"), String.raw`#!/bin/sh
+d=$FAKE_HC_DIR; mkdir -p "$d"; sub=$1; shift
+case $sub in
+  exec) while [ "$1" != "--" ]; do shift; done; shift; exec "$@" ;;
+  run) cwd=.; m=
+    while [ "$1" != "--" ]; do case $1 in --cwd) cwd=$2; shift ;; --on) m=$2; shift ;; esac; shift; done; shift
+    id=t$(od -An -N3 -tu4 /dev/urandom | tr -d " ")
+    ( cd "$cwd" && "$@"; echo $? > "$d/$id.exit" ) </dev/null >/dev/null 2>&1 &
+    pid=$!; ps -o pgid= -p "$pid" | tr -d " " > "$d/$id.pgid"
+    printf '{"address":"%s/%s","name":"x"}\n' "$m" "$id" ;;
+  wait) addr=$1; shift; to=590; while [ $# -gt 0 ]; do [ "$1" = --timeout ] && to=$2; shift; done
+    id=@{addr##*/}; [ -n "$FAKE_HC_WAIT_CAP" ] && [ "$FAKE_HC_WAIT_CAP" -lt "$to" ] && to=$FAKE_HC_WAIT_CAP
+    [ -f "$d/$id.pgid" ] || { echo "[hc] no such terminal $addr" >&2; exit 1; }
+    i=0; while [ "$i" -lt $((to * 10)) ]; do
+      if [ -f "$d/$id.exit" ]; then printf '{"ended":true,"exit_code":%s,"reason":"exit","terminal":"%s"}\n' "$(cat "$d/$id.exit")" "$addr"; exit 0; fi
+      sleep 0.1; i=$((i + 1)); done
+    printf '{"ended":false,"exit_code":null,"reason":"timeout","terminal":"%s"}\n' "$addr" ;;
+  kill) id=@{1##*/}; [ -f "$d/$id.pgid" ] && kill -KILL -- "-$(cat "$d/$id.pgid")" 2>/dev/null; [ -f "$d/$id.exit" ] || echo 137 > "$d/$id.exit"; echo "$id" >> "$d/killed" ;;
+  rm) id=@{1##*/}; rm -f "$d/$id.pgid" "$d/$id.exit"; echo "$id" >> "$d/removed" ;;
+  ls) echo '{"machines":[],"terminals":[]}' ;;
+  *) echo "fake hc: $sub" >&2; exit 2 ;;
+esac
+`.replaceAll("@{", "${"));
   chmodSync(join(bin, "hc"), 0o755);
   return bin;
 }
 
-// Runs the call here, as the one machine this test has; `killRunAfter` ends the run step like Herdr's exec cap does.
-const localExec = (env, { killRunAfter } = {}) => (cmd, args, opts = {}) => new Promise((resolve) => {
-  const isRun = args[1] === RUN_LINE || args[1] === RUN_ARGV;
+// Runs the call here, as the one machine this test has; `afterWait` runs after each hc wait (to move a fake clock past the run's cap).
+const localExec = (env, { afterWait } = {}) => (cmd, args, opts = {}) => new Promise((resolve) => {
   const child = spawn(cmd, args, { cwd: opts.cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"] });
-  let stdout = "", stderr = "", killed = false;
+  let stdout = "", stderr = "";
   child.stdout.on("data", (d) => { stdout += d; });
   child.stderr.on("data", (d) => { stderr += d; });
-  const timer = isRun && killRunAfter ? setTimeout(() => { killed = true; try { process.kill(-child.pid, "SIGKILL"); } catch {} }, killRunAfter) : null;
-  child.on("close", (code) => { clearTimeout(timer); resolve(killed ? { code: 124, stdout, stderr: "[hc] timed out: ended" } : { code, stdout, stderr }); });
+  child.on("close", (code) => { if (args[1] === HC && args[3] === "wait") afterWait?.(); resolve({ code, stdout, stderr }); });
 });
 
 function fixture(t) {
@@ -576,11 +838,11 @@ function fixture(t) {
   git(mine, "add", "."); git(mine, "commit", "-m", "two");
   const home = join(dir, "device-home");
   mkdirSync(home);
-  const env = { ...process.env, PATH: `${fakeHc(dir)}${delimiter}${process.env.PATH}` };
+  const env = { ...process.env, PATH: `${fakeHc(dir)}${delimiter}${process.env.PATH}`, FAKE_HC_DIR: join(dir, "hc-state"), FAKE_HC_WAIT_CAP: "1" };
   const binding = { machine: "dev", os: "unix", home, repoRoots: { [REPO]: device } };
-  return { dir, git, mine, device, home, binding, env, runs: join(home, ".herdr", "test-runs"), tmp: join(dir, "tmp") };
+  return { dir, git, mine, device, home, binding, env, runs: join(home, ".herdr", "test-runs"), tmp: join(dir, "tmp"), terminals: join(dir, "hc-state") };
 }
-const real = (f, extra = {}, opts = {}) => runOnDevice({ exec: localExec(f.env, opts) }, { repo: REPO, binding: f.binding, cheap: green, cwd: f.mine, tmpDir: (mkdirSync(f.tmp, { recursive: true }), f.tmp), command: ["sh", "t.sh"], ...extra });
+const real = (f, extra = {}, opts = {}, deps = {}) => runOnDevice({ exec: localExec(f.env, opts), ...deps }, { repo: REPO, binding: f.binding, cheap: green, cwd: f.mine, tmpDir: (mkdirSync(f.tmp, { recursive: true }), f.tmp), command: ["sh", "t.sh"], ...extra });
 const left = (f) => (existsSync(f.runs) ? readdirSync(f.runs) : []);
 
 test("end to end: a thin bundle sent raw, a worktree at the commit, the command run in it, and nothing left behind", { skip: process.platform === "win32" }, async (t) => {
@@ -630,14 +892,28 @@ test("end to end: a whole bundle works when the device has no clone of the base"
   assert.equal(r.result.log, "hi from the worktree\none\n");
 });
 
-test("end to end: a command the cap ends is timedOut, exit 1, and everything is cleaned up", { skip: process.platform === "win32" }, async (t) => {
+test("end to end: a command in a detached terminal, waited on by hc wait, with its exit status and log read back; the terminal is removed after", { skip: process.platform === "win32" }, async (t) => {
   const f = fixture(t);
-  const r = await real(f, { command: ["echo started; sleep 30"] }, { killRunAfter: 600 });
+  const r = await real(f, { command: ["sleep 1; echo slow; exit 4"] });
+  assert.equal(r.code, 1);
+  assert.equal(r.result.exitCode, 4);
+  assert.equal(r.result.log, "slow\n");
+  assert.equal(r.result.timedOut, false);
+  assert.equal(readFileSync(join(f.terminals, "removed"), "utf8").trim().split("\n").length, 1, "its terminal was removed");
+  assert.ok(!existsSync(join(f.terminals, "killed")), "it ended by itself: nothing was killed");
+});
+
+test("end to end: a command still running at the cap has its terminal killed: timedOut, exit 1, the log so far, and everything is cleaned up", { skip: process.platform === "win32" }, async (t) => {
+  const f = fixture(t);
+  const c = clock(Date.now());
+  const r = await real(f, { command: ["echo started; sleep 30"] }, { afterWait: () => c.advance(RUN_TIMEOUT_MS) }, { now: c.now });
   assert.equal(r.code, 1);
   assert.equal(r.result.timedOut, true);
   assert.equal(r.result.exitCode, TIMED_OUT_CODE);
   assert.match(r.result.log, /started/);
   assert.deepEqual(left(f), []);
+  assert.equal(readFileSync(join(f.terminals, "killed"), "utf8").trim().split("\n").length, 1);
+  assert.equal(readFileSync(join(f.terminals, "removed"), "utf8").trim().split("\n").length, 1);
 });
 
 test("end to end: a second run while one holds the lock exits 6 and leaves the lock alone; a stale lock is taken over", { skip: process.platform === "win32" }, async (t) => {
@@ -652,7 +928,7 @@ test("end to end: a second run while one holds the lock exits 6 and leaves the l
   assert.equal(readFileSync(join(lock, "info"), "utf8"), `rother ${nowS - 60}\n`, "the other run's lock is untouched");
   assert.deepEqual(left(f), [".lock"]);
 
-  writeFileSync(join(lock, "info"), `rold ${nowS - 901}\n`);
+  writeFileSync(join(lock, "info"), `rold ${nowS - STALE_LOCK_S - 1}\n`);
   const took = await real(f);
   assert.equal(took.code, 0, took.message);
   assert.match(took.notes.join("\n"), /Took over a stale lock from run rold/);
@@ -662,9 +938,9 @@ test("end to end: a second run while one holds the lock exits 6 and leaves the l
   writeFileSync(join(lock, "info"), "");
   const unknown = await real(f);
   assert.equal(unknown.code, EXIT.BUSY, "a lock with no info that is young is busy");
-  const old = new Date(Date.now() - 20 * 60 * 1000);
+  const old = new Date(Date.now() - (STALE_LOCK_S / 60 + 5) * 60 * 1000);
   utimesSync(lock, old, old);
-  assert.equal((await real(f)).code, 0, "and one with no info older than the cap is stale");
+  assert.equal((await real(f)).code, 0, "and one with no info older than the cap plus five minutes is stale");
 });
 
 test("end to end: the sweep removes only what is older than 24h, with its worktree and ref, and leaves the rest", { skip: process.platform === "win32" }, async (t) => {

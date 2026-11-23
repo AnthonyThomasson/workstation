@@ -14,7 +14,7 @@ Needs Herdr open with the Tasks sidebar, and `herdr-tasks` on the PATH (`~/.conf
 - The tests or build must run on the other OS, or on a machine with a toolchain this one lacks.
 - You have a commit (committed work, not a dirty tree) and want its exit code and log.
 
-Don't use it for GUI or interactive tests (commands run headless), for runs longer than 10 minutes (Herdr ends a command at 600s), or to deploy anything.
+Don't use it for GUI or interactive tests (commands run headless), for runs longer than 1.5 hours (a command is ended after 5400s), or to deploy anything. A long run is fine: Herdr caps one call at 10 minutes, so the command runs in a detached terminal on the device and `herdr-tasks` waits for it.
 
 ## 1. Check it before you rely on it
 
@@ -36,8 +36,8 @@ herdr-tasks device run --commit <rev> -- <command...>
 - Runs against `HEAD` (or `--commit <rev>`) of this repo. Uncommitted changes are not sent; a note on stderr says so. Commit first.
 - The commit travels as a git bundle into a private ref and a detached worktree on the device. Nothing is pushed and no branch is made on either side. The worktree, bundle and log are removed afterwards (`--keep` leaves the worktree and log there and prints their paths).
 - One argument is a shell line (`"npm ci && npm test"`); several arguments are an argv, run as given.
-- It prints the command's log, then exits 0 when the command passed and 1 when it failed or ran past 600s. `--json` prints `{ device, commit, exitCode, log, durationMs, timedOut }`. Notes (dirty tree, cleanup trouble) go to stderr.
-- It waits up to 720s by default (`--timeout <seconds>` changes it) and a desktop can take over a minute before the command even starts.
+- It prints the command's log, then exits 0 when the command passed and 1 when it failed or ran past 1.5 hours (5400s, then it is ended). `--json` prints `{ device, commit, exitCode, log, durationMs, timedOut }`. Notes (dirty tree, cleanup trouble) go to stderr.
+- It waits up to 6000s (100 minutes) by default, the 1.5-hour cap plus the send and cleanup around it (`--timeout <seconds>` changes it), so a long suite keeps the shell busy: run it in the background or with a long tool timeout. A desktop can take over a minute before the command even starts. A run that is lost (the machine drops while it runs) exits 5 with the reason, and its terminal is ended.
 
 ## Exit codes
 
@@ -48,7 +48,7 @@ herdr-tasks device run --commit <rev> -- <command...>
 | 2 | Usage: a bad option, no command after `--`, or a commit that doesn't resolve. | Fix the call. |
 | 4 | Herdr didn't answer. | Open Herdr with the Tasks sidebar, then try again. |
 | 5 | The device isn't bound or can't be used: nothing bound, no repo folder for this repo on it, the machine isn't connected, or a check is red. | Run `herdr-tasks device`, read what it says, and tell the user what to fix (Task settings has the card). It is not a test failure. Don't fall back to pushing. |
-| 6 | The device is busy: another run holds it (`busy: run <id> since <time>`). A run left behind by a crash is taken over after 15 minutes. | Wait and run again. |
+| 6 | The device is busy: another run holds it (`busy: run <id> since <time>`). A run left behind by a crash is taken over after 95 minutes. | Wait and run again. |
 
 ## Never push a branch to get code there
 

@@ -74,8 +74,8 @@ test("run: a passed command is exit 0; a failed or timed out one is an answer wi
   assert.equal(failed.ok, true);
   assert.equal(failed.exit, 1);
   assert.deepEqual(failed.notes, ["The command exited with 3."]);
-  const timed = runView({ code: 1, result: { ...result, exitCode: 124, timedOut: true }, notes: ["It didn't finish in 600s."] });
-  assert.deepEqual(timed.notes, ["It didn't finish in 600s."]);
+  const timed = runView({ code: 1, result: { ...result, exitCode: 124, timedOut: true }, notes: ["It didn't finish in 5400s."] });
+  assert.deepEqual(timed.notes, ["It didn't finish in 5400s."]);
   assert.equal(timed.data.timedOut, true);
   assert.deepEqual(runView({ code: 0, result, notes: [], kept: { worktree: "C:/w", log: "C:/l" } }).data.kept, { worktree: "C:/w", log: "C:/l" });
 });

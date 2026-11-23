@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { COMMANDS, GLOBAL_FLAGS, parseArgv, usage } from "./commands.js";
 import { OPS } from "./protocol.js";
-import { DEEP_TIMEOUT_MS, DEEP_WAIT_MARGIN_S, DEEP_WAIT_S } from "../lib/index.js";
+import { DEEP_TIMEOUT_MS, DEEP_WAIT_MARGIN_S, DEEP_WAIT_S, RUN_TIMEOUT_MS, RUN_WAIT_MARGIN_S, RUN_WAIT_S } from "../lib/index.js";
 
 const parse = (line) => parseArgv(line);
 
@@ -143,10 +143,14 @@ test("device run needs a command after --", () => {
   assert.match(parse(["device", "run", "--help"]).help, /^Usage: herdr-tasks device run \[--commit <rev>\] \[--keep\] -- <command\.\.\.>/);
 });
 
-test("device run waits 720s by default (the 600s cap plus transfer and cleanup), and --timeout changes it", () => {
-  assert.equal(parse(["device", "run", "--", "ls"]).global.timeout, 720);
+test("device run waits for the run's 1.5 hours plus transfer and cleanup by default, derived from the cap, and --timeout changes it", () => {
+  assert.equal(RUN_TIMEOUT_MS, 5400000);
+  assert.equal(RUN_WAIT_S, RUN_TIMEOUT_MS / 1000 + RUN_WAIT_MARGIN_S);
+  assert.equal(RUN_WAIT_S, 6000);
+  assert.ok(RUN_WAIT_S * 1000 >= RUN_TIMEOUT_MS + 300000, "the run's own cap lands first, with room for the send, checkout, read-back and cleanup around it");
+  assert.equal(parse(["device", "run", "--", "ls"]).global.timeout, RUN_WAIT_S);
   assert.equal(parse(["device", "run", "--timeout", "30", "--", "ls"]).global.timeout, 30);
-  assert.equal(parse(["device", "run", "--", "--timeout", "30"]).global.timeout, 720);
+  assert.equal(parse(["device", "run", "--", "--timeout", "30"]).global.timeout, RUN_WAIT_S);
 });
 
 test("device check waits longer than the deep check's own timeout, derived from it", () => {
@@ -161,5 +165,7 @@ test("the help lists the Test device group and exit codes 5 and 6", () => {
   assert.match(text, /\nTest device\n/);
   for (const u of ["device", "device check", "device run [--commit <rev>] [--keep] -- <command...>"]) assert.ok(text.includes(`  ${u}\n`), u);
   assert.match(text, /Exit codes: 0 done, 1 failed, 2 usage, 3 a choice is needed[^\n]*4 Herdr didn't answer,\n5 the test device isn't bound or can't be reached[^\n]*6 the test device is busy/);
-  assert.match(text, /720 for device run/);
+  assert.match(text, new RegExp(`${RUN_WAIT_S} for device run`));
+  assert.doesNotMatch(text, /720|ended after 600s/);
+  assert.match(text, /ended after 1\.5 hours/);
 });
