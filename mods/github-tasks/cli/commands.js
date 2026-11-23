@@ -2,6 +2,8 @@
 // request's { op, args } (protocol.js). Pure: client.js reads files and the mailbox. Each command does what a button of the Tasks UI
 // does, so the help names the button.
 
+import { DEEP_WAIT_S, RUN_TIMEOUT_MS, RUN_WAIT_S } from "../lib/index.js";
+
 const SECTIONS = ["next", "backlog", "progress", "review", "investigations"];
 const MOVE_TO = ["next", "backlog"];
 const LONG_OPS = ["start", "merge", "new-task", "refactor", "project-create", "investigation-done"]; // these wait longer by default
@@ -12,12 +14,13 @@ export const GLOBAL_FLAGS = {
   on: { type: "string", about: "the machine that folder is on (`hc machine ls`; default: this computer)" },
   project: { type: "string", about: "the GitHub Project, by id or title (default: the one the sidebar picked for the repo)" },
   json: { type: "bool", about: "print the answer as JSON" },
-  timeout: { type: "string", about: "seconds to wait for Herdr (default: 120; 600 for start, merge, new-task, refactor)" },
+  timeout: { type: "string", about: `seconds to wait for Herdr (default: 120; 600 for start, merge, new-task, refactor; ${DEEP_WAIT_S} for device check; ${RUN_WAIT_S} for device run)` },
   help: { type: "bool", about: "show help" },
 };
 
 // The commands, in the order help lists them. words: what is typed (one or two words). args: positional arguments (rest: the rest of
-// the words, joined). flags: per command. confirm: needs --yes. check(args): a usage error, or null.
+// the words, joined). flags: per command. confirm: needs --yes. check(args): a usage error, or null. wait: seconds to wait by default.
+// dash: everything after a bare -- is the command's own words (never read as ours), as args[dash]: a list, which must not be empty.
 export const COMMANDS = [
   { group: "Tickets" },
   { words: ["list"], op: "list", flags: { section: "string" }, usage: "list [--section next|backlog|progress|review|investigations]",
@@ -45,7 +48,7 @@ export const COMMANDS = [
   { words: ["open"], op: "open", args: ["ticket"], usage: "open <ticket>", about: "Opens the ticket's editor popup in Herdr, as a click on its row does." },
   { group: "Runs" },
   { words: ["start"], op: "start", args: ["ticket"], flags: { workflow: "string" }, usage: "start <ticket> [--workflow <id|name>]",
-    about: "The play button: starts the workflow the ticket's labels match (with several, --workflow picks one) and opens its run tab. A ticket whose run is going is shown instead." },
+    about: "The play button: starts the workflow the ticket's labels match (with several, --workflow picks one) and opens its run tab. A ticket whose run is going is shown instead. With the repo's Test device Start opt-in on, the worktree and agents go on the device; a red device light stops it (exit 5)." },
   { words: ["view"], op: "view", args: ["ticket"], usage: "view <ticket>", about: "The eye button: brings the ticket's run tab to the front, reopening it if it was closed." },
   { words: ["runs"], op: "runs", usage: "runs", about: "Every workflow run Herdr knows of: its ticket, orchestrator and who needs you." },
   { words: ["merge"], op: "merge", args: ["ticket"], confirm: true, usage: "merge <ticket> --yes",
@@ -60,6 +63,13 @@ export const COMMANDS = [
   { words: ["investigation", "view"], op: "investigation-view", args: ["id"], usage: "investigation view <id>", about: "Opens a session's tab, as a click on its row does." },
   { words: ["investigation", "done"], op: "investigation-done", args: ["id"], confirm: true, usage: "investigation done <id> --yes",
     about: "The session page's Done: ends its agents, closes its space, removes its worktree and deletes its branch." },
+  { group: "Test device" },
+  { words: ["device"], op: "device", usage: "device",
+    about: "The Test device bound in Task settings: its machine, its light (green, yellow or red) and what each failing check says. Exits 5 when none is bound or the light is red. --json gives the binding and the light." },
+  { words: ["device", "check"], op: "device-check", wait: DEEP_WAIT_S, usage: "device check",
+    about: "The card's Check: runs the deep check on the device (one script there; a desktop spawn can take a minute) and prints each check. Exits 5 when none is bound or a check is red." },
+  { words: ["device", "run"], op: "device-run", dash: "command", wait: RUN_WAIT_S, flags: { commit: "string", keep: "bool" }, usage: "device run [--commit <rev>] [--keep] -- <command...>",
+    about: `Runs a command on the Test device against a commit (default HEAD; uncommitted changes aren't sent): sends it as a git bundle (nothing is pushed, no branch is made), checks it out in a worktree there, runs the command (one argument is a shell line, several are an argv; it runs in a detached Herdr terminal on the device and is ended after ${RUN_TIMEOUT_MS / 3600000} hours), prints the log, and cleans up. Exits 0 when the command passed, 1 when it failed or timed out, 5 when the device can't be used, 6 when another run is on it. --keep leaves the worktree and log there. --json gives { device, commit, exitCode, log, durationMs, timedOut }.` },
   { group: "Project and settings" },
   { words: ["projects"], op: "projects", usage: "projects", about: "The repo, its linked projects, and which one Tasks uses." },
   { words: ["project", "use"], op: "project-use", args: ["project"], usage: "project use <id|title>", about: "Picks the project Tasks shows for the repo, as the sidebar's project chips do." },
@@ -87,7 +97,8 @@ export function usage(command = null) {
   }
   lines.push("", "Options for every command:", ...flagLines, "",
     "Herdr must be open with the Tasks sidebar in its layout: the commands run there, in the github-tasks mod.",
-    "Exit codes: 0 done, 1 failed, 2 usage, 3 a choice is needed (start with several workflows), 4 Herdr didn't answer.");
+    "Exit codes: 0 done, 1 failed, 2 usage, 3 a choice is needed (start with several workflows), 4 Herdr didn't answer,",
+    "5 the test device isn't bound or can't be reached (device, device check, device run), 6 the test device is busy with another run.");
   return lines.join("\n");
 }
 
@@ -151,7 +162,10 @@ export function parseArgv(argv) {
     return { error: group.length ? `"${plain[0]}" needs one of: ${group.map((c) => c.words[1]).join(", ")}.` : `Unknown command "${plain[0]}". Try herdr-tasks --help.` };
   }
   const spec = { ...Object.fromEntries(Object.entries(GLOBAL_FLAGS).map(([k, f]) => [k, f.type])), ...(command.flags ?? {}), ...(command.confirm ? { yes: "bool" } : {}) };
-  const parts = split(all, spec);
+  // A dash command's own words come after the first --: they are cut off before anything is read, so they are never options of ours.
+  const dashAt = command.dash ? all.findIndex((w) => String(w) === "--") : -1;
+  const own = dashAt < 0 ? [] : all.slice(dashAt + 1).map(String);
+  const parts = split(dashAt < 0 ? all : all.slice(0, dashAt), spec);
   if (parts.error) return { error: parts.error, command };
   const { flags } = parts;
   if (flags.help) return { help: usage(command) };
@@ -159,6 +173,10 @@ export function parseArgv(argv) {
   const words = [...parts.words];
   for (const w of command.words) words.splice(words.indexOf(w), 1);
   const args = {};
+  if (command.dash) {
+    if (!own.length) return { error: `${command.words.join(" ")} needs a command after --.`, command };
+    args[command.dash] = own;
+  }
   for (const [name] of Object.entries(command.flags ?? {})) if (flags[name] !== undefined) args[camel(name)] = flags[name];
   const wanted = command.args ?? [];
   if (command.rest) {
@@ -173,7 +191,7 @@ export function parseArgv(argv) {
   if (command.confirm && !flags.yes) return { error: `${command.words.join(" ")} can't be undone from here: add --yes to do it.`, command };
   const bad = command.check?.(args);
   if (bad) return { error: bad, command };
-  let timeout = LONG_OPS.includes(command.op) ? 600 : 120;
+  let timeout = command.wait ?? (LONG_OPS.includes(command.op) ? 600 : 120);
   if (flags.timeout !== undefined) {
     timeout = Number(flags.timeout);
     if (!Number.isFinite(timeout) || timeout <= 0) return { error: "--timeout is a number of seconds.", command };

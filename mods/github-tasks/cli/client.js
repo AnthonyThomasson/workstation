@@ -84,6 +84,7 @@ export async function main(argv, io) {
   const poked = await io.poke();
   const { reply, error } = await waitForReply(id, { requests, replies, deadline: started + global.timeout * 1000, poked, started }, io);
   if (error) { io.err(`herdr-tasks: ${error}`); return EXIT.noAnswer; }
+  for (const note of reply.notes ?? []) io.err(note); // what a command says besides its answer (device run's uncommitted changes, cleanup)
   if (global.json) io.out(JSON.stringify(reply.ok ? reply.data : { error: reply.error, code: reply.code, ...(reply.data ? { data: reply.data } : {}) }, null, 2));
   else (reply.ok ? io.out : io.err)(formatReply(op, reply));
   return exitFor(reply);

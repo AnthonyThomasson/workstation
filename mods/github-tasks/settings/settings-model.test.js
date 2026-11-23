@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  normalizeSettingsSections, promptForRole, SETTINGS_GROUPS, SETTINGS_ENTRIES, groupKey, promptTitle,
+  normalizeSettingsSections, promptForRole, SETTINGS_GROUPS, SETTINGS_ENTRIES, groupKey, promptTitle, SETTINGS_BLOCKS,
 } from "./settings-model.js";
 
 const ALL_KEYS = ["group.orchestrators", "group.agents", "newTask", "orchestrator", "refactor", "worker", "reviewer", "investigator"];
@@ -140,4 +140,13 @@ test("the New Task investigator and prototype worker prompts have tabs of their 
 
 test("the settings sections are unchanged by the sub-agents, which live inside New Task", () => {
   assert.deepEqual(Object.keys(normalizeSettingsSections()), ["group.orchestrators", "group.agents", "newTask", "orchestrator", "refactor", "worker", "reviewer", "investigator"]);
+});
+
+test("the Test device card comes before the Orchestrators and Agents groups, and is not collapsible", () => {
+  assert.deepEqual(SETTINGS_BLOCKS, ["testDevice", "orchestrators", "agents"]);
+  assert.equal(SETTINGS_BLOCKS.indexOf("testDevice"), 0);
+  assert.deepEqual(SETTINGS_BLOCKS.slice(1), SETTINGS_GROUPS.map((g) => g.key));
+  // no section state for it: saved state has nothing to remember about the card
+  assert.ok(!("testDevice" in normalizeSettingsSections({ testDevice: true })));
+  assert.deepEqual(normalizeSettingsSections({ "group.orchestrators": true, newTask: true }), { ...closed, "group.orchestrators": true, newTask: true });
 });

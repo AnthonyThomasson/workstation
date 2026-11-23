@@ -2,8 +2,9 @@
 export { BACK_AFTER, SHAKE_FOR, Shakes, bellFirst, bellTip, bellToast, waitingAgents } from "./bell.js";
 export { WORDS, agentPopupOverlay, barTitle, isEscape, parentLabel } from "./agent-popup.js";
 export { EFFORTS, groomArgv, normalizeGroomer, normalizeSubAgent } from "./agent-settings.js";
+export { authIssues, parseAuthStatus } from "./gh-auth.js";
 export { classifyError, LOGIN, REFRESH, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, DEVICE_TIMEOUT_MS, DEVICE_URL, preparedFrom, signInSeconds, usesDeviceFlow, signInFrom } from "./gh-sign-in.js";
-export { AGENT_KEY, AGENT_POPUP_KEY, CHANGED, CLI_ACTION, CONTEXT, DOCTOR_KEY, EDITOR_OVERLAY_KEY, GROOMER_KEY, INVESTIGATIONS_KEY, INVESTIGATOR_KEY, NEW_TASK_OVERLAY_KEY, OVERLAY_KEY, PICK_PREFIX, PLACE, REFACTORS_CHANGED, REFACTOR_OVERLAY_KEY, SECTIONS_KEY, WORKER_KEY, WORKFLOWS_CHANGED, autoPrKey, failureKey, finalKey, fixingKey, investigationAgentsKey, leadKey, modCommand, openKey, prKey, projectKey, runAgentsKey, slotKey, stageKey } from "./keys.js";
+export { AGENT_KEY, AGENT_POPUP_KEY, CHANGED, CLI_ACTION, CONTEXT, DOCTOR_KEY, EDITOR_OVERLAY_KEY, GROOMER_KEY, INVESTIGATIONS_KEY, INVESTIGATOR_KEY, NEW_TASK_OVERLAY_KEY, OVERLAY_KEY, PICK_PREFIX, PLACE, REFACTORS_CHANGED, REFACTOR_OVERLAY_KEY, SECTIONS_KEY, TEST_DEVICE, WORKER_KEY, WORKFLOWS_CHANGED, autoPrKey, failureKey, finalKey, fixingKey, investigationAgentsKey, leadKey, modCommand, openKey, prKey, projectKey, runAgentsKey, slotKey, stageKey } from "./keys.js";
 export { machinePath } from "./machine-path.js";
 export { markdownLiteral } from "./markdown.js";
 export { ASK_WITH_TOOL, newTaskPrompt, newTaskStart, newTaskSubAgents, refactorPrompt, refactorSections } from "./orchestrator-prompts.js";
@@ -12,6 +13,7 @@ export { applyMove, dropAfterId, moveStatus, planMove, projectOrdered, sectionOf
 export { initialOpen, investigationsAlone, sectionPlan } from "./sections.js";
 export { SpaceLists, applyPlace, applyProject, applyRepo, clearTickets, doneReload, failReload, forgetRepo, resetList, spaceKey } from "./space-lists.js";
 export { groupByStage, pickableStatuses, sameStatus, spelled, STATUSES, wontDoOption } from "./statuses.js";
+export { DEEP_TIMEOUT_MS, DEEP_WAIT_MARGIN_S, DEEP_WAIT_S, EXEC_CAP_MS, EXEC_CAP_S, RUN_TIMEOUT_MS, RUN_WAIT_MARGIN_S, RUN_WAIT_S, WAIT_GRACE_MS, WAIT_SLICE_S } from "./device-timeouts.js";
 export { changes, checkTask, isDirty, snapshot } from "./task-diff.js";
 export { FINAL_LABEL, FOLDER_LABEL, INVESTIGATION_LABEL, NAME_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL } from "./terminal-labels.js";
 export { chooseProject, groupTickets, middleEllipsis, normalizeItems } from "./tickets.js";

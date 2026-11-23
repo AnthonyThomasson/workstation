@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   firstLine, projectConfigPath, repoWorkflowsDir, globalWorkflowsDir, tildePath, workflowDirs, refactorDirs, kindDirs, repoRefactorsDir, globalRefactorsDir,
   runDir, runPanePath, runIdFromDir, worktreePath, sessionFolder, cliDir, cliRequestsDir, cliRepliesDir, posixFolder,
+  testRunsDir, testRunLockDir, testRunId, testRunFolder, testRunBundle, testRunLog, testRunCode,
 } from "./places.js";
 
 test("firstLine takes the first non-empty line, trimmed", () => {
@@ -136,4 +137,22 @@ test("herdr-tasks' mailbox is under ~/.herdr, beside the runs", () => {
   assert.equal(cliDir("/home/me/"), "/home/me/.herdr/tasks-cli");
   assert.equal(cliRequestsDir("/home/me"), "/home/me/.herdr/tasks-cli/requests");
   assert.equal(cliRepliesDir("/home/me"), "/home/me/.herdr/tasks-cli/replies");
+});
+
+test("a test run's folder, bundle, log and code are siblings in the device's test-runs folder", () => {
+  assert.equal(testRunsDir("C:/Users/me/"), "C:/Users/me/.herdr/test-runs");
+  assert.equal(testRunLockDir("/home/me"), "/home/me/.herdr/test-runs/.lock");
+  assert.equal(testRunFolder("/home/me", "k3x9a"), "/home/me/.herdr/test-runs/k3x9a");
+  assert.equal(testRunBundle("/home/me", "k3x9a"), "/home/me/.herdr/test-runs/k3x9a.bundle");
+  assert.equal(testRunLog("C:/Users/me", "k3x9a"), "C:/Users/me/.herdr/test-runs/k3x9a.log");
+  assert.equal(testRunCode("/home/me", "k3x9a"), "/home/me/.herdr/test-runs/k3x9a.code");
+});
+
+test("a test run id that could leave test-runs names no path", () => {
+  for (const id of ["..", ".", "", "a/b", "../x", "a..b", "A1", "a b", "a-b", null, undefined, "x".repeat(41), "k3x9a\n"]) {
+    assert.equal(testRunId(id), null, JSON.stringify(id));
+    for (const f of [testRunFolder, testRunBundle, testRunLog, testRunCode]) assert.equal(f("/home/me", id), null, `${f.name} ${JSON.stringify(id)}`);
+  }
+  assert.equal(testRunId("k3x9a"), "k3x9a");
+  assert.equal(testRunFolder("", "k3x9a"), null, "no home, no path");
 });

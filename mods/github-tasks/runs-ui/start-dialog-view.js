@@ -5,18 +5,39 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { closeOverlay, theme } from "herdr";
 import { loadStatusField } from "../github/index.js";
-import { startRun } from "./start.js";
+import { startNote } from "../devices/index.js";
+import { liveRunFor, startRun } from "./start.js";
 import { S, icon, stop, note, iconButton, gh } from "../widgets/index.js";
 import { PRESS_BUTTONS } from "../lib/index.js";
 import { StartDialog, STARTING, WIDTH, labelsLine, layout, rowDetail, scopeBadge } from "../runs/index.js";
 
 const stopPresses = (el, except) => PRESS_BUTTONS.filter((b) => b !== except).reduce((e, b) => e.on_mouse_down(b, stop), el);
 
+// The opt-in "Start on the Test device" (devices/start-where.js) is decided by a planner main.js registers: runs-ui can't import devices-ui
+// (the same tier), so Start asks it through here. A planner takes { repo, where } and answers { where, on, refusal? }; with none
+// registered nothing about Start changes. Every Start (the play button, the Start dialog over the editor and over the workspace,
+// herdr-tasks start) goes through startChosen, so this is the one place the where is swapped.
+let planner = null;
+export const useStartPlanner = (fn) => { planner = fn; };
+export const planStartFor = async (repo, where) => (planner ? planner({ repo, where }) : { where, on: null });
+
 // Starts `workflow` on `ticket`: moves the ticket's status when the project has the field, then runs it (start.js). Throws with the
 // reason for the person. repo, project ({ id } or null) and where are the editor's, or the overlay's props.
+// The workflows were loaded from this computer's checkout (loadWorkflows(where)) before this; only startRun gets the device's where,
+// so the run folder stays here and the worktree and agents go on the device. A run already going is shown as before, never refused.
+// The error of a refusal (a red light) has `refusal: true`: the command line makes it exit 5.
 export async function startChosen(workflow, ticket, { repo, project, where }, cx) {
+  const plan = liveRunFor(repo, ticket) ? { where, on: null } : await planStartFor(repo, where);
+  if (plan.refusal) throw Object.assign(new Error(plan.refusal), { refusal: true });
   const statusField = project ? await loadStatusField(gh, project.id, where).catch(() => null) : null; // without it the ticket's status just isn't moved
-  return startRun(workflow, ticket, repo, where, cx, { project, statusField });
+  const result = await startRun(workflow, ticket, repo, plan.where, cx, { project, statusField });
+  return { ...result, on: plan.on };
+}
+
+// Sets the dialog's line from the opt-in's plan (null when nothing about Start changes). The plan is asked again by Start itself.
+export async function showPlace(dialog, repo, where) {
+  const plan = await planStartFor(repo, where).catch(() => null);
+  dialog.setPlace(startNote(plan), Boolean(plan?.refusal));
 }
 
 // The dialog: the workflow starting, why it couldn't, or the matching workflows to choose from (or why there are none).
@@ -45,6 +66,7 @@ export function renderStartDialog(t, d, { onChoose, onClose }) {
       .child(div().text_size(S().label).text_color(t.muted).child("Esc"))
       .child(iconButton("start-close", "close", t, (_e, cx) => onClose(cx))))
     .child(div().flex_none().truncate().text_size(S().label).text_color(t.muted).child(labelsLine(d)))
+    .when(Boolean(d.place), (el) => el.child(note(t, d.place.text, d.place.refused ? t.ansi1 : t.accent)))
     .child(body)
     .when(Boolean(skipped), (el) => el.child(note(t, skipped, t.ansi1)));
 }
@@ -57,6 +79,7 @@ export class StartPage {
     this.handle = cx.focus_handle(); // the dialog takes Esc
     this.dialog = new StartDialog(() => {}, { retry: true });
     this.dialog.ready(this.props.ticket?.labels ?? [], this.props.matches ?? [], this.props.skipped ?? []);
+    cx.spawn(async (cx2) => { await showPlace(this.dialog, this.props.repo ?? "", this.props.where); cx2.notify(); }); // "Starts on <machine>", or why not
     cx.timer.after(50, () => this.handle.focus()); // a window doesn't take the keyboard when it opens
   }
 

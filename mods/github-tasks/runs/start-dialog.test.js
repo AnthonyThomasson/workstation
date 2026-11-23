@@ -177,3 +177,19 @@ test("in the editor's dialog a failed start shows the reason alone, also after a
   await single.choose(bug, async () => { throw new Error("no agent"); });
   assert.deepEqual(layout(single), { title: "BUG", body: "error", error: "no agent", empty: null });
 });
+
+test("the dialog keeps the line saying where Start runs, or why it can't, and none when nothing changed", () => {
+  const seen = [];
+  const d = new StartDialog(() => seen.push(1));
+  d.ready([], [], []);
+  seen.length = 0;
+  assert.equal(d.place, null);
+  d.setPlace("Starts on desktop");
+  assert.deepEqual(d.place, { text: "Starts on desktop", refused: false });
+  d.setPlace("Can't start on desktop: `desktop` isn't connected.", true);
+  assert.deepEqual(d.place, { text: "Can't start on desktop: `desktop` isn't connected.", refused: true });
+  d.setPlace(null);
+  assert.equal(d.place, null);
+  assert.equal(seen.length, 3); // each change redraws
+  assert.deepEqual(layout(d), { title: "Start", body: "empty", error: null, empty: ["This ticket has no labels, and no workflow is the fallback.", "Make one in the Task settings."] }); // layout itself is unchanged
+});

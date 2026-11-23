@@ -58,6 +58,7 @@ export class StartDialog {
     this.skipped = [];
     this.chosen = null;
     this.error = null;
+    this.place = null; // { text, refused }: where Start will run when that isn't this computer (the Test device opt-in), or why it can't
     this.listed = false; // whether the matches are known: false while loading and when reading the workflows failed
     this.closed = false;
     this.onChange = onChange;
@@ -89,6 +90,13 @@ export class StartDialog {
     this.phase = "error";
     this.listed = false;
     this.error = String(message);
+    this.onChange();
+  }
+
+  // The Test device opt-in's line (devices/start-where.js startNote): "Starts on <machine>", or the reason a red light stops the Start.
+  // text null: nothing about Start changed, no line.
+  setPlace(text, refused = false) {
+    this.place = text ? { text, refused: Boolean(refused) } : null;
     this.onChange();
   }
 

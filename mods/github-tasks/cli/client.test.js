@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { CLAIM_WAIT, main } from "./client.js";
 import { EXIT, checkRequest, claimedName, failReply, fileName, okReply, waitingId } from "./protocol.js";
 import { cliRepliesDir, cliRequestsDir } from "../workflow/index.js";
+import { RUN_WAIT_S } from "../lib/index.js";
 
 const HOME = "/home/me";
 const REQUESTS = cliRequestsDir(HOME), REPLIES = cliRepliesDir(HOME);
@@ -119,4 +120,43 @@ test("a long command waits longer by default", async () => {
   const w = world({ answer: (r) => { timeout = r.timeout; return okReply(r.id, { investigation: { id: "inv-1", label: "x", branch: "b" } }); } });
   await main(["new-task", "make", "it", "faster"], w.io);
   assert.equal(timeout, 600);
+});
+
+test("device run: the log is printed, notes go to stderr, and the exit is the command's (0 or 1), 5 or 6", async () => {
+  let seen;
+  const result = { device: "desktop", commit: "a".repeat(40), exitCode: 0, log: "all passed\n", durationMs: 9, timedOut: false };
+  const passed = world({ answer: (r) => { seen = r; return okReply(r.id, result, { notes: ["Uncommitted changes aren't sent."] }); } });
+  assert.equal(await main(["device", "run", "--commit", "HEAD~1", "--", "npm", "test"], passed.io), EXIT.ok);
+  assert.equal(seen.op, "device-run");
+  assert.deepEqual(seen.args, { commit: "HEAD~1", command: ["npm", "test"] });
+  assert.equal(seen.timeout, RUN_WAIT_S);
+  // the request carries that wait as its expiry: the bridge drops it only after the client has given up, never before the run's cap
+  assert.ok(checkRequest(JSON.stringify(seen), seen.at + RUN_WAIT_S * 1000 - 1).request);
+  assert.equal(checkRequest(JSON.stringify(seen), seen.at + RUN_WAIT_S * 1000 + 1).expired, seen.id);
+  assert.deepEqual(passed.out, ["all passed"]);
+  assert.deepEqual(passed.err, ["Uncommitted changes aren't sent."]);
+
+  const failed = world({ answer: (r) => okReply(r.id, { ...result, exitCode: 2, log: "boom\n" }, { exit: 1, notes: ["The command exited with 2."] }) });
+  assert.equal(await main(["device", "run", "--", "false"], failed.io), 1);
+  assert.deepEqual(failed.out, ["boom"]);
+  assert.deepEqual(failed.err, ["The command exited with 2."]);
+
+  const json = world({ answer: (r) => okReply(r.id, { ...result, exitCode: 1, log: "x" }, { exit: 1 }) });
+  assert.equal(await main(["device", "run", "--json", "--", "false"], json.io), 1);
+  assert.deepEqual(Object.keys(JSON.parse(json.out[0])).sort(), ["commit", "device", "durationMs", "exitCode", "log", "timedOut"]);
+
+  const unbound = world({ answer: (r) => failReply(r.id, "No test device is bound.", { code: "not-ready", notes: ["a note"] }) });
+  assert.equal(await main(["device", "run", "--", "ls"], unbound.io), 5);
+  assert.deepEqual(unbound.err, ["a note", "herdr-tasks: No test device is bound."]);
+  const busy = world({ answer: (r) => failReply(r.id, "busy: run r1 since 2026-06-10T12:00:00Z", { code: "busy" }) });
+  assert.equal(await main(["device", "run", "--", "ls"], busy.io), 6);
+  assert.deepEqual(busy.out, []);
+});
+
+test("device and device check exit 5 when the device can't be used", async () => {
+  const w = world({ answer: (r) => failReply(r.id, "The test device desktop is red:\n  ! x", { code: "not-ready", data: { machine: "desktop" } }) });
+  assert.equal(await main(["device"], w.io), 5);
+  assert.equal(await main(["device", "check", "--json"], w.io), 5);
+  assert.equal(JSON.parse(w.out[0]).code, "not-ready");
+  assert.deepEqual(JSON.parse(w.out[0]).data, { machine: "desktop" });
 });

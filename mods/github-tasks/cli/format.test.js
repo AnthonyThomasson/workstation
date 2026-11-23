@@ -62,6 +62,7 @@ test("every op has words of its own", () => {
     investigations: { investigations: [] }, "investigation-view": { investigation: { label: "x" } }, "investigation-done": { investigation: { label: "x" } },
     projects: { repo: "me/app", projects: [] }, "project-use": { repo: "me/app", project: { title: "R" } }, "project-create": { project: { title: "R", url: "u" }, note: null },
     workflows: { kind: "workflow", items: [], errors: [] }, doctor: { found: false, issues: [] }, refresh: {},
+    device: { machine: "desktop", os: "unix", repo: "o/r", light: { level: "green", checks: [] } }, "device-check": { machine: "desktop", health: { level: "green", checks: [] } }, "device-run": { device: "desktop", log: "ok\n" },
   };
   for (const op of OPS.filter((o) => o !== "list" && o !== "show")) {
     const text = ok(op, samples[op]);
@@ -69,8 +70,31 @@ test("every op has words of its own", () => {
     assert.ok(text.length && !text.startsWith("{"), `${op}: ${text}`);
   }
   assert.equal(ok("start", samples.start), "Started Bug on #12: run 12-x, Task Orchestrator t4.");
+  assert.equal(ok("start", { ...samples.start, on: "desktop" }), "Started Bug on #12: run 12-x, Task Orchestrator t4. Its worktree and agents are on desktop.");
   assert.equal(ok("start", { ...samples.start, resumed: true }), "#12 is already running: its tab is in front.");
   assert.equal(ok("edit", { ticket: TICKET, changed: ["title", "labels"] }), "Saved #12: title, labels.");
   assert.equal(ok("workflows", { kind: "workflow", items: [{ id: "bug", name: "Bug", scope: "global", trigger: "Any of: bug" }], errors: ["x.yaml: bad"] }), "bug                  Bug  · global  · Any of: bug\n! can't read x.yaml: bad");
   assert.equal(ok("doctor", { found: true, issues: [{ message: "gh isn't signed in." }], place: { cwd: "/repo" } }), "! gh isn't signed in.\n(for /repo, the folder the Tasks sidebar shows)");
+});
+
+test("device prints the machine, its light, the repo's folder and each problem with its fix", () => {
+  const text = ok("device", {
+    machine: "desktop", os: "windows", repo: "o/r", repoRoot: "C:/src/r", startHere: { "o/r": true },
+    light: { level: "yellow", checkedAt: Date.parse("2026-06-10T12:00:00.000Z"), checks: [{ id: "git", level: "green", message: "git is installed." }, { id: "gh-scope", level: "yellow", message: "No project scope.", fix: "Sign in again." }] },
+  });
+  assert.equal(text, ["Test device: desktop (windows) · yellow", "  Repo folder for o/r: C:/src/r", "  Starts on the device: on", "  Last deep check: 2026-06-10T12:00:00Z", "  ! No project scope.", "      fix: Sign in again."].join("\n"));
+  const none = ok("device", { machine: "desktop", os: "unix", repo: "o/r", repoRoot: null, startHere: {}, light: { level: "green", checkedAt: null, checks: [] } });
+  assert.match(none, /Repo folder for o\/r: not set/);
+  assert.match(none, /Starts on the device: off/);
+  assert.match(none, /Last deep check: never/);
+});
+
+test("device check prints every check, with the fix of those that aren't green", () => {
+  const text = ok("device-check", { machine: "desktop", health: { level: "red", at: Date.parse("2026-06-10T12:00:00Z"), checks: [{ id: "git", level: "green", message: "git is installed." }, { id: "repo-folder", level: "red", message: "No repo folder.", fix: "Set it." }, { id: "disk", level: "yellow", message: "Low disk.", fix: "Free space." }] } });
+  assert.equal(text, ["Test device desktop: red (checked 2026-06-10T12:00:00Z)", "  ok  git is installed.", "  RED  No repo folder.", "      fix: Set it.", "  yellow  Low disk.", "      fix: Free space."].join("\n"));
+});
+
+test("device run prints the log as it came, then where --keep left things", () => {
+  assert.equal(ok("device-run", { device: "desktop", commit: "a", exitCode: 0, log: "line 1\nline 2\n", durationMs: 1, timedOut: false }), "line 1\nline 2");
+  assert.equal(ok("device-run", { device: "desktop", exitCode: 1, log: "", kept: { worktree: "C:/w", log: "C:/l" } }), "\nKept on desktop: worktree C:/w, log C:/l");
 });

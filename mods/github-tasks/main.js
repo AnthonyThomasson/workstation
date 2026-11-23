@@ -16,15 +16,21 @@ import { installedAgents, investigationsHere, reconnectInvestigations, viewInves
 import { S, icon, stop, note, iconButton, action, gh, later, AgentBar, AgentBackdrop } from "./widgets/index.js";
 import { Auth, REFRESH, LOGIN } from "./github-ui/index.js";
 import { TaskEditor } from "./editor/index.js";
-import { readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen } from "./runs-ui/index.js";
+import { readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen, useStartPlanner } from "./runs-ui/index.js";
 import { statusColor, statusLabel, cantStartHere, startOverlay, startProps, shOn } from "./runs/index.js";
 import { TaskSettings } from "./settings/index.js";
+import { Machines, deviceDot, planStart, planStartNow } from "./devices-ui/index.js";
+import { startTip } from "./devices/index.js";
 import { matchWorkflows, REFACTOR } from "./workflow/index.js";
 import { WorkflowEditor, WorkflowList, loadWorkflows } from "./workflow-ui/index.js";
 import { PromptPage } from "./prompts-page.js";
 import { investigationRow, refactorOverlay, TOOLTIP as REFACTOR_TIP, newTaskOverlay, newTaskProps, chooseAgent } from "./investigations/index.js";
 import { startDoctor, doctorFor } from "./doctor/index.js";
 import { Bridge } from "./cli-ui/index.js";
+
+// The opt-in "Start this repo's tickets on the Test device": every Start (this sidebar, the editor's and the overlay's dialogs, herdr-tasks
+// start) asks it where to run. Registered here, at load, so every role of the mod (the Start overlay is one) has it.
+useStartPlanner(planStart);
 
 const PANEL = "panel", STACK = "panel-body", SHOWN = "github-tasks";
 const POLL = 60000;
@@ -105,6 +111,8 @@ export default class GitHubTasks extends View {
     this.waiting = new Map(); // row id -> the agents of its run or session that need the person (blocked or in error), as of the last draw
     this.agents = []; // installed agents New Task can use
     installedAgents().then((list) => { this.agents = list; cx.notify(); });
+    this.machines = new Machines(); // hc machine ls, for the Test device's light beside the gear: asked by refresh, never on its own timer
+    this.machines.load(cx);
     this.doctor = startDoctor(cx); // checks the setup on its own, apart from the ticket list; the gear shows a dot while it finds problems
     this.bridge = new Bridge(cx); // herdr-tasks, the command line: its requests are answered here, by the same calls the buttons make
     cx.timer.every(POLL, (cx) => this.refresh(cx));
@@ -141,9 +149,10 @@ export default class GitHubTasks extends View {
     return { space: space.id, on: space.machine ?? undefined, folder: this.lastCwd.get(space.id) ?? (space.folder || undefined) };
   }
 
-  // quiet: a background look (the 3-second poll), which doesn't spin the Refresh button. fresh: the person pressed Refresh,
+  // quiet: a background look (the 60-second poll), which doesn't spin the Refresh button. fresh: the person pressed Refresh,
   // so the place's repo is looked for again too.
   refresh(cx, { quiet = false, fresh = false } = {}) {
+    this.machines.ensure(cx, { fresh }); // hc machine ls is local to herdr-core; asked again when old, changed, or the person pressed Refresh
     const ctx = this.ctx;
     if (!ctx || this.writing || (this.loading && !(this.quiet && !quiet))) return; // a load now could read GitHub before a write lands
     if (this.loading) this.token++; // a person's refresh replaces a quiet one still going
@@ -254,12 +263,15 @@ export default class GitHubTasks extends View {
     if (ctx && (newSpace || newFolder)) later(cx, (cx) => this.refresh(cx));
 
     const problems = doctorFor(shared(DOCTOR_KEY), shared(PLACE))?.issues?.length ?? 0; // only an answer for the place shown
+    this.machines.ensure(cx); // a machine added or removed shows in the dot's list without waiting for the next refresh
+    const dot = deviceDot(t, this.machines, () => showSettings()); // the Test device's light, only while one is bound
     return v_flex().id("github-tasks").track_focus(this.handle).size_full().min_h(0).border_t(1).border_color(t.border)
       .text_color(t.foreground).text_size(S().body)
       .on_mouse_up("left", (_e, cx) => this.endDrag(cx)) // a release on anything that isn't a drop target drops nothing
       .child(h_flex().h(36).flex_none().pl(14).pr(8).gap(2).items_center()
         .child(div().flex_1().text_size(S().label).font_semibold().text_color(t.muted).child("Tasks"))
         .when(Boolean(ctx), (el) => el.child(this.newTaskButton(t)).child(this.refactorButton(t)))
+        .when(Boolean(dot), (el) => el.child(dot))
         .child(iconButton("settings", "settings", t, () => showSettings(), false, problems ? `Task settings (${problems} ${problems === 1 ? "problem" : "problems"} found)` : "Task settings", undefined, problems ? t.ansi1 : undefined))
         .when(Boolean(ctx), (el) => el.child(iconButton("refresh", this.loading && !this.quiet ? "ring" : "sync", t, (_e, cx) => this.refresh(cx, { fresh: true }), this.loading && !this.quiet, "Refresh"))))
       .when(this.projects.length > 1, (el) => el.child(this.renderContext(t)))
@@ -555,6 +567,13 @@ export default class GitHubTasks extends View {
     });
   }
 
+  // The play button's tooltip: "Start", or, when the repo's Start opt-in puts its tickets on the Test device, "Starts on <machine>" (or why a
+  // red light will stop it). From the machine list the sidebar already holds: nothing is asked of any machine here.
+  startTip() {
+    const ctx = this.ctx;
+    return startTip(ctx ? planStartNow(this.repo, { cwd: ctx.folder, on: ctx.on }, this.machines.list) : null);
+  }
+
   // The thin drop zone under the last row of Up Next and of an expanded Backlog: last in the section. It is always in the layout at its
   // fixed height (a press must not move any row), and only while dragging does its top edge show the accent line when hovered.
   endZone(t, section) {
@@ -632,6 +651,6 @@ export default class GitHubTasks extends View {
         .child(div().flex_1().min_w(0).truncate().text_size(S().body).child(middleEllipsis(ticket.title, max))))
       .when(Boolean(ticket.url), (el) => el.child(iconButton(`open-${ticket.key}`, "external", t, (_e, cx) => cx.open_url(ticket.url), false, "Open on GitHub")))
       .when(Boolean(running), (el) => el.child(iconButton(`view-${ticket.key}`, "eye", t, (_e, cx) => view(cx), false, "View the running agent")))
-      .when(!running, (el) => el.child(iconButton(`start-${ticket.key}`, busy ? "ring" : "play", t, (_e, cx) => this.startTicket(ticket, cx), busy, "Start")));
+      .when(!running, (el) => el.child(iconButton(`start-${ticket.key}`, busy ? "ring" : "play", t, (_e, cx) => this.startTicket(ticket, cx), busy, this.startTip())));
   }
 }

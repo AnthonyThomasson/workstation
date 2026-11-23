@@ -57,3 +57,7 @@ export const fixingKey = (id) => `github-tasks.run.${id}.fixing`; // the orchest
 export const leadKey = (id) => `github-tasks.run.${id}.orchestrator`; // the address of the orchestrator, when a new one was started for the run
 // An Investigation's page.
 export const investigationAgentsKey = (id) => `github-tasks.investigation.${id}.agents`; // the investigators and workers seen, so a reload still lists the finished ones
+
+// The Test device (devices/): one Herdr machine that tickets build and test on. { machine, os, home, repoRoots, startHere, health }:
+// only the Herdr machine name is kept, never a hostname, user or key. devices/test-device.js normalizes it.
+export const TEST_DEVICE = "github-tasks.testDevice";

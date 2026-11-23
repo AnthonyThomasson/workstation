@@ -18,6 +18,8 @@ export const SETTINGS_GROUPS = [
     { role: "investigator", label: "Investigator", title: "Investigator", note: "A shared read-only agent: explores the code to answer a question from the agent that started it. The New Task, Task and Refactor Orchestrators can all start it." },
   ] },
 ];
+// What Task settings draws, in order: the Test device card (not collapsible, so it has no section state) above the groups.
+export const SETTINGS_BLOCKS = ["testDevice", ...SETTINGS_GROUPS.map((g) => g.key)];
 export const SETTINGS_ENTRIES = SETTINGS_GROUPS.flatMap((g) => g.entries);
 
 // Groups and entries share one saved object, so a group's key can't be an entry's role.
