@@ -15,7 +15,7 @@
 // The price: Herdr's Agents panel lists only terminals in a pane (and their children), so it does not list these agents. The
 // github-tasks sidebar (the run's and the Investigation's rows, and the page's agent rows) is where they are seen.
 import { shQuote } from "./run.js";
-import { FOLDER_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL } from "../lib/index.js";
+import { FOLDER_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL, shellArgv } from "../lib/index.js";
 
 // The orchestrator's hc name: the run id and `-orch`, cut and cleaned to hc's rule (1-32 of a-z 0-9 - _), unique per run.
 const orchestratorName = (id) => `${String(id).toLowerCase().replace(/[^a-z0-9_-]/g, "-").slice(0, 27)}-orch`;
@@ -41,7 +41,9 @@ const NOTES = {
   investigation: (a) => `This tab shows agent ${a} of an investigation. When it is not showing, View reconnects it.`,
   "investigation-ended": (a) => `Agent ${a} of this investigation has ended. Press Done to remove its worktree and branch.`,
 };
-export const placeholderArgv = (orchestrator, kind = "run") => ["sh", "-c", `printf '%s\\n' ${shQuote(NOTES[kind](orchestrator))}; exec tail -f /dev/null`];
+// os: this computer's ("unix" | "windows", lib/shell.js localOs): Windows has no sh, so there it runs under Git Bash; the script
+// (argv[2]) is the same either way, so the matcher below finds both.
+export const placeholderArgv = (orchestrator, kind = "run", os = "unix") => shellArgv(["sh", "-c", `printf '%s\\n' ${shQuote(NOTES[kind](orchestrator))}; exec tail -f /dev/null`], os);
 
 // Whether a terminal is the placeholder made for one of these orchestrators: its argv holds placeholderArgv's script (a login-shell wrapper around the argv is fine).
 // Both kinds count, so a run's and an investigation's tab are found the same way.
@@ -180,7 +182,7 @@ const why = (e) => String(e?.message ?? e);
 // (the ticket's worktree: the sidebar nests a space under its repo by where its first terminal is) with the tab as its first;
 // the slot returned then has created: true, and a failure closes that whole space.
 //   deps: { app(name, args) -> made, paneOf(made) -> pane id | null, run(name, args), setSlot(id, slot), sleep(ms),
-//           isShown?(orchestrator, left), warn?(message) }
+//           isShown?(orchestrator, left), warn?(message), localOs? ("unix" | "windows": the placeholder's shell, placeholderArgv) }
 //   kind: which placeholder note the left pane prints (placeholderArgv), and what the messages call the agent: "orchestrator", or "agent"
 //   for an investigation's.
 //   "investigation-ended" is an investigation's tab opened again after its agent ended on its own, so Done can be pressed: the
@@ -193,10 +195,10 @@ export async function connectRun(deps, { id, orchestrator, name, space, spaceNam
     if (!existing) {
       createdSpace = !space && Boolean(spaceName);
       if (createdSpace) {
-        try { made = await deps.app("space.new", { name: spaceName, tab: name, ...(folder ? { folder } : {}), argv: placeholderArgv(orchestrator, kind) }); }
+        try { made = await deps.app("space.new", { name: spaceName, tab: name, ...(folder ? { folder } : {}), argv: placeholderArgv(orchestrator, kind, deps.localOs) }); }
         catch (e) { throw new Error(`the space couldn't be made (${why(e)})`); }
       } else {
-        try { made = await deps.app("tab.new", { name, ...(folder ? { folder } : {}), argv: placeholderArgv(orchestrator, kind), ...(space ? { space } : {}) }); }
+        try { made = await deps.app("tab.new", { name, ...(folder ? { folder } : {}), argv: placeholderArgv(orchestrator, kind, deps.localOs), ...(space ? { space } : {}) }); }
         catch (e) { throw new Error(`the tab couldn't be made (${why(e)})`); }
       }
       tab = made.tab;
@@ -205,7 +207,7 @@ export async function connectRun(deps, { id, orchestrator, name, space, spaceNam
     } else if (!left) {
       if (!page) throw new Error("the run's tab has nothing left to attach to");
       let fresh;
-      try { fresh = await deps.app("pane.split", { pane: page, direction: "right", argv: placeholderArgv(orchestrator, kind) }); }
+      try { fresh = await deps.app("pane.split", { pane: page, direction: "right", argv: placeholderArgv(orchestrator, kind, deps.localOs) }); }
       catch (e) { throw new Error(`the tab's left pane couldn't be made again (${why(e)})`); }
       left = await deps.paneOf({ ...fresh, tab });
       if (!left) throw new Error("the tab's new pane didn't appear");

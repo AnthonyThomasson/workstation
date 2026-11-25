@@ -9,7 +9,7 @@ import { v_flex, h_flex, InputState, Input, TextareaState, Textarea, TextView } 
 import { run, exec, setShared, theme, closeOverlay } from "herdr";
 import { markdownLiteral, snapshot, isDirty, changes, pickableStatuses, panelSize, panelAppeared, closeStep, escStep, afterSave, PRESS_BUTTONS, BACKDROP, wontDoFooter, wontDoPrompt, retryAfterSignIn, CHANGED } from "../lib/index.js";
 import { GitHubError, loadTask, loadStatusField, saveTask, markWontDo, loadLabels } from "../github/index.js";
-import { S, icon, stop, note, iconButton, action, gh, scrim } from "../widgets/index.js";
+import { S, icon, stop, note, iconButton, action, gh, scrim, hereOs } from "../widgets/index.js";
 import { Auth, REFRESH, LOGIN } from "../github-ui/index.js";
 import { matchWorkflows } from "../workflow/index.js";
 import { loadWorkflows } from "../workflow-ui/index.js";
@@ -33,7 +33,7 @@ export class TaskEditor {
     this.popup = Boolean(props?.popup); // in the popup (see the top), not in a tab
 
     this.handle = cx.focus_handle(); // the editor's root takes the keyboard when the textarea goes, so Cmd-S still reaches it
-    this.auth = new Auth((on, script, args, opts) => shOn({ exec }, on, script, args, opts));
+    this.auth = new Auth((on, script, args, opts) => shOn({ exec, localOs: hereOs() }, on, script, args, opts));
     this.editingBody = false; // the Description shows as markdown, or as the textarea while this is true
     this.opened = false; // set by the first load: only then may an empty draft open in the textarea
     this.titleInput = InputState.new({ value: this.ticket.title ?? "" });

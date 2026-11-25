@@ -145,6 +145,35 @@ test("shOn: here it is plain sh with no probe and no machine", async () => {
   assert.deepEqual(calls, [{ cmd: "sh", args: ["-c", "echo $1", "github-tasks", "x"], opts: undefined }]);
 });
 
+test("shOn: here on Windows (deps.localOs) it is Git Bash -lc with no probe; unix or left out is plain sh, as before", async () => {
+  const { exec, calls } = fakeExec(() => ({ code: 0, stdout: "ok", stderr: "" }));
+  let probed = 0;
+  const probe = async () => { probed++; return { os: "unix" }; };
+  await shOn({ exec, probe, seen: new Map(), localOs: "windows" }, null, "echo $1", ["x"], { timeout: 5000 });
+  await shOn({ exec, probe, seen: new Map(), localOs: "unix" }, null, "echo $1", ["x"]);
+  await shOn({ exec, probe, seen: new Map(), localOs: null }, undefined, "b");
+  assert.equal(probed, 0);
+  assert.deepEqual(calls, [
+    { cmd: GIT_BASH, args: ["-lc", "echo $1", "github-tasks", "x"], opts: { timeout: 5000 } },
+    { cmd: "sh", args: ["-c", "echo $1", "github-tasks", "x"], opts: undefined },
+    { cmd: "sh", args: ["-c", "b", "github-tasks"], opts: undefined },
+  ]);
+});
+
+test("shOn: a machine's own OS wins over this computer's: a Unix machine from Windows gets sh, a Windows one from the Mac Git Bash", async () => {
+  const { exec, calls } = fakeExec(() => ({ code: 0, stdout: "", stderr: "" }));
+  await shOn({ exec, probe: async (_e, on) => ({ on, os: "unix", home: "/home/me" }), seen: new Map(), localOs: "windows" }, "vps", "a");
+  await shOn({ exec, probe: async (_e, on) => ({ on, os: "windows", home: "C:/Users/me" }), seen: new Map(), localOs: "unix" }, "desktop", "b");
+  assert.deepEqual(calls.map((c) => [c.cmd, c.opts]), [["sh", { on: "vps" }], [GIT_BASH, { on: "desktop" }]]);
+});
+
+test("hostArgv for this computer ({ os: localOs }): a custom command goes through Git Bash on Windows, unchanged on Unix", () => {
+  assert.deepEqual(hostArgv(["sh", "-c", "my agent"], { os: "windows" }), [GIT_BASH, "-lc", "my agent"]);
+  assert.deepEqual(hostArgv(["sh", "-c", "my agent"], { os: "unix" }), ["sh", "-c", "my agent"]);
+  assert.deepEqual(hostArgv(["sh", "-c", "my agent"], { os: undefined }), ["sh", "-c", "my agent"]);
+  assert.deepEqual(hostArgv(["claude", "--x"], { os: "windows" }), ["claude", "--x"]);
+});
+
 test("shOn: on a Windows machine it runs Git Bash -lc, probing the machine once for any number of calls", async () => {
   const { exec, calls } = fakeExec(() => ({ code: 0, stdout: "", stderr: "" }));
   let probed = 0;

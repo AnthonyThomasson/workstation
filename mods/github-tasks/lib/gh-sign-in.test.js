@@ -4,13 +4,29 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
-import { DEVICE_TIMEOUT_MS, DEVICE_URL, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, classifyError, preparedFrom, signInFrom, signInSeconds, usesDeviceFlow } from "./gh-sign-in.js";
+import { DEVICE_TIMEOUT_MS, DEVICE_URL, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, SIGN_IN_READ, classifyError, preparedFrom, readFrom, signInFrom, signInSeconds, usesDeviceFlow } from "./gh-sign-in.js";
 
 test("reads gh's one-time code and page from its sign-in output", () => {
   const out = "\n! One-time code (AA8B-5FB7) copied to clipboard\nOpen this URL to continue in your web browser: https://github.com/login/device\n";
   assert.deepEqual(signInFrom(out), { code: "AA8B-5FB7", url: "https://github.com/login/device" });
   assert.deepEqual(signInFrom(""), { code: null, url: null });
   assert.deepEqual(signInFrom("! One-time code (6D7D-8CDC)"), { code: "6D7D-8CDC", url: null });
+});
+
+test("reads the one-time code in gh's other wording too, and nothing that only looks like one", () => {
+  assert.deepEqual(signInFrom("! First copy your one-time code: 1A2B-3C4D\nOpen this URL to continue in your web browser: https://github.com/login/device\n"),
+    { code: "1A2B-3C4D", url: "https://github.com/login/device" });
+  assert.deepEqual(signInFrom("! One-time code (AB12-CD34) copied\r\n"), { code: "AB12-CD34", url: null });
+  assert.equal(signInFrom("Waiting for code...").code, null);
+  assert.equal(signInFrom("error: could not get a device code").code, null);
+});
+
+test("the device flow's read: gh's exit code on the first line (empty while it runs), then its stderr so far", () => {
+  assert.deepEqual(readFrom("\n! One-time code (AB12-CD34) copied\n"), { done: "", err: "! One-time code (AB12-CD34) copied\n" });
+  assert.deepEqual(readFrom("0\r\n! One-time code (AB12-CD34) copied\r\n"), { done: "0", err: "! One-time code (AB12-CD34) copied\n" });
+  assert.deepEqual(readFrom("1\n"), { done: "1", err: "" });
+  assert.deepEqual(readFrom(""), { done: "", err: "" });
+  assert.deepEqual(readFrom(undefined), { done: "", err: "" });
 });
 
 test("names gh's failures", () => {
@@ -121,4 +137,15 @@ test("the device flow's exec may run up to Herdr's 600s cap, and the mod stops w
   assert.equal(signInSeconds(true), 600);
   assert.ok(signInSeconds(true) * 1000 <= DEVICE_TIMEOUT_MS);
   assert.equal(signInSeconds(false), 900);
+});
+
+test("SIGN_IN_READ prints an empty first line and the code while gh waits, then gh's exit code once it has ended", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sign-in-read-"));
+  const read = () => { const r = spawnSync("sh", ["-c", SIGN_IN_READ, "github-tasks", dir], { encoding: "utf8" }); assert.equal(r.status, 0, r.stderr); return readFrom(r.stdout); };
+  assert.deepEqual(read(), { done: "", err: "" }, "no files yet");
+  writeFileSync(join(dir, "err"), "! One-time code (AB12-CD34) copied\n");
+  assert.deepEqual(read(), { done: "", err: "! One-time code (AB12-CD34) copied\n" });
+  assert.equal(signInFrom(read().err).code, "AB12-CD34");
+  writeFileSync(join(dir, "code"), "0\n");
+  assert.equal(read().done, "0");
 });

@@ -2,4 +2,5 @@
 export { AgentBackdrop } from "./agent-backdrop.js";
 export { AgentBar, openAgentPopup } from "./agent-bar.js";
 export { app, gh, later } from "./commands.js";
+export { hereOs, localSh, localTool } from "./local-shell.js";
 export { S, action, icon, iconButton, note, scrim, segmented, stop } from "./widgets.js";

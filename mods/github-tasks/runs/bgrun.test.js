@@ -31,6 +31,24 @@ test("parseStarted reads the address from hc run --json, or null", () => {
   assert.equal(parseStarted('{"error":{"message":"x"}}'), null);
 });
 
+test("on Windows the placeholder runs its same script under Git Bash (no sh there); Unix and left out keep sh -c", () => {
+  const unix = placeholderArgv("t7", "run");
+  assert.deepEqual(placeholderArgv("t7", "run", "unix"), unix);
+  assert.deepEqual(placeholderArgv("t7", "run", "windows"), ["C:/Program Files/Git/bin/bash.exe", "-lc", unix[2]]);
+  assert.deepEqual(placeholderArgv("t7", "investigation", "windows")[2], placeholderArgv("t7", "investigation")[2]);
+});
+
+test("connectRun opens the placeholder with this computer's shell (deps.localOs)", async () => {
+  const calls = [];
+  const deps = {
+    app: async (name, args) => { calls.push([name, args]); return name === "tab.new" ? { tab: "T1", space: "S1" } : {}; },
+    paneOf: async () => "p1", run: () => {}, setSlot: () => {}, sleep: async () => {}, isShown: () => true, localOs: "windows",
+  };
+  await connectRun(deps, { id: "r1", orchestrator: "t7", name: "#1 x", space: "S1", folder: "C:/wt", props: {} }).catch(() => {});
+  const made = calls.find(([n]) => n === "tab.new");
+  assert.deepEqual(made[1].argv, placeholderArgv("t7", "run", "windows"));
+});
+
 test("the placeholder prints a note naming the orchestrator and then waits, so its pane stays", () => {
   const [sh, c, script] = placeholderArgv("t7");
   assert.equal(sh, "sh");

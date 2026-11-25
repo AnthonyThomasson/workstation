@@ -64,3 +64,8 @@ test("a trailing shell comment cannot swallow the fresh shell", hasShell, () => 
   assert.match(r.stdout, /command-ran/);
   assert.match(r.stdout, /shell-ran/);
 });
+
+test("on Windows a button runs through Git Bash (the page passes GIT_BASH as the shell): the command, then a Git Bash login shell", () => {
+  const GIT_BASH = "C:/Program Files/Git/bin/bash.exe";
+  assert.deepEqual(projectButtonArgv("npm test", GIT_BASH), [GIT_BASH, "-lc", "eval 'npm test'; exec 'C:/Program Files/Git/bin/bash.exe' -l"]);
+});

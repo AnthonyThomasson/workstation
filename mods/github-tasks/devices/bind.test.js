@@ -74,7 +74,12 @@ test("FIND_SCRIPT, run by a real sh: a worktree's folder gives the main checkout
   git(main, "init", "-q"); git(main, "remote", "add", "origin", `https://github.com/${REPO}.git`);
   writeFileSync(path.join(main, "f"), "x"); git(main, "add", "f"); git(main, "commit", "-qm", "x"); git(main, "worktree", "add", "-q", "--detach", wt);
   const out = execFileSync("sh", ["-c", FIND_SCRIPT, "github-tasks", plain, wt, path.join(root, "missing"), main], { encoding: "utf8" });
-  assert.deepEqual(parseFound(out), [{ mainRoot: main, remote: `https://github.com/${REPO}.git` }, { mainRoot: main, remote: `https://github.com/${REPO}.git` }]);
+  // git names the main checkout as the machine does: /… on Unix, C:/… (forward slashes, the mod's form) under Git Bash on
+  // Windows, where node's path.join gives C:\…. path.sep is "/" on Unix, so there this is the path unchanged.
+  const machineForm = (p) => p.split(path.sep).join("/");
+  assert.ok(!out.includes("\\"), `no backslashes in what the script prints: ${out}`);
+  const want = machineForm(main);
+  assert.deepEqual(parseFound(out), [{ mainRoot: want, remote: `https://github.com/${REPO}.git` }, { mainRoot: want, remote: `https://github.com/${REPO}.git` }]);
 });
 
 test("bindFlow probes once, caches {os, home} and saves before the deep check, then saves the health", async () => {

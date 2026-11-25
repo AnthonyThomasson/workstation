@@ -6,7 +6,7 @@
 import { exec, hc, home, knownAgents, notify, panes, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
 import { guarded, undoRunTab, viewConnect, viewQuick, mainCheckout, prepareWorktree, out } from "../runs/index.js";
 import { connect, connecting } from "../runs-ui/index.js";
-import { app } from "../widgets/index.js";
+import { app, hereOs, localTool } from "../widgets/index.js";
 import { newTaskPrompt, refactorPrompt, slotKey, INVESTIGATIONS_KEY } from "../lib/index.js";
 import { normalizeRefactor, worktreePath, sessionFolder } from "../workflow/index.js";
 import { INVESTIGATION_ROLE, agentOf, beginInvestigation, deleteBranch, investigationsFor, reapplyInvestigations, removeWorktree, tabNameFor } from "../investigations/index.js";
@@ -30,16 +30,16 @@ function promptFor({ description, repo, project, settings, refactor }, agentsDir
 
 // Writes the session's folder: the spawn script (runnable) and the prompts its helpers read. Throws with the reason.
 async function writeSession(dir, files) {
-  const made = await exec("mkdir", ["-p", dir]);
+  const made = await localTool("mkdir", ["-p", dir]);
   if (made.code !== 0) throw new Error(`Couldn't make ${dir}: ${out(made)}`);
   await Promise.all(Object.entries(files).map(([name, text]) => writeTextFile(`${dir}/${name}`, text, null)));
-  const chmod = await exec("chmod", ["+x", `${dir}/spawn`]);
+  const chmod = await localTool("chmod", ["+x", `${dir}/spawn`]);
   if (chmod.code !== 0) throw new Error(`Couldn't make the spawn script runnable: ${out(chmod)}`);
 }
 
 // Takes a folder writeSession made back, once a start fails. Recursive, so only a folder sessionFolder names for its own id is removed.
 async function removeSession(dir) {
-  if (sessionFolder(home(), String(dir).split("/").pop()) === dir) await exec("rm", ["-rf", dir]);
+  if (sessionFolder(home(), String(dir).split("/").pop()) === dir) await localTool("rm", ["-rf", dir]);
 }
 
 // Starts an Investigation: a New Task Orchestrator working in a worktree of its own, from the repo's default branch, in a tab of its own
@@ -53,7 +53,7 @@ export async function startInvestigation(args, cx) {
   let id = null, created = null;
   const { entry, problems } = await beginInvestigation({
     now: () => Date.now(), home: home(), mainCheckout: (cwd) => mainCheckout(git, cwd), prepareWorktree: (repoRoot, branch, target) => prepareWorktree(git, repoRoot, branch, target),
-    worktreePath, task: (dir) => promptFor(args, dir), hc, knownAgents: () => knownAgents(), writeSession, removeSession,
+    worktreePath, task: (dir) => promptFor(args, dir), hc, localOs: hereOs(), knownAgents: () => knownAgents(), writeSession, removeSession,
     // A new space at the worktree, named for the session, its first tab the agent's; the Spaces sidebar nests it under the repo's.
     connect: async (props) => {
       id = props.id;

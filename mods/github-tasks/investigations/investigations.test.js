@@ -909,3 +909,25 @@ test("start a refactor: a custom agent isn't checked, and an agent the core does
   await beginInvestigation(f.deps, { agent: null, description: "", where: WHERE, refactor: { type: RTYPE, focus: "" } });
   assert.equal(f.hcCalls[0][0], "run");
 });
+
+test("start on Windows (deps.localOs): custom commands go through Git Bash, the agent's and the helpers'; others are unchanged", async () => {
+  const GIT_BASH = "C:/Program Files/Git/bin/bash.exe";
+  const start = async (localOs) => {
+    const f = fakeStart();
+    let files = null;
+    f.deps.localOs = localOs;
+    f.deps.writeSession = async (_dir, got) => { files = got; };
+    f.deps.knownAgents = async () => [{ key: "claude", run: ["claude"], installed: true }, { key: "codex", run: ["codex"], installed: true }];
+    const type = { ...RTYPE, orchestrator: { ...RTYPE.orchestrator, agent: "custom", command: "my-orch --go" } };
+    await beginInvestigation(f.deps, { agent: null, description: "", where: WHERE, refactor: { type, focus: "" } });
+    const run = f.hcCalls[0];
+    return { argv: run.slice(run.indexOf("--") + 1), spawn: files.spawn };
+  };
+  const win = await start("windows");
+  assert.deepEqual(win.argv, [GIT_BASH, "-lc", "my-orch --go"]);
+  assert.ok(win.spawn.includes(`${shQuote(GIT_BASH)} ${shQuote("-lc")} ${shQuote("my-worker --go")}`), "the custom worker runs through Git Bash");
+  assert.ok(win.spawn.includes(shQuote("codex")), "a known agent is unchanged");
+  const unix = await start(undefined);
+  assert.deepEqual(unix.argv, ["sh", "-c", "my-orch --go"]);
+  assert.ok(!unix.spawn.includes(GIT_BASH));
+});

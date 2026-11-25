@@ -6,7 +6,7 @@
 import { exec, focused, hc, home, knownAgents, notify, panes, readTextFile, run, setShared, shared, spaces, terminals, writeTextFile } from "herdr";
 import { connectRun, freshTicket, guarded, launchRun, reapplyRuns, runTabParts, undoRunTab, viewConnect, viewQuick, viewTarget, mainCheckout, prepareWorktree, out, agentArgv, branchName, investigatorPrompt, mergeScript, orchestratorPrompt, reopenProps, reviewerPrompt, runId, spawnScript, ticketFile, ticketKey, ticketName, soloPrompt, workerPrompt, hostArgv, hostOf, remoteProgram, shOn } from "../runs/index.js";
 import { loadTask } from "../github/index.js";
-import { app, gh } from "../widgets/index.js";
+import { app, gh, hereOs, localTool } from "../widgets/index.js";
 import { blank, ROLES, isEasy, worktreePath, runDir as runDirFor, runPanePath } from "../workflow/index.js";
 import { slotKey, FOLDER_LABEL, ROLE_LABEL, RUN_LABEL, TICKET_LABEL } from "../lib/index.js";
 
@@ -29,7 +29,7 @@ export const runTabOf = (id, name, ticketSpace = null) => runTabParts({ slot: sh
 // lacks a part (see connectRun); kind: "run", or "investigation" / "investigation-ended" (investigate.js reuses this). Resolves with the slot (created: true when this made the space). Throws with the reason.
 export function connect({ id, orchestrator, title, space, folder, props, existing = null, kind = "run" }, cx) {
   return connectRun({
-    app, run, paneOf: (made) => paneOf(made, cx), sleep: (ms) => cx.sleep(ms),
+    app, run, paneOf: (made) => paneOf(made, cx), sleep: (ms) => cx.sleep(ms), localOs: hereOs(),
     // The focused pane is the left one by now: the app says what it shows (an address). Not yet focused counts as not shown.
     isShown: (orchestrator, left) => { const f = focused(); return f?.pane === left && f.shown === orchestrator; },
     warn: (body) => notify({ title: kind.startsWith("investigation") ? "The agent may not be showing" : "The Task Orchestrator may not be showing", body, level: "warning" }),
@@ -120,7 +120,7 @@ async function resolveAgents(workflow, runDir, host = null, localDir = runDir) {
     const dir = host ? localDir : runDir; // the orchestrator (and solo) always run here, beside the spawn and merge scripts
     if (settings.agent === "custom") {
       if (!settings.command) throw new Error(`The workflow's ${role} needs the command that opens its agent.`);
-      argv[role] = agentArgv(role, settings, [], dir);
+      argv[role] = hostArgv(agentArgv(role, settings, [], dir), { os: hereOs() }); // here: Git Bash on Windows, sh -c elsewhere
       continue;
     }
     const entry = known.find((a) => a.key === settings.agent);
@@ -136,9 +136,9 @@ async function resolveAgents(workflow, runDir, host = null, localDir = runDir) {
 // be mistaken for one that works. hc file write makes missing folders, but a folder is made first anyway, as for a local run.
 async function writeRemoteRunFolder(id, parts, argv, host, localDir) {
   const { runDir, workDir, branch } = parts;
-  const remote = await shOn({ exec }, host.on, 'mkdir -p "$1"', [runDir]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
+  const remote = await shOn({ exec, localOs: hereOs() }, host.on, 'mkdir -p "$1"', [runDir]).catch((e) => ({ code: 1, stdout: "", stderr: String(e?.message ?? e) }));
   if (remote.code !== 0) throw new Error(`Couldn't make ${runDir} on ${host.on}: ${out(remote)}`);
-  const local = await exec("mkdir", ["-p", localDir]);
+  const local = await localTool("mkdir", ["-p", localDir]);
   if (local.code !== 0) throw new Error(`Couldn't make ${localDir}: ${out(local)}`);
   const there = (name, text) => writeTextFile(`${runDir}/${name}`, text, null, { on: host.on });
   const here = (name, text) => writeTextFile(`${localDir}/${name}`, text, null);
@@ -155,13 +155,13 @@ async function writeRemoteRunFolder(id, parts, argv, host, localDir) {
     here("spawn", spawnScript({ id, runDir, workDir, branch, argv, host })),
     here("merge", mergeScript({ id, workDir, branch, number: parts.ticket?.number, runDir: localDir, host })),
   ]);
-  const chmod = await exec("chmod", ["+x", `${localDir}/spawn`, `${localDir}/merge`]);
+  const chmod = await localTool("chmod", ["+x", `${localDir}/spawn`, `${localDir}/merge`]);
   if (chmod.code !== 0) throw new Error(`Couldn't make the spawn and merge scripts runnable: ${out(chmod)}`);
 }
 
 async function writeRunFolder(id, parts, argv) {
   const { runDir, workDir, branch, solo } = parts;
-  const made = await exec("mkdir", ["-p", runDir]);
+  const made = await localTool("mkdir", ["-p", runDir]);
   if (made.code !== 0) throw new Error(`Couldn't make ${runDir}: ${out(made)}`);
   await Promise.all([
     writeTextFile(`${runDir}/orchestrator.md`, solo ? soloPrompt(parts) : orchestratorPrompt({ ...parts, id }), null),
@@ -172,7 +172,7 @@ async function writeRunFolder(id, parts, argv) {
     writeTextFile(`${runDir}/spawn`, spawnScript({ id, runDir, workDir, branch, argv }), null),
     writeTextFile(`${runDir}/merge`, mergeScript({ id, workDir, branch, number: parts.ticket?.number, runDir }), null),
   ]);
-  const chmod = await exec("chmod", ["+x", `${runDir}/spawn`, `${runDir}/merge`]);
+  const chmod = await localTool("chmod", ["+x", `${runDir}/spawn`, `${runDir}/merge`]);
   if (chmod.code !== 0) throw new Error(`Couldn't make the spawn and merge scripts runnable: ${out(chmod)}`);
 }
 

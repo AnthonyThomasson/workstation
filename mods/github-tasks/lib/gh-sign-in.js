@@ -33,6 +33,17 @@ export function preparedFrom(stdout) {
 // Whether the sign-in uses the device flow: on another machine (on set), or on a machine that isn't a Mac.
 export const usesDeviceFlow = (on, kernel) => Boolean(on) || String(kernel ?? "").trim().toLowerCase() !== "darwin";
 
+// The device flow's progress, read through the same shell as the sign-in ($1 is the folder): gh's exit code on the first line (empty
+// while it runs), then everything gh has printed to stderr so far (its one-time code first). Read this way rather than with Herdr's
+// readTextFile, so the code shows while gh still waits, on this computer and on another machine alike, Windows included.
+export const SIGN_IN_READ = 'c=$(cat "$1/code" 2>/dev/null); printf \'%s\\n\' "$c"; cat "$1/err" 2>/dev/null; exit 0';
+// SIGN_IN_READ's output: { done (gh's exit code, "" while it runs), err (its stderr so far) }.
+export function readFrom(stdout) {
+  const s = String(stdout ?? "").replace(/\r/g, "");
+  const nl = s.indexOf("\n");
+  return nl < 0 ? { done: s.trim(), err: "" } : { done: s.slice(0, nl).trim(), err: s.slice(nl + 1) };
+}
+
 // Removes the sign-in's folder ($1) once it is read.
 export const SIGN_IN_CLEANUP = 'rm -rf "$1"';
 
@@ -48,8 +59,10 @@ export function classifyError(text) {
   return "other";
 }
 
-// What gh printed while it waits for the browser: its one-time code, and the page to enter it on.
+// What gh printed while it waits for the browser: its one-time code, and the page to enter it on. gh says the code either way:
+// "! One-time code (ABCD-1234) copied to clipboard" or "! First copy your one-time code: ABCD-1234".
 export function signInFrom(text) {
   const s = String(text ?? "");
-  return { code: s.match(/code \(([A-Z0-9-]+)\)/)?.[1] ?? null, url: s.match(/https:\/\/\S+/)?.[0] ?? null };
+  const code = s.match(/code \(([A-Z0-9-]+)\)/)?.[1] ?? s.match(/one-time code:\s*([A-Z0-9]+-[A-Z0-9]+)/i)?.[1] ?? null;
+  return { code, url: s.match(/https:\/\/\S+/)?.[0] ?? null };
 }

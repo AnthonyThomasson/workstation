@@ -13,7 +13,7 @@ import { run, exec, spaces, focused, notify, shared, setShared, terminals, playS
 import { BACK_AFTER, CLI_ACTION, modCommand, Shakes, bellFirst, bellTip, bellToast, waitingAgents, INVESTIGATION_LABEL, RUN_LABEL, normalizeItems, groupTickets, groupByStage, projectOrdered, planMove, applyMove, middleEllipsis, normalizeGroomer, GROOMER_KEY, chooseProject, projectKey, CONTEXT, PLACE, editorOverlay, initialOpen, investigationsAlone, sectionPlan, SpaceLists, spaceKey, resetList, forgetRepo, clearTickets, applyPlace, applyRepo, applyProject, failReload, doneReload, CHANGED, AGENT_KEY, DOCTOR_KEY } from "./lib/index.js";
 import { GitHubError, MAX_ITEMS, findRepo, findProjects, createProject, loadItems, loadStatusField, moveTicket, setupProject, setupNote } from "./github/index.js";
 import { installedAgents, investigationsHere, reconnectInvestigations, viewInvestigation, InvestigationPage, NewTaskPage, RefactorPage } from "./investigations-ui/index.js";
-import { S, icon, stop, note, iconButton, action, gh, later, AgentBar, AgentBackdrop } from "./widgets/index.js";
+import { S, icon, stop, note, iconButton, action, gh, later, AgentBar, AgentBackdrop, hereOs } from "./widgets/index.js";
 import { Auth, REFRESH, LOGIN } from "./github-ui/index.js";
 import { TaskEditor } from "./editor/index.js";
 import { readPlace, RunPage, liveRunFor, viewRun, reconnectRuns, StartPage, startChosen, useStartPlanner } from "./runs-ui/index.js";
@@ -95,7 +95,7 @@ export default class GitHubTasks extends View {
       return;
     }
     this.handle = cx.focus_handle();
-    this.auth = new Auth((on, script, args, opts) => shOn({ exec }, on, script, args, opts));
+    this.auth = new Auth((on, script, args, opts) => shOn({ exec, localOs: hereOs() }, on, script, args, opts));
     this.changedAt = shared(CHANGED) ?? null; // a save in an editor refreshes the list
     this.lastCwd = new Map();
     this.lists = new SpaceLists(); // each space's last list, shown at once when the space is selected again

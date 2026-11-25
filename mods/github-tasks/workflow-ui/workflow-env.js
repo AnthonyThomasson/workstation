@@ -1,11 +1,13 @@
 // Herdr's side of the store: real files, and where they are. Everything else is store.js.
-import { exec, home, appHome, readTextFile, writeTextFile } from "herdr";
+import { home, appHome, readTextFile, writeTextFile } from "herdr";
 import { makeStore, parseCodexModels, parseKimiModels, firstLine, kindDirs, globalKindDir, tildePath, WORKFLOW, REFACTOR } from "../workflow/index.js";
 import { WORKFLOWS_CHANGED, REFACTORS_CHANGED } from "../lib/index.js";
+import { localSh } from "../widgets/index.js";
 
 export { WORKFLOWS_CHANGED, REFACTORS_CHANGED };
 
-const sh = (script, ...args) => exec("sh", ["-c", script, "github-tasks", ...args]);
+// sh here: plain sh on the Mac, Git Bash on Windows (widgets/local-shell.js).
+const sh = localSh;
 
 const io = {
   read: (path) => readTextFile(path),

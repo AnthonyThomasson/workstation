@@ -2,9 +2,9 @@
 import { div } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
 import { exec, notify, readTextFile, run, spaces } from "herdr";
-import { parseProjectButtons, projectButtonArgv } from "../runs/index.js";
+import { GIT_BASH, parseProjectButtons, projectButtonArgv } from "../runs/index.js";
 import { projectConfigPath } from "../workflow/index.js";
-import { app, S, stop } from "../widgets/index.js";
+import { app, hereOs, S, stop } from "../widgets/index.js";
 
 export class ProjectButtons {
   constructor({ folder, space }) {
@@ -70,7 +70,8 @@ export class ProjectButtons {
     this.opening.add(key);
     cx.spawn(async () => {
       try {
-        const found = await exec("sh", ["-c", 'printf %s "${SHELL:-/bin/sh}"']);
+        // Your $SHELL, asked of sh; on Windows (no sh, and Git Bash's $SHELL is a path only Git Bash understands) Git Bash itself.
+        const found = hereOs() === "windows" ? { code: 0, stdout: GIT_BASH, stderr: "" } : await exec("sh", ["-c", 'printf %s "${SHELL:-/bin/sh}"']);
         const shell = found.stdout.trim();
         if (found.code !== 0 || !shell) throw new Error(found.stderr.trim() || "Your shell couldn't be found.");
         const made = await app("tab.new", { name: button.name, folder: this.folder, space, argv: projectButtonArgv(button.command, shell) });

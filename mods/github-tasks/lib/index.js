@@ -3,10 +3,11 @@ export { BACK_AFTER, SHAKE_FOR, Shakes, bellFirst, bellTip, bellToast, waitingAg
 export { WORDS, agentPopupOverlay, barTitle, isEscape, parentLabel } from "./agent-popup.js";
 export { EFFORTS, groomArgv, normalizeGroomer, normalizeSubAgent } from "./agent-settings.js";
 export { authIssues, parseAuthStatus } from "./gh-auth.js";
-export { classifyError, LOGIN, REFRESH, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, DEVICE_TIMEOUT_MS, DEVICE_URL, preparedFrom, signInSeconds, usesDeviceFlow, signInFrom } from "./gh-sign-in.js";
+export { classifyError, LOGIN, REFRESH, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, SIGN_IN_READ, DEVICE_TIMEOUT_MS, DEVICE_URL, preparedFrom, readFrom, signInSeconds, usesDeviceFlow, signInFrom } from "./gh-sign-in.js";
 export { AGENT_KEY, AGENT_POPUP_KEY, CHANGED, CLI_ACTION, CONTEXT, DOCTOR_KEY, EDITOR_OVERLAY_KEY, GROOMER_KEY, INVESTIGATIONS_KEY, INVESTIGATOR_KEY, NEW_TASK_OVERLAY_KEY, OVERLAY_KEY, PICK_PREFIX, PLACE, REFACTORS_CHANGED, REFACTOR_OVERLAY_KEY, SECTIONS_KEY, TEST_DEVICE, WORKER_KEY, WORKFLOWS_CHANGED, autoPrKey, failureKey, finalKey, fixingKey, investigationAgentsKey, leadKey, modCommand, openKey, prKey, projectKey, runAgentsKey, slotKey, stageKey } from "./keys.js";
 export { machinePath } from "./machine-path.js";
 export { markdownLiteral } from "./markdown.js";
+export { GIT_BASH, localOs, shArgv, shellArgv, toolArgv } from "./shell.js";
 export { ASK_WITH_TOOL, newTaskPrompt, newTaskStart, newTaskSubAgents, refactorPrompt, refactorSections } from "./orchestrator-prompts.js";
 export { BACKDROP, MARGIN, PRESS_BUTTONS, afterSave, closeStep, editorOverlay, escStep, panelAppeared, panelSize } from "./popup.js";
 export { applyMove, dropAfterId, moveStatus, planMove, projectOrdered, sectionOf } from "./reorder.js";

@@ -3,7 +3,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { readTextFile, settings } from "herdr";
-import { signInFrom, preparedFrom, usesDeviceFlow, REFRESH, LOGIN, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, DEVICE_URL, DEVICE_TIMEOUT_MS, signInSeconds } from "../lib/index.js";
+import { signInFrom, preparedFrom, readFrom, usesDeviceFlow, REFRESH, LOGIN, SIGN_IN, SIGN_IN_CLEANUP, SIGN_IN_DEVICE, SIGN_IN_PREPARE, SIGN_IN_READ, DEVICE_URL, DEVICE_TIMEOUT_MS, signInSeconds } from "../lib/index.js";
 import { S, note, action } from "../widgets/index.js";
 
 export { REFRESH, LOGIN };
@@ -41,12 +41,23 @@ export class Auth {
       this.state = { ...pending, phase: "waiting", dir, device };
       cx.notify();
       const mine = () => this.state?.dir === dir;
+      // The device flow's files are read through the sign-in's own shell (SIGN_IN_READ, one exec per look), so its one-time code
+      // shows while gh waits, on another machine and on Windows alike; the Mac's detached gh is read with readTextFile, as before.
+      // Only while this sign-in runs: the loop ends when gh does (or its held exec does), on a cancel (mine() false), or after signInSeconds looks.
+      const look = async () => {
+        if (!device) return {
+          err: (await readTextFile(`${dir}/err`, { on }).catch(() => null)) ?? "",
+          done: ((await readTextFile(`${dir}/code`, { on }).catch(() => null)) ?? "").trim(),
+        };
+        const r = await this.sh(on, SIGN_IN_READ, [dir]).catch(failed);
+        return r.code === 0 ? readFrom(r.stdout) : { err: "", done: "" };
+      };
       for (let i = 0; i < signInSeconds(device); i++) {
         await cx.sleep(1000);
         if (!mine()) return;
         const over = ended; // read before the files: gh's code file is written before its exec ends
-        const err = (await readTextFile(`${dir}/err`, { on }).catch(() => null)) ?? "";
-        const done = ((await readTextFile(`${dir}/code`, { on }).catch(() => null)) ?? "").trim();
+        const { err, done } = await look();
+        if (!mine()) return;
         const { code, url } = signInFrom(err);
         if (code !== this.state.code || url !== this.state.url) { this.state = { ...this.state, code, url }; cx.notify(); }
         if (!done && over) {
@@ -76,6 +87,9 @@ export class Auth {
     if (a.phase === "failed") return v_flex().gap(8)
       .child(div().text_size(S().secondary).text_color(t.ansi1).child(a.message))
       .child(action("github-sign-in-retry", "Try again", t, retry));
+    if (!a.code && a.device && a.phase === "waiting") return v_flex().gap(8)
+      .child(note(t, "Waiting for GitHub's one-time code from gh…"))
+      .child(action("github-sign-in-open", "Open GitHub", t, (_e, cx) => cx.open_url(a.url ?? DEVICE_URL)));
     if (!a.code) return note(t, "Starting sign-in with GitHub…");
     return v_flex().gap(8)
       .child(note(t, a.device

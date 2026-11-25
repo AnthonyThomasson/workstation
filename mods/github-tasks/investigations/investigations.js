@@ -9,7 +9,7 @@
 // Done ends the agent and everything it started (investigators and prototype workers, their worktrees and branches and its session
 // folder), closes that space, removes the worktree and deletes the branch. Pure apart from the deps it is handed
 // (no Herdr imports), so node --test runs it; investigate.js is Herdr's side, investigation-page.js the page in the tab.
-import { shQuote, findTicketSpace, launchRun, runTabParts, row as terminalRow } from "../runs/index.js";
+import { shQuote, findTicketSpace, hostArgv, launchRun, runTabParts, row as terminalRow } from "../runs/index.js";
 import { slug, normalizeRefactor, validateRefactor, sessionFolder, posixFolder } from "../workflow/index.js";
 import { normalizeSubAgent, FOLDER_LABEL, INVESTIGATION_LABEL, ROLE_LABEL } from "../lib/index.js";
 import { newTaskAgentArgv, refactorAgentArgv, sessionFiles, subAgentArgv } from "./investigation-spawn.js";
@@ -147,7 +147,8 @@ function checkInstalled(type, known) {
 //   deps: { now(), home, mainCheckout(cwd) -> path, prepareWorktree(repoRoot, branch, target) -> path,
 //           worktreePath(repoRoot, branch, home), task(dir) -> the first message (dir: the session folder), knownAgents() -> the core's agents,
 //           writeSession(dir, files { name: text }), removeSession(dir), hc(args), connect(props) -> slot (throws), closeTab(),
-//           load() -> saved list, save(list), guard?(id, fn) -> Promise (runs fn alone for that id), cleanup?(repoRoot, branch, workDir) -> Promise (removes a worktree and branch) }
+//           load() -> saved list, save(list), guard?(id, fn) -> Promise (runs fn alone for that id), cleanup?(repoRoot, branch, workDir) -> Promise (removes a worktree and branch),
+//           localOs? ("unix" | "windows", this computer's: a custom command goes through Git Bash on Windows; left out, as it was) }
 //   Resolves with { entry, problems }.
 export async function beginInvestigation(deps, { agent, description, repo, groomer, subAgents, where, refactor = null }) {
   checkStart({ agent, where, refactor });
@@ -173,9 +174,11 @@ export async function beginInvestigation(deps, { agent, description, repo, groom
   try {
     // In a refactor session every role is the type's own (agent, command, model, effort); otherwise the New Task settings'.
     const mine = type ? { investigator: type.investigator, worker: type.worker } : { investigator: normalizeSubAgent(subAgents?.investigator), worker: normalizeSubAgent(subAgents?.worker) };
-    const argv = { investigator: subAgentArgv("investigator", mine.investigator, known, dir), worker: subAgentArgv("worker", mine.worker, known, dir) };
+    // A custom command (sh -c) runs as this computer runs one: Git Bash on Windows (deps.localOs), unchanged elsewhere.
+    const here = (argv) => hostArgv(argv, { os: deps.localOs });
+    const argv = { investigator: here(subAgentArgv("investigator", mine.investigator, known, dir)), worker: here(subAgentArgv("worker", mine.worker, known, dir)) };
     const launch = () => launchRun(launchDeps, {
-      id, key: label, workDir, argv: type ? refactorAgentArgv(type.orchestrator, known, dir) : newTaskAgentArgv(agent, groomer, dir), task, props, runArgs: investigationRunArgs, who: "agent",
+      id, key: label, workDir, argv: here(type ? refactorAgentArgv(type.orchestrator, known, dir) : newTaskAgentArgv(agent, groomer, dir)), task, props, runArgs: investigationRunArgs, who: "agent",
     });
     const prompts = type && { investigator: type.investigator.prompt, worker: type.worker.prompt };
     await deps.writeSession(dir, sessionFiles({ id, dir, workDir, repoRoot, branch, argv, refactor: prompts })); // before the agent: it may use them at once

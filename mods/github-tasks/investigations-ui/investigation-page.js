@@ -7,7 +7,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { exec, hc, home, panes, run, setShared, shared, spaces, terminals, theme } from "herdr";
 import { peekSpace, slotFromPage, orchestratorOf, parseLs, sameKept, statusColor, statusLabel } from "../runs/index.js";
 import { investigationAgentsFor, investigationQueries, endInvestigation } from "../investigations/index.js";
-import { openAgentPopup, S, stop } from "../widgets/index.js";
+import { localTool, openAgentPopup, S, stop } from "../widgets/index.js";
 import { slotKey, INVESTIGATIONS_KEY, investigationAgentsKey } from "../lib/index.js";
 
 const git = (cwd, ...args) => exec("git", ["-C", cwd, ...args]);
@@ -20,7 +20,7 @@ export const finishInvestigation = ({ id, agent, repoRoot, workDir, branch }) =>
   slot: () => shared(slotKey(id)), clearSlot: () => setShared(slotKey(id), null),
   load: () => shared(INVESTIGATIONS_KEY), save: (list) => setShared(INVESTIGATIONS_KEY, list),
   clearAgents: () => setShared(investigationAgentsKey(id), null),
-  home: home(), removeDir: (path) => exec("rm", ["-rf", path]),
+  home: home(), removeDir: (path) => localTool("rm", ["-rf", path]),
 }, { id, agent, repoRoot, workDir, branch });
 
 export class InvestigationPage {

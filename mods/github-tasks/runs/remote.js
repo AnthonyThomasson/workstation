@@ -4,17 +4,13 @@
 // A machine is described as a host: { on, os: "unix" | "windows", home }, home in forward slashes (C:/Users/me on Windows).
 // Windows has no sh: anything that needs a shell there goes through Git Bash, and git itself is called as plain git.
 
-import { machinePath } from "../lib/index.js";
+import { GIT_BASH, machinePath, shArgv, shellArgv } from "../lib/index.js";
 
-export const GIT_BASH = "C:/Program Files/Git/bin/bash.exe";
+// GIT_BASH and shArgv live in lib/shell.js (so the folders below runs/ use them too); exported from here as well, for runs/'s callers.
+export { GIT_BASH, shArgv };
 
 // What `uname -s` says on Git Bash, MSYS2 or Cygwin.
 export const isWindowsKernel = (kernel) => /^(mingw|msys|cygwin)|windows/i.test(String(kernel ?? "").trim());
-
-// A shell script run on a host, as exec's (cmd, args): sh -c on Unix, Git Bash -lc on Windows. $1... are `args`.
-export const shArgv = (os, script, args = []) => (os === "windows"
-  ? [GIT_BASH, ["-lc", script, "github-tasks", ...args]]
-  : ["sh", ["-c", script, "github-tasks", ...args]]);
 
 // machinePath (lib/machine-path.js): the sh snippet that prints a path as the machine itself names it (cygpath -m on Git Bash).
 // Kept in lib/ so the sign-in can use it too; exported from here as well, for runs/'s callers.
@@ -49,19 +45,20 @@ export async function probeMachine(exec, on) {
 
 // The host a machine is (probeMachine), asked once per machine: `seen` keeps the answers. A probe that fails is not kept, so the
 // next call asks again. Remote shell calls go through this, so sh or Git Bash is decided for a machine in one place.
-//   deps: { exec, probe = probeMachine, seen = a Map of machine -> host }
+//   deps: { exec, probe = probeMachine, seen = a Map of machine -> host, localOs = "unix" (shOn only: this computer's OS) }
 const SEEN = new Map();
 export async function hostOf({ exec, probe = probeMachine, seen = SEEN }, on) {
   if (!seen.has(on)) seen.set(on, await probe(exec, on));
   return seen.get(on);
 }
 
-// Runs a sh script on a machine as that machine runs one: on this computer (on unset) plain sh, never probed; elsewhere as
-// hostOf says, so Windows gets Git Bash. A probe that fails resolves like a failed command ({ code: 1, stderr: why }), so a
+// Runs a sh script on a machine as that machine runs one: on this computer (on unset) as deps.localOs says, never probed (plain
+// sh when it is "unix" or left out, Git Bash when it is "windows": the Herdr-facing callers fill it from window(), lib/shell.js
+// localOs); elsewhere as hostOf says, so Windows gets Git Bash. A probe that fails resolves like a failed command ({ code: 1, stderr: why }), so a
 // caller that reads code and stderr says why. timeout (ms): how long Herdr's exec lets the script run (its default is 30s, its
 // cap 600000); left out, exec gets no timeout and keeps that default.
 export async function shOn(deps, on, script, args = [], { timeout } = {}) {
-  let os = "unix";
+  let os = deps.localOs === "windows" ? "windows" : "unix";
   if (on) {
     try {
       os = (await hostOf(deps, on)).os;
@@ -84,9 +81,9 @@ export async function remoteProgram(exec, host, name) {
 }
 
 // An agent's command (agentArgv's) as the host runs it: its program swapped for the host's own (`program`), and a custom
-// command's sh -c run through Git Bash on Windows.
+// command's sh -c run through Git Bash on Windows (lib/shell.js shellArgv). Also for this computer, as { os: localOs }.
 export function hostArgv(argv, host, program = null) {
-  if (argv[0] === "sh" && argv[1] === "-c" && argv.length === 3) return host.os === "windows" ? [GIT_BASH, "-lc", argv[2]] : argv;
+  if (argv[0] === "sh" && argv[1] === "-c" && argv.length === 3) return shellArgv(argv, host?.os);
   return program ? [program, ...argv.slice(1)] : argv;
 }
 

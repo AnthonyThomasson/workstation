@@ -3,17 +3,19 @@
 // (cliRepliesDir). It looks when the command says so (`herdr-app do github-tasks.cli`, which main.js passes to poke), when the folder
 // changes (watchFolder), and every POLL in case both were missed. Only the sidebar role runs one, so a request is answered once; a
 // request is taken by renaming it, so a second copy (another layout's sidebar) that tries as well finds it gone.
-import { exec, home, readTextFile, watchFolder, writeTextFile } from "herdr";
+import { home, readTextFile, watchFolder, writeTextFile } from "herdr";
 import { cliRepliesDir, cliRequestsDir } from "../workflow/index.js";
 import { Answer, checkRequest, claimedName, failReply, fileName, okReply, partName, waitingId } from "../cli/index.js";
 import { HANDLERS, explain } from "./handlers.js";
+import { localSh, localTool } from "../widgets/index.js";
 
 const START_AFTER = 2000; // a copy that only lives for a moment (herdr-app check renders the mod once) never takes a request
 const POLL = 15000;
 const RETRY = 15000; // a watch that failed is started again after this
 const STALE_MINUTES = 60; // replies nobody came for, and requests left taken by a copy that was reloaded mid-answer, go after this
 
-const sh = (script, ...args) => exec("sh", ["-c", script, "github-tasks", ...args]);
+// sh scripts and mv/rm run as this computer runs them: sh and the tools on the Mac, Git Bash on Windows (widgets/local-shell.js).
+const sh = localSh;
 
 export class Bridge {
   constructor(cx) {
@@ -55,7 +57,7 @@ export class Bridge {
           const ids = String(listed?.stdout ?? "").split("\n").map(waitingId).filter((id) => id && !this.working.has(id));
           for (const id of ids) {
             const from = `${this.requests}/${fileName(id)}`, to = `${this.requests}/${claimedName(id)}`;
-            const taken = await exec("mv", [from, to]).catch(() => null);
+            const taken = await localTool("mv", [from, to]).catch(() => null);
             if (taken?.code !== 0) continue; // another copy took it, or its command gave up
             this.working.add(id);
             cx.spawn(async (cx) => { try { await this.answer(id, to, cx); } finally { this.working.delete(id); } });
@@ -84,10 +86,10 @@ export class Bridge {
       const part = `${this.replies}/${partName(id)}`;
       try {
         await writeTextFile(part, `${JSON.stringify(reply)}\n`, null);
-        await exec("mv", ["-f", part, `${this.replies}/${fileName(id)}`]);
+        await localTool("mv", ["-f", part, `${this.replies}/${fileName(id)}`]);
       } catch { /* the command will say Herdr didn't answer */ }
     }
-    await exec("rm", ["-f", taken]).catch(() => {});
+    await localTool("rm", ["-f", taken]).catch(() => {});
   }
 
   // Removes what is left over in the mailbox: replies nobody read, and requests taken by a copy that ended before it answered.
